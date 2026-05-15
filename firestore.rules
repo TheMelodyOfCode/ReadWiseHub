@@ -59,6 +59,11 @@ service cloud.firestore {
       allow write: if false;
     }
 
+    match /ingestionJobs/{jobId} {
+      allow read: if signedIn() && resource.data.userId == request.auth.uid;
+      allow write: if false;
+    }
+
     match /conversations/{conversationId} {
       allow read: if signedIn() && resource.data.userId == request.auth.uid;
       allow write: if false;

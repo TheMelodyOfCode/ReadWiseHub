@@ -8,11 +8,27 @@ import {
   signInWithPopup,
   signOut,
 } from "firebase/auth";
-import { doc, getDoc, serverTimestamp, setDoc } from "firebase/firestore";
+import {
+  collection,
+  doc,
+  getDoc,
+  onSnapshot,
+  query,
+  serverTimestamp,
+  setDoc,
+  where,
+} from "firebase/firestore";
 import { auth, db, googleProvider } from "./firebase";
 import { Locale, detectInitialLocale, dictionaries } from "./i18n";
 
 type Theme = "light" | "dark";
+
+type BookRecord = {
+  id: string;
+  title: string;
+  status: string;
+  sizeBytes: number;
+};
 
 function getInitialTheme(): Theme {
   const stored = window.localStorage.getItem("readwisehub_theme");
@@ -93,6 +109,8 @@ export function App() {
   const [password, setPassword] = useState("");
   const [authError, setAuthError] = useState("");
   const [status, setStatus] = useState("");
+  const [books, setBooks] = useState<BookRecord[]>([]);
+  const [booksReady, setBooksReady] = useState(false);
 
   const t = useMemo(() => dictionaries[locale], [locale]);
 
@@ -119,6 +137,40 @@ export function App() {
       }
     });
   }, [locale, theme]);
+
+  useEffect(() => {
+    if (!user) {
+      setBooks([]);
+      setBooksReady(false);
+      return;
+    }
+
+    const booksQuery = query(collection(db, "books"), where("userId", "==", user.uid));
+    return onSnapshot(
+      booksQuery,
+      (snapshot) => {
+        setBooks(
+          snapshot.docs
+            .map((bookDoc) => {
+              const data = bookDoc.data();
+              return {
+                id: bookDoc.id,
+                title: typeof data.title === "string" ? data.title : "Untitled",
+                status: typeof data.status === "string" ? data.status : "unknown",
+                sizeBytes:
+                  typeof data.sizeBytes === "number" ? data.sizeBytes : 0,
+              };
+            })
+            .sort((left, right) => left.title.localeCompare(right.title))
+        );
+        setBooksReady(true);
+      },
+      (error) => {
+        setAuthError(getErrorMessage(error, "Library sync failed"));
+        setBooksReady(true);
+      }
+    );
+  }, [user]);
 
   async function handlePasswordAuth(
     event: FormEvent<HTMLFormElement>,
@@ -157,6 +209,120 @@ export function App() {
     }
   }
 
+  if (user) {
+    return (
+      <div className="app-shell workspace-shell">
+        <header className="site-header">
+          <a className="brand" href="#dashboard" aria-label="ReadWiseHub home">
+            <span className="brand-mark">R</span>
+            <span>
+              <strong>ReadWiseHub</strong>
+              <small>{t.brandTagline}</small>
+            </span>
+          </a>
+
+          <nav className="top-nav workspace-nav" aria-label="Workspace navigation">
+            <a href="#dashboard">{t.navDashboard}</a>
+            <a href="#library">{t.navLibrary}</a>
+            <a href="#account">{t.navAccount}</a>
+          </nav>
+        </header>
+
+        <main>
+          <section id="dashboard" className="workspace-hero">
+            <div>
+              <p className="eyebrow">ReadWiseHub</p>
+              <h1>{t.dashboardTitle}</h1>
+              <p>{t.dashboardEmpty}</p>
+            </div>
+            <div className="quick-panel">
+              <h2>{t.usageTitle}</h2>
+              <ul className="usage-list">
+                <li>{t.usageBooks}</li>
+                <li>{t.usageStorage}</li>
+                <li>{t.usageMessages}</li>
+              </ul>
+            </div>
+          </section>
+
+          <section id="library" className="content-section">
+            <div className="section-heading">
+              <div>
+                <p className="eyebrow">{t.navLibrary}</p>
+                <h2>{t.libraryTitle}</h2>
+              </div>
+              <button className="button primary" type="button" disabled>
+                Upload
+              </button>
+            </div>
+
+            {!booksReady ? (
+              <p>Loading...</p>
+            ) : books.length === 0 ? (
+              <div className="empty-state">
+                <h3>{t.libraryEmptyTitle}</h3>
+                <p>{t.libraryEmpty}</p>
+              </div>
+            ) : (
+              <div className="book-list">
+                {books.map((book) => (
+                  <article key={book.id}>
+                    <h3>{book.title}</h3>
+                    <p>{book.status}</p>
+                  </article>
+                ))}
+              </div>
+            )}
+          </section>
+
+          <section className="content-section next-step-section">
+            <h2>{t.nextStepTitle}</h2>
+            <p>{t.nextStepCopy}</p>
+          </section>
+
+          <section id="account" className="account-section workspace-account">
+            <div>
+              <p className="eyebrow">{t.navAccount}</p>
+              <h2>{t.accountTitle}</h2>
+              <p>
+                {t.signedInAs}: <strong>{user.email}</strong>
+              </p>
+            </div>
+
+            <div className="controls-band inline-controls" aria-label="Preferences">
+              <label>
+                {t.language}
+                <select
+                  value={locale}
+                  onChange={(event) => setLocale(event.target.value as Locale)}
+                >
+                  <option value="de">{t.german}</option>
+                  <option value="en">{t.english}</option>
+                </select>
+              </label>
+
+              <label>
+                {t.theme}
+                <select
+                  value={theme}
+                  onChange={(event) => setTheme(event.target.value as Theme)}
+                >
+                  <option value="light">{t.light}</option>
+                  <option value="dark">{t.dark}</option>
+                </select>
+              </label>
+            </div>
+
+            <button className="button secondary" type="button" onClick={() => signOut(auth)}>
+              {t.signOut}
+            </button>
+            {authError ? <p className="error-text">{authError}</p> : null}
+          </section>
+        </main>
+      </div>
+    );
+  }
+
   return (
     <div className="app-shell">
       <header className="site-header">
@@ -172,7 +338,6 @@ export function App() {
           <a href="#how">{t.navHow}</a>
           <a href="#pricing">{t.navPricing}</a>
           <a href="#help">{t.navHelp}</a>
-          {user ? <a href="#dashboard">{t.navDashboard}</a> : null}
         </nav>
       </header>
 
@@ -183,7 +348,7 @@ export function App() {
             <h1>{t.welcomeTitle}</h1>
             <p>{t.welcomeCopy}</p>
             <div className="hero-actions">
-              <a className="button primary" href={user ? "#dashboard" : "#account"}>
+              <a className="button primary" href="#account">
                 {t.primaryCta}
               </a>
               <a className="button secondary" href="#how">
@@ -193,16 +358,12 @@ export function App() {
           </div>
           <section id="account" className="account-section compact-account">
             <div>
-              <h2>{user ? t.accountReady : t.signIn}</h2>
-              <p>{user ? user.email : t.authRequired}</p>
+              <h2>{t.signIn}</h2>
+              <p>{t.authRequired}</p>
             </div>
 
             {!authReady ? (
               <p>Loading...</p>
-            ) : user ? (
-              <button className="button secondary" type="button" onClick={() => signOut(auth)}>
-                {t.signOut}
-              </button>
             ) : (
               <div className="auth-panel">
                 <form onSubmit={(event) => handlePasswordAuth(event, "signIn")}>

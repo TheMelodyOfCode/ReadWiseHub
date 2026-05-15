@@ -340,6 +340,92 @@ input {
   padding-bottom: 80px;
 }
 
+.workspace-shell {
+  background: var(--bg);
+}
+
+.workspace-nav {
+  display: flex;
+  gap: 12px;
+  font-size: 0.95rem;
+}
+
+.workspace-hero {
+  display: grid;
+  gap: 18px;
+  padding: 28px clamp(16px, 5vw, 72px);
+}
+
+.workspace-hero h1 {
+  max-width: 12ch;
+}
+
+.quick-panel,
+.empty-state,
+.book-list article,
+.next-step-section,
+.workspace-account {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: var(--shadow);
+}
+
+.quick-panel,
+.empty-state,
+.book-list article {
+  padding: 18px;
+}
+
+.usage-list {
+  display: grid;
+  gap: 10px;
+  padding: 0;
+  margin: 0;
+  list-style: none;
+}
+
+.usage-list li {
+  padding: 12px;
+  border-radius: 8px;
+  background: var(--surface-strong);
+  color: var(--text);
+  font-weight: 800;
+}
+
+.section-heading {
+  display: grid;
+  gap: 12px;
+  margin-bottom: 18px;
+}
+
+.section-heading .button[disabled] {
+  cursor: not-allowed;
+  opacity: 0.62;
+}
+
+.book-list {
+  display: grid;
+  gap: 12px;
+}
+
+.next-step-section,
+.workspace-account {
+  margin: 0 clamp(16px, 5vw, 72px) 42px;
+}
+
+.workspace-account {
+  display: grid;
+  gap: 16px;
+  padding: 18px;
+}
+
+.inline-controls {
+  padding: 0;
+  background: transparent;
+  border: 0;
+}
+
 @media (min-width: 720px) {
   .top-nav {
     display: flex;
@@ -357,6 +443,21 @@ input {
   .plans-grid,
   .dashboard-grid {
     grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .workspace-hero {
+    grid-template-columns: minmax(0, 1fr) minmax(300px, 420px);
+    align-items: end;
+    padding-top: 56px;
+  }
+
+  .section-heading {
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+  }
+
+  .book-list {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 
