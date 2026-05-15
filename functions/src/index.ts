@@ -239,7 +239,8 @@ function nearestReadableStart(text: string, preferredStart: number): number {
   );
 
   if (sentenceBreak >= 0) {
-    return windowStart + sentenceBreak + 2;
+    const absoluteBreak = windowStart + sentenceBreak;
+    return text[absoluteBreak] === "\n" ? absoluteBreak + 1 : absoluteBreak + 2;
   }
 
   const spaceBreak = slice.lastIndexOf(" ");
@@ -265,6 +266,36 @@ function nearestReadableEnd(text: string, preferredEnd: number): number {
   return spaceBreak >= 0 ? preferredEnd + spaceBreak : preferredEnd;
 }
 
+function avoidWordStartCut(text: string, start: number): number {
+  let safeStart = start;
+
+  while (
+    safeStart > 0 &&
+    safeStart < text.length &&
+    /\S/.test(text[safeStart - 1]) &&
+    /\S/.test(text[safeStart])
+  ) {
+    safeStart -= 1;
+  }
+
+  return safeStart;
+}
+
+function avoidWordEndCut(text: string, end: number): number {
+  let safeEnd = end;
+
+  while (
+    safeEnd > 0 &&
+    safeEnd < text.length &&
+    /\S/.test(text[safeEnd - 1]) &&
+    /\S/.test(text[safeEnd])
+  ) {
+    safeEnd += 1;
+  }
+
+  return safeEnd;
+}
+
 function createExcerpt(text: string, terms: string[]): string {
   const lower = text.toLowerCase();
   const firstMatch = terms
@@ -272,8 +303,8 @@ function createExcerpt(text: string, terms: string[]): string {
     .filter((index) => index >= 0)
     .sort((left, right) => left - right)[0];
   const center = firstMatch ?? 0;
-  const start = nearestReadableStart(text, Math.max(0, center - 180));
-  const end = nearestReadableEnd(text, Math.min(text.length, center + 420));
+  const start = avoidWordStartCut(text, nearestReadableStart(text, Math.max(0, center - 180)));
+  const end = avoidWordEndCut(text, nearestReadableEnd(text, Math.min(text.length, center + 420)));
   const prefix = start > 0 ? "... " : "";
   const suffix = end < text.length ? " ..." : "";
 
