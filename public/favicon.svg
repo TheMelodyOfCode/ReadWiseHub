@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="ReadWiseHub">
+  <rect width="64" height="64" rx="14" fill="#082c4c"/>
+  <path d="M32 8v6" stroke="#ff7a1a" stroke-width="4" stroke-linecap="round"/>
+  <path d="M18 14l4 5" stroke="#ff7a1a" stroke-width="4" stroke-linecap="round"/>
+  <path d="M46 14l-4 5" stroke="#ff7a1a" stroke-width="4" stroke-linecap="round"/>
+  <path
+    d="M22 32c0-6 4.6-11 10-11s10 5 10 11c0 3.5-1.7 6.4-4.3 8.3-1.2.9-1.7 1.8-1.7 3.2H28c0-1.4-.5-2.3-1.7-3.2A10.2 10.2 0 0 1 22 32Z"
+    fill="#ffffff"
+  />
+  <path d="M27 48h10" stroke="#6dd5d8" stroke-width="4" stroke-linecap="round"/>
+  <path d="M28 55h8" stroke="#6dd5d8" stroke-width="4" stroke-linecap="round"/>
+  <circle cx="32" cy="32" r="4" fill="#ff7a1a"/>
+</svg>
