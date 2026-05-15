@@ -34,6 +34,14 @@ type BookRecord = {
   chunkCount: number;
 };
 
+type LibrarySearchResult = {
+  bookId: string;
+  bookTitle: string;
+  chunkIndex: number;
+  score: number;
+  excerpt: string;
+};
+
 const UPLOAD_BACKEND_ENABLED = true;
 const MAX_FREE_FILE_BYTES = 20 * 1024 * 1024;
 const ALLOWED_UPLOAD_TYPES = new Set([
@@ -129,8 +137,16 @@ export function App() {
   const [uploadMessage, setUploadMessage] = useState("");
   const [uploadBusy, setUploadBusy] = useState(false);
   const [processBusy, setProcessBusy] = useState(false);
+  const [searchQuestion, setSearchQuestion] = useState("");
+  const [searchMessage, setSearchMessage] = useState("");
+  const [searchBusy, setSearchBusy] = useState(false);
+  const [searchResults, setSearchResults] = useState<LibrarySearchResult[]>([]);
 
   const t = useMemo(() => dictionaries[locale], [locale]);
+  const textReadyBooks = useMemo(
+    () => books.filter((book) => book.status === "text_ready"),
+    [books]
+  );
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
@@ -340,6 +356,33 @@ export function App() {
     }
   }
 
+  async function searchExtractedText(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+
+    if (!searchQuestion.trim() || textReadyBooks.length === 0) {
+      return;
+    }
+
+    setSearchBusy(true);
+    setSearchMessage("");
+    setSearchResults([]);
+
+    try {
+      const searchLibrary = httpsCallable<
+        { query: string },
+        { ok: boolean; results: LibrarySearchResult[] }
+      >(functions, "searchLibrary");
+      const response = await searchLibrary({ query: searchQuestion.trim() });
+      const results = response.data.results ?? [];
+      setSearchResults(results);
+      setSearchMessage(results.length === 0 ? t.noSearchResults : "");
+    } catch (error) {
+      setSearchMessage(getErrorMessage(error, "Search failed"));
+    } finally {
+      setSearchBusy(false);
+    }
+  }
+
   if (user) {
     return (
       <div className="app-shell workspace-shell">
@@ -425,6 +468,47 @@ export function App() {
               </div>
               {uploadMessage ? <p className="error-text">{uploadMessage}</p> : null}
             </div>
+
+            <form className="search-panel" onSubmit={searchExtractedText}>
+              <div>
+                <h3>{t.searchTitle}</h3>
+                <p>{t.searchCopy}</p>
+              </div>
+              <label>
+                {t.searchLabel}
+                <input
+                  type="search"
+                  value={searchQuestion}
+                  onChange={(event) => setSearchQuestion(event.target.value)}
+                  placeholder={t.searchPlaceholder}
+                  disabled={textReadyBooks.length === 0}
+                />
+              </label>
+              <button
+                className="button primary"
+                type="submit"
+                disabled={searchBusy || textReadyBooks.length === 0 || !searchQuestion.trim()}
+              >
+                {searchBusy ? t.searching : t.searchButton}
+              </button>
+              {textReadyBooks.length === 0 ? (
+                <p className="small-note">{t.searchNeedsText}</p>
+              ) : null}
+              {searchMessage ? <p className="error-text">{searchMessage}</p> : null}
+              {searchResults.length > 0 ? (
+                <div className="search-results">
+                  {searchResults.map((result) => (
+                    <article key={`${result.bookId}-${result.chunkIndex}`}>
+                      <h4>{result.bookTitle}</h4>
+                      <p>{result.excerpt}</p>
+                      <span>
+                        {t.sourceChunk} {result.chunkIndex + 1}
+                      </span>
+                    </article>
+                  ))}
+                </div>
+              ) : null}
+            </form>
 
             {!booksReady ? (
               <p>Loading...</p>

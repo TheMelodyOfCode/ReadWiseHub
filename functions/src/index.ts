@@ -26,6 +26,8 @@ const ALLOWED_CONTENT_TYPES = new Set([
 const CHUNK_SIZE = 1200;
 const CHUNK_OVERLAP = 160;
 const MAX_EXTRACTED_TEXT_BYTES = 2_500_000;
+const MAX_SEARCH_QUERY_LENGTH = 240;
+const MAX_SEARCH_RESULTS = 5;
 
 type AuthContext = {
   uid: string;
@@ -156,6 +158,74 @@ function createSafeError(error: unknown) {
     code: "internal",
     message: "Unknown ingestion error.",
   };
+}
+
+function tokenizeSearchQuery(query: string): string[] {
+  const stopWords = new Set([
+    "a",
+    "an",
+    "and",
+    "are",
+    "as",
+    "der",
+    "die",
+    "das",
+    "den",
+    "dem",
+    "des",
+    "ein",
+    "eine",
+    "for",
+    "in",
+    "ist",
+    "it",
+    "mit",
+    "of",
+    "oder",
+    "the",
+    "to",
+    "und",
+    "was",
+    "what",
+    "wie",
+    "zu",
+  ]);
+
+  return Array.from(
+    new Set(
+      query
+        .toLowerCase()
+        .normalize("NFKD")
+        .replace(/[^\p{Letter}\p{Number}\s-]+/gu, " ")
+        .split(/\s+/)
+        .map((term) => term.trim())
+        .filter((term) => term.length >= 3 && !stopWords.has(term))
+    )
+  ).slice(0, 12);
+}
+
+function scoreChunk(text: string, terms: string[]): number {
+  const lower = text.toLowerCase();
+  return terms.reduce((score, term) => {
+    const escaped = term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const matches = lower.match(new RegExp(`\\b${escaped}`, "g"));
+    return score + (matches?.length ?? 0);
+  }, 0);
+}
+
+function createExcerpt(text: string, terms: string[]): string {
+  const lower = text.toLowerCase();
+  const firstMatch = terms
+    .map((term) => lower.indexOf(term.toLowerCase()))
+    .filter((index) => index >= 0)
+    .sort((left, right) => left - right)[0];
+  const center = firstMatch ?? 0;
+  const start = Math.max(0, center - 180);
+  const end = Math.min(text.length, center + 420);
+  const prefix = start > 0 ? "... " : "";
+  const suffix = end < text.length ? " ..." : "";
+
+  return `${prefix}${text.slice(start, end).trim()}${suffix}`;
 }
 
 async function ensureUserProfile(auth: AuthContext) {
@@ -621,5 +691,117 @@ export const processQueuedIngestionJob = onDocumentCreated(
     }
 
     await processIngestionJobById(jobId);
+  }
+);
+
+export const searchLibrary = onCall(
+  { region: "us-central1", timeoutSeconds: 60, memory: "512MiB" },
+  async (request) => {
+    const auth = requireAuth(request.auth?.token
+      ? {
+          uid: request.auth.uid,
+          email: request.auth.token.email,
+          name: request.auth.token.name,
+          picture: request.auth.token.picture,
+        }
+      : undefined);
+    const queryText = assertString(request.data?.query, "query").slice(0, MAX_SEARCH_QUERY_LENGTH);
+    const bookId =
+      typeof request.data?.bookId === "string" && request.data.bookId.trim()
+        ? request.data.bookId.trim()
+        : "";
+    const terms = tokenizeSearchQuery(queryText);
+
+    if (terms.length === 0) {
+      throw new HttpsError("invalid-argument", "Please use a more specific question.");
+    }
+
+    await ensureUserProfile(auth);
+
+    const books = new Map<string, { title: string }>();
+
+    if (bookId) {
+      const bookSnapshot = await db.collection("books").doc(bookId).get();
+      if (
+        bookSnapshot.exists &&
+        bookSnapshot.get("userId") === auth.uid &&
+        bookSnapshot.get("status") === "text_ready"
+      ) {
+        books.set(bookSnapshot.id, {
+          title: assertString(bookSnapshot.get("title"), "title"),
+        });
+      }
+    } else {
+      const booksSnapshot = await db
+        .collection("books")
+        .where("userId", "==", auth.uid)
+        .where("status", "==", "text_ready")
+        .get();
+
+      booksSnapshot.docs.forEach((bookSnapshot) => {
+        books.set(bookSnapshot.id, {
+          title: assertString(bookSnapshot.get("title"), "title"),
+        });
+      });
+    }
+
+    if (books.size === 0) {
+      return {
+        ok: true,
+        query: queryText,
+        results: [],
+      };
+    }
+
+    const chunkSnapshots = await Promise.all(
+      Array.from(books.keys()).map((currentBookId) =>
+        db
+          .collection("bookChunks")
+          .where("bookId", "==", currentBookId)
+          .limit(800)
+          .get()
+      )
+    );
+    const scoredResults: Array<{
+      bookId: string;
+      bookTitle: string;
+      chunkIndex: number;
+      score: number;
+      excerpt: string;
+    }> = [];
+
+    chunkSnapshots.forEach((snapshot) => {
+      snapshot.docs.forEach((chunkSnapshot) => {
+        const currentBookId = assertString(chunkSnapshot.get("bookId"), "bookId");
+        const book = books.get(currentBookId);
+
+        if (!book || chunkSnapshot.get("userId") !== auth.uid) {
+          return;
+        }
+
+        const text = assertString(chunkSnapshot.get("text"), "text");
+        const score = scoreChunk(text, terms);
+
+        if (score <= 0) {
+          return;
+        }
+
+        scoredResults.push({
+          bookId: currentBookId,
+          bookTitle: book.title,
+          chunkIndex: Number(chunkSnapshot.get("chunkIndex")) || 0,
+          score,
+          excerpt: createExcerpt(text, terms),
+        });
+      });
+    });
+
+    scoredResults.sort((left, right) => right.score - left.score);
+
+    return {
+      ok: true,
+      query: queryText,
+      results: scoredResults.slice(0, MAX_SEARCH_RESULTS),
+    };
   }
 );
