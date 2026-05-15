@@ -34,6 +34,10 @@ type BookRecord = {
   status: string;
   sizeBytes: number;
   chunkCount: number;
+  pageCount: number;
+  textLength: number;
+  language: string;
+  embeddedChunkCount: number;
 };
 
 type IngestionJobRecord = {
@@ -43,6 +47,12 @@ type IngestionJobRecord = {
   stage: string;
   progress: number;
   errorMessageSafe: string;
+};
+
+type BookChunkPreview = {
+  id: string;
+  chunkIndex: number;
+  textPreview: string;
 };
 
 type LibrarySearchResult = {
@@ -194,6 +204,11 @@ export function App() {
   const [lastUploadedBookId, setLastUploadedBookId] = useState("");
   const [workspaceTab, setWorkspaceTab] = useState<WorkspaceTab>("ask");
   const [processingBookId, setProcessingBookId] = useState("");
+  const [selectedBookDetailId, setSelectedBookDetailId] = useState("");
+  const [bookChunkPreviews, setBookChunkPreviews] = useState<BookChunkPreview[]>([]);
+  const [bookDetailMessage, setBookDetailMessage] = useState("");
+  const [accountBusy, setAccountBusy] = useState(false);
+  const [confirmDeleteAccount, setConfirmDeleteAccount] = useState(false);
   const [usage, setUsage] = useState<UserUsage>({
     messages: 0,
     monthlyMessages: 50,
@@ -287,6 +302,11 @@ export function App() {
                   typeof data.sizeBytes === "number" ? data.sizeBytes : 0,
                 chunkCount:
                   typeof data.chunkCount === "number" ? data.chunkCount : 0,
+                pageCount: typeof data.pageCount === "number" ? data.pageCount : 0,
+                textLength: typeof data.textLength === "number" ? data.textLength : 0,
+                language: typeof data.language === "string" ? data.language : "",
+                embeddedChunkCount:
+                  typeof data.embeddedChunkCount === "number" ? data.embeddedChunkCount : 0,
               };
             })
             .sort((left, right) => left.title.localeCompare(right.title))
@@ -743,6 +763,104 @@ export function App() {
     }
   }
 
+  async function openBookDetail(book: BookRecord) {
+    setSelectedBookDetailId(book.id);
+    setBookDetailMessage("");
+    setBookChunkPreviews([]);
+
+    try {
+      const chunksQuery = query(
+        collection(db, "bookChunks"),
+        where("userId", "==", user?.uid ?? ""),
+        where("bookId", "==", book.id)
+      );
+      const snapshot = await getDocs(chunksQuery);
+      setBookChunkPreviews(
+        snapshot.docs
+          .map((chunkDoc) => {
+            const data = chunkDoc.data();
+            return {
+              id: chunkDoc.id,
+              chunkIndex: typeof data.chunkIndex === "number" ? data.chunkIndex : 0,
+              textPreview:
+                typeof data.textPreview === "string"
+                  ? data.textPreview
+                  : typeof data.text === "string"
+                    ? data.text.slice(0, 240)
+                    : "",
+            };
+          })
+          .sort((left, right) => left.chunkIndex - right.chunkIndex)
+          .slice(0, 12)
+      );
+    } catch (error) {
+      setBookDetailMessage(getErrorMessage(error, "Book detail failed"));
+    }
+  }
+
+  async function backfillEmbeddings(book: BookRecord) {
+    setProcessingBookId(book.id);
+    setUploadMessage("");
+
+    try {
+      const backfillBookEmbeddings = httpsCallable<
+        { bookId: string },
+        { ok: boolean; embeddedChunkCount: number }
+      >(functions, "backfillBookEmbeddings");
+      const response = await backfillBookEmbeddings({ bookId: book.id });
+      setUploadMessage(`${t.embeddingsReady}: ${response.data.embeddedChunkCount}`);
+    } catch (error) {
+      setUploadMessage(getErrorMessage(error, "Embedding failed"));
+    } finally {
+      setProcessingBookId("");
+    }
+  }
+
+  async function exportMyData() {
+    setAccountBusy(true);
+    setAuthError("");
+
+    try {
+      const exportAccountData = httpsCallable<unknown, Record<string, unknown>>(
+        functions,
+        "exportAccountData"
+      );
+      const response = await exportAccountData({});
+      const blob = new Blob([JSON.stringify(response.data, null, 2)], {
+        type: "application/json",
+      });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `readwisehub-export-${new Date().toISOString().slice(0, 10)}.json`;
+      link.click();
+      URL.revokeObjectURL(url);
+    } catch (error) {
+      setAuthError(getErrorMessage(error, "Export failed"));
+    } finally {
+      setAccountBusy(false);
+    }
+  }
+
+  async function deleteMyAccountData() {
+    setAccountBusy(true);
+    setAuthError("");
+
+    try {
+      const deleteAccountData = httpsCallable<unknown, { ok: boolean }>(
+        functions,
+        "deleteAccountData"
+      );
+      await deleteAccountData({});
+      await signOut(auth);
+    } catch (error) {
+      setAuthError(getErrorMessage(error, "Account delete failed"));
+    } finally {
+      setAccountBusy(false);
+      setConfirmDeleteAccount(false);
+    }
+  }
+
   if (user) {
     return (
       <div className="app-shell workspace-shell">
@@ -960,6 +1078,12 @@ export function App() {
                       <p className="error-text">{job.errorMessageSafe}</p>
                     ) : null}
                     {book.chunkCount > 0 ? <p>{book.chunkCount} chunks</p> : null}
+                    <p className="small-note">
+                      {book.language || "unknown"} · {Math.round(book.sizeBytes / 1024)} KB
+                      {book.embeddedChunkCount > 0
+                        ? ` · ${book.embeddedChunkCount} ${t.embeddedChunks}`
+                        : ""}
+                    </p>
                     {job && (job.status === "queued" || job.status === "failed") ? (
                       <button
                         className="button secondary compact"
@@ -970,6 +1094,25 @@ export function App() {
                         {processingBookId === book.id ? t.processingQueued : t.retryProcessing}
                       </button>
                     ) : null}
+                    <div className="book-actions">
+                      <button
+                        className="button secondary compact"
+                        type="button"
+                        onClick={() => openBookDetail(book)}
+                      >
+                        {t.viewDetails}
+                      </button>
+                      {book.status === "text_ready" && book.embeddedChunkCount < book.chunkCount ? (
+                        <button
+                          className="button secondary compact"
+                          type="button"
+                          disabled={processingBookId === book.id}
+                          onClick={() => backfillEmbeddings(book)}
+                        >
+                          {processingBookId === book.id ? t.processingQueued : t.prepareVectorSearch}
+                        </button>
+                      ) : null}
+                    </div>
                     {confirmDeleteBookId === book.id ? (
                       <div className="inline-confirm">
                         <p>{t.deleteInlineConfirm}</p>
@@ -1008,6 +1151,64 @@ export function App() {
                 })}
               </div>
             )}
+            {selectedBookDetailId ? (
+              <section className="book-detail-panel">
+                {books
+                  .filter((book) => book.id === selectedBookDetailId)
+                  .map((book) => (
+                    <div key={book.id}>
+                      <div className="section-heading">
+                        <div>
+                          <p className="eyebrow">{t.bookDetails}</p>
+                          <h3>{book.title}</h3>
+                        </div>
+                        <button
+                          className="button secondary compact"
+                          type="button"
+                          onClick={() => setSelectedBookDetailId("")}
+                        >
+                          {t.close}
+                        </button>
+                      </div>
+                      <dl className="metadata-grid">
+                        <div>
+                          <dt>{t.status}</dt>
+                          <dd>{getBookStatusLabel(book)}</dd>
+                        </div>
+                        <div>
+                          <dt>{t.chunks}</dt>
+                          <dd>{book.chunkCount}</dd>
+                        </div>
+                        <div>
+                          <dt>{t.language}</dt>
+                          <dd>{book.language || "unknown"}</dd>
+                        </div>
+                        <div>
+                          <dt>{t.vectorReady}</dt>
+                          <dd>
+                            {book.embeddedChunkCount > 0
+                              ? `${book.embeddedChunkCount}/${book.chunkCount}`
+                              : t.notReadyYet}
+                          </dd>
+                        </div>
+                      </dl>
+                      {bookDetailMessage ? <p className="error-text">{bookDetailMessage}</p> : null}
+                      {bookChunkPreviews.length > 0 ? (
+                        <div className="chunk-preview-list">
+                          {bookChunkPreviews.map((chunk) => (
+                            <article key={chunk.id}>
+                              <h4>
+                                {t.sourceChunk} {chunk.chunkIndex + 1}
+                              </h4>
+                              <p>{chunk.textPreview}</p>
+                            </article>
+                          ))}
+                        </div>
+                      ) : null}
+                    </div>
+                  ))}
+              </section>
+            ) : null}
               </div>
             ) : null}
 
@@ -1195,6 +1396,48 @@ export function App() {
             <button className="button secondary" type="button" onClick={() => signOut(auth)}>
               {t.signOut}
             </button>
+            <div className="privacy-actions">
+              <button
+                className="button secondary"
+                type="button"
+                disabled={accountBusy}
+                onClick={exportMyData}
+              >
+                {t.exportData}
+              </button>
+              {confirmDeleteAccount ? (
+                <div className="inline-confirm">
+                  <p>{t.deleteAccountConfirm}</p>
+                  <div className="book-actions">
+                    <button
+                      className="button danger"
+                      type="button"
+                      disabled={accountBusy}
+                      onClick={deleteMyAccountData}
+                    >
+                      {accountBusy ? t.deletingAccount : t.deleteAccountData}
+                    </button>
+                    <button
+                      className="button secondary"
+                      type="button"
+                      disabled={accountBusy}
+                      onClick={() => setConfirmDeleteAccount(false)}
+                    >
+                      {t.cancel}
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <button
+                  className="button danger"
+                  type="button"
+                  disabled={accountBusy}
+                  onClick={() => setConfirmDeleteAccount(true)}
+                >
+                  {t.deleteAccountData}
+                </button>
+              )}
+            </div>
             {authError ? <p className="error-text">{authError}</p> : null}
           </section>
         </main>

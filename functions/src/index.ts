@@ -3,6 +3,7 @@ import { FieldValue, getFirestore, WriteBatch } from "firebase-admin/firestore";
 import { getStorage } from "firebase-admin/storage";
 import { onDocumentCreated } from "firebase-functions/v2/firestore";
 import { HttpsError, onCall } from "firebase-functions/v2/https";
+import { defineSecret } from "firebase-functions/params";
 import { PDFParse } from "pdf-parse";
 
 initializeApp();
@@ -29,6 +30,8 @@ const MAX_EXTRACTED_TEXT_BYTES = 2_500_000;
 const MAX_SEARCH_QUERY_LENGTH = 240;
 const MAX_SEARCH_RESULTS = 5;
 const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-4.1-mini";
+const OPENAI_EMBEDDING_MODEL = process.env.OPENAI_EMBEDDING_MODEL || "text-embedding-3-small";
+const openAiApiKey = defineSecret("OPENAI_API_KEY");
 const ACTIVE_BOOK_STATUSES = [
   "upload_reserved",
   "uploading",
@@ -58,6 +61,8 @@ type SourceBookSummary = {
   bookId: string;
   bookTitle: string;
 };
+
+type TextChunk = ReturnType<typeof chunkText>[number];
 
 function requireAuth(auth: AuthContext | undefined): AuthContext {
   if (!auth?.uid) {
@@ -271,6 +276,89 @@ function scorePhrase(text: string, query: string): number {
   return normalizedText.includes(normalizedQuery) ? 20 : 0;
 }
 
+function getOpenAiApiKey(): string {
+  try {
+    return openAiApiKey.value() || process.env.OPENAI_API_KEY || "";
+  } catch {
+    return process.env.OPENAI_API_KEY || "";
+  }
+}
+
+function cosineSimilarity(left: number[], right: number[]): number {
+  if (left.length === 0 || left.length !== right.length) {
+    return 0;
+  }
+
+  let dot = 0;
+  let leftNorm = 0;
+  let rightNorm = 0;
+  for (let index = 0; index < left.length; index += 1) {
+    dot += left[index] * right[index];
+    leftNorm += left[index] * left[index];
+    rightNorm += right[index] * right[index];
+  }
+
+  if (leftNorm === 0 || rightNorm === 0) {
+    return 0;
+  }
+
+  return dot / (Math.sqrt(leftNorm) * Math.sqrt(rightNorm));
+}
+
+async function createEmbeddings(texts: string[]): Promise<number[][]> {
+  const apiKey = getOpenAiApiKey();
+  if (!apiKey || texts.length === 0) {
+    return [];
+  }
+
+  const response = await fetch("https://api.openai.com/v1/embeddings", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      model: OPENAI_EMBEDDING_MODEL,
+      input: texts,
+    }),
+  });
+
+  if (!response.ok) {
+    console.error("OpenAI embedding generation failed", {
+      status: response.status,
+      statusText: response.statusText,
+    });
+    return [];
+  }
+
+  const payload = await response.json();
+  const data = Array.isArray(payload?.data) ? payload.data : [];
+  return data
+    .sort((left: { index?: number }, right: { index?: number }) => (left.index ?? 0) - (right.index ?? 0))
+    .map((item: { embedding?: unknown }) =>
+      Array.isArray(item.embedding)
+        ? item.embedding.filter((value): value is number => typeof value === "number")
+        : []
+    );
+}
+
+async function createChunkEmbeddingMap(chunks: TextChunk[]): Promise<Map<number, number[]>> {
+  const embeddingsByIndex = new Map<number, number[]>();
+  const batchSize = 64;
+
+  for (let start = 0; start < chunks.length; start += batchSize) {
+    const batch = chunks.slice(start, start + batchSize);
+    const embeddings = await createEmbeddings(batch.map((chunk) => chunk.text));
+    embeddings.forEach((embedding, offset) => {
+      if (embedding.length > 0) {
+        embeddingsByIndex.set(batch[offset].chunkIndex, embedding);
+      }
+    });
+  }
+
+  return embeddingsByIndex;
+}
+
 function nearestReadableStart(text: string, preferredStart: number): number {
   if (preferredStart <= 0) {
     return 0;
@@ -431,8 +519,10 @@ async function collectSearchableBooks(userId: string, bookId: string) {
 
 async function runLibrarySearch(userId: string, queryText: string, bookId = "") {
   const terms = tokenizeSearchQuery(queryText);
+  const queryEmbeddings = await createEmbeddings([queryText]);
+  const queryEmbedding = queryEmbeddings[0] ?? [];
 
-  if (terms.length === 0) {
+  if (terms.length === 0 && queryEmbedding.length === 0) {
     throw new HttpsError("invalid-argument", "Please use a more specific question.");
   }
 
@@ -463,9 +553,18 @@ async function runLibrarySearch(userId: string, queryText: string, bookId = "") 
       }
 
       const text = assertString(chunkSnapshot.get("text"), "text");
-      const score = scoreChunk(text, terms) + scorePhrase(text, queryText);
+      const embedding = chunkSnapshot.get("embedding");
+      const vectorSimilarity =
+        Array.isArray(embedding) && queryEmbedding.length > 0
+          ? cosineSimilarity(
+              embedding.filter((value): value is number => typeof value === "number"),
+              queryEmbedding
+            )
+          : 0;
+      const lexicalScore = scoreChunk(text, terms) + scorePhrase(text, queryText);
+      const score = lexicalScore + Math.max(0, vectorSimilarity) * 12;
 
-      if (score <= 0) {
+      if (score <= 0 || (lexicalScore <= 0 && vectorSimilarity < 0.18)) {
         return;
       }
 
@@ -574,7 +673,7 @@ async function createAiGroundedAnswer(
   results: LibrarySearchResult[],
   locale: string
 ): Promise<string | null> {
-  const apiKey = process.env.OPENAI_API_KEY;
+  const apiKey = getOpenAiApiKey();
   if (!apiKey || results.length === 0) {
     return null;
   }
@@ -620,11 +719,33 @@ async function ensureUserProfile(auth: AuthContext) {
   const now = FieldValue.serverTimestamp();
 
   if (snapshot.exists) {
+    const plan = snapshot.get("plan") || "free";
+    const currentLimits = snapshot.get("limits") ?? {};
+    const normalizedFreeLimits =
+      plan === "free"
+        ? {
+            maxBooks: Math.max(Number(currentLimits.maxBooks) || 0, FREE_LIMITS.maxBooks),
+            maxStorageBytes: Math.max(
+              Number(currentLimits.maxStorageBytes) || 0,
+              FREE_LIMITS.maxStorageBytes
+            ),
+            maxFileBytes: Math.max(Number(currentLimits.maxFileBytes) || 0, FREE_LIMITS.maxFileBytes),
+            monthlyMessages: Math.max(
+              Number(currentLimits.monthlyMessages) || 0,
+              FREE_LIMITS.monthlyMessages
+            ),
+            monthlyIngestions: Math.max(
+              Number(currentLimits.monthlyIngestions) || 0,
+              FREE_LIMITS.monthlyIngestions
+            ),
+          }
+        : currentLimits;
     await userRef.set(
       {
         email: auth.email ?? snapshot.get("email") ?? "",
         displayName: auth.name ?? snapshot.get("displayName") ?? "",
         photoURL: auth.picture ?? snapshot.get("photoURL") ?? "",
+        limits: normalizedFreeLimits,
         updatedAt: now,
         lastLoginAt: now,
       },
@@ -766,6 +887,54 @@ async function clearConversationMessages(conversationId: string) {
   }
 }
 
+async function clearUserConversations(userId: string) {
+  const snapshot = await db
+    .collection("conversations")
+    .where("userId", "==", userId)
+    .limit(100)
+    .get();
+
+  if (snapshot.empty) {
+    return;
+  }
+
+  for (const conversationSnapshot of snapshot.docs) {
+    await clearConversationMessages(conversationSnapshot.id);
+    await conversationSnapshot.ref.delete();
+  }
+
+  if (snapshot.size === 100) {
+    await clearUserConversations(userId);
+  }
+}
+
+async function clearUserBooks(userId: string) {
+  const snapshot = await db
+    .collection("books")
+    .where("userId", "==", userId)
+    .limit(50)
+    .get();
+
+  if (snapshot.empty) {
+    return;
+  }
+
+  for (const bookSnapshot of snapshot.docs) {
+    const storagePath =
+      typeof bookSnapshot.get("storagePath") === "string" ? bookSnapshot.get("storagePath") : "";
+    if (storagePath) {
+      await getStorage().bucket().file(storagePath).delete({ ignoreNotFound: true });
+    }
+    await clearExistingChunks(bookSnapshot.id);
+    await clearIngestionJobs(bookSnapshot.id);
+    await bookSnapshot.ref.delete();
+  }
+
+  if (snapshot.size === 50) {
+    await clearUserBooks(userId);
+  }
+}
+
 function summarizeSourceBooks(results: LibrarySearchResult[]): SourceBookSummary[] {
   const sourceBooks = new Map<string, string>();
 
@@ -799,12 +968,18 @@ async function refreshUserBookUsage(userId: string) {
   };
 }
 
-async function writeChunks(chunks: ReturnType<typeof chunkText>, userId: string, bookId: string) {
+async function writeChunks(
+  chunks: TextChunk[],
+  userId: string,
+  bookId: string,
+  embeddingsByIndex = new Map<number, number[]>()
+) {
   let batch: WriteBatch = db.batch();
   let writes = 0;
 
   for (const chunk of chunks) {
     const chunkRef = db.collection("bookChunks").doc(`${bookId}_${chunk.chunkIndex}`);
+    const embedding = embeddingsByIndex.get(chunk.chunkIndex);
     batch.set(chunkRef, {
       userId,
       bookId,
@@ -813,6 +988,12 @@ async function writeChunks(chunks: ReturnType<typeof chunkText>, userId: string,
       textPreview: chunk.textPreview,
       charStart: chunk.charStart,
       charEnd: chunk.charEnd,
+      ...(embedding
+        ? {
+            embedding,
+            embeddingModel: OPENAI_EMBEDDING_MODEL,
+          }
+        : {}),
       createdAt: FieldValue.serverTimestamp(),
     });
     writes += 1;
@@ -901,8 +1082,16 @@ async function processIngestionJobById(jobId: string) {
       throw new HttpsError("failed-precondition", "No text chunks could be created.");
     }
 
+    await jobRef.update({
+      stage: "embedding_chunks",
+      progress: 65,
+      updatedAt: FieldValue.serverTimestamp(),
+    });
+
+    const embeddingsByIndex = await createChunkEmbeddingMap(chunks);
+
     await clearExistingChunks(bookId);
-    await writeChunks(chunks, userId, bookId);
+    await writeChunks(chunks, userId, bookId, embeddingsByIndex);
 
     const language = detectLanguage(extraction.text);
     await db.runTransaction(async (transaction) => {
@@ -973,6 +1162,52 @@ export const syncUserProfile = onCall({ region: "us-central1" }, async (request)
     userId: auth.uid,
   };
 });
+
+export const exportAccountData = onCall(
+  { region: "us-central1", timeoutSeconds: 60, memory: "512MiB" },
+  async (request) => {
+    const auth = requireAuth(request.auth?.token
+      ? {
+          uid: request.auth.uid,
+          email: request.auth.token.email,
+          name: request.auth.token.name,
+          picture: request.auth.token.picture,
+        }
+      : undefined);
+
+    await ensureUserProfile(auth);
+
+    const [userSnapshot, booksSnapshot, conversationsSnapshot] = await Promise.all([
+      db.collection("users").doc(auth.uid).get(),
+      db.collection("books").where("userId", "==", auth.uid).get(),
+      db.collection("conversations").where("userId", "==", auth.uid).get(),
+    ]);
+    const conversations = await Promise.all(
+      conversationsSnapshot.docs.map(async (conversationSnapshot) => {
+        const messagesSnapshot = await conversationSnapshot.ref.collection("messages").get();
+        return {
+          id: conversationSnapshot.id,
+          ...conversationSnapshot.data(),
+          messages: messagesSnapshot.docs.map((messageSnapshot) => ({
+            id: messageSnapshot.id,
+            ...messageSnapshot.data(),
+          })),
+        };
+      })
+    );
+
+    return {
+      ok: true,
+      exportedAt: new Date().toISOString(),
+      user: userSnapshot.data() ?? {},
+      books: booksSnapshot.docs.map((bookSnapshot) => ({
+        id: bookSnapshot.id,
+        ...bookSnapshot.data(),
+      })),
+      conversations,
+    };
+  }
+);
 
 export const createUploadReservation = onCall(
   { region: "us-central1" },
@@ -1235,7 +1470,7 @@ export const deleteBook = onCall(
 );
 
 export const processIngestionJob = onCall(
-  { region: "us-central1", timeoutSeconds: 300, memory: "1GiB" },
+  { region: "us-central1", timeoutSeconds: 300, memory: "1GiB", secrets: [openAiApiKey] },
   async (request) => {
     const auth = requireAuth(request.auth?.token
       ? {
@@ -1262,6 +1497,7 @@ export const processQueuedIngestionJob = onDocumentCreated(
     region: "us-central1",
     timeoutSeconds: 300,
     memory: "1GiB",
+    secrets: [openAiApiKey],
   },
   async (event) => {
     const jobId = event.params.jobId;
@@ -1276,7 +1512,7 @@ export const processQueuedIngestionJob = onDocumentCreated(
 );
 
 export const searchLibrary = onCall(
-  { region: "us-central1", timeoutSeconds: 60, memory: "512MiB" },
+  { region: "us-central1", timeoutSeconds: 60, memory: "512MiB", secrets: [openAiApiKey] },
   async (request) => {
     const auth = requireAuth(request.auth?.token
       ? {
@@ -1304,7 +1540,7 @@ export const searchLibrary = onCall(
 );
 
 export const askLibrary = onCall(
-  { region: "us-central1", timeoutSeconds: 60, memory: "512MiB" },
+  { region: "us-central1", timeoutSeconds: 60, memory: "512MiB", secrets: [openAiApiKey] },
   async (request) => {
     const auth = requireAuth(request.auth?.token
       ? {
@@ -1438,6 +1674,102 @@ export const deleteConversation = onCall(
     return {
       ok: true,
       conversationId,
+    };
+  }
+);
+
+export const deleteAccountData = onCall(
+  { region: "us-central1", timeoutSeconds: 300, memory: "1GiB" },
+  async (request) => {
+    const auth = requireAuth(request.auth?.token
+      ? {
+          uid: request.auth.uid,
+          email: request.auth.token.email,
+          name: request.auth.token.name,
+          picture: request.auth.token.picture,
+        }
+      : undefined);
+
+    await clearUserBooks(auth.uid);
+    await clearUserConversations(auth.uid);
+    await db.collection("users").doc(auth.uid).delete();
+
+    return {
+      ok: true,
+      userId: auth.uid,
+    };
+  }
+);
+
+export const backfillBookEmbeddings = onCall(
+  { region: "us-central1", timeoutSeconds: 300, memory: "1GiB", secrets: [openAiApiKey] },
+  async (request) => {
+    const auth = requireAuth(request.auth?.token
+      ? {
+          uid: request.auth.uid,
+          email: request.auth.token.email,
+          name: request.auth.token.name,
+          picture: request.auth.token.picture,
+        }
+      : undefined);
+    const bookId = assertString(request.data?.bookId, "bookId");
+    const bookSnapshot = await db.collection("books").doc(bookId).get();
+
+    if (!bookSnapshot.exists || bookSnapshot.get("userId") !== auth.uid) {
+      throw new HttpsError("not-found", "Book was not found.");
+    }
+
+    const chunksSnapshot = await db
+      .collection("bookChunks")
+      .where("bookId", "==", bookId)
+      .limit(900)
+      .get();
+    const chunks: TextChunk[] = chunksSnapshot.docs
+      .filter((chunkSnapshot) => chunkSnapshot.get("userId") === auth.uid)
+      .map((chunkSnapshot) => ({
+        chunkIndex: Number(chunkSnapshot.get("chunkIndex")) || 0,
+        text: assertString(chunkSnapshot.get("text"), "text"),
+        textPreview:
+          typeof chunkSnapshot.get("textPreview") === "string"
+            ? chunkSnapshot.get("textPreview")
+            : assertString(chunkSnapshot.get("text"), "text").slice(0, 240),
+        charStart: Number(chunkSnapshot.get("charStart")) || 0,
+        charEnd: Number(chunkSnapshot.get("charEnd")) || 0,
+      }));
+    const embeddingsByIndex = await createChunkEmbeddingMap(chunks);
+    let batch: WriteBatch = db.batch();
+    let writes = 0;
+
+    chunksSnapshot.docs.forEach((chunkSnapshot) => {
+      const chunkIndex = Number(chunkSnapshot.get("chunkIndex")) || 0;
+      const embedding = embeddingsByIndex.get(chunkIndex);
+      if (!embedding) {
+        return;
+      }
+
+      batch.update(chunkSnapshot.ref, {
+        embedding,
+        embeddingModel: OPENAI_EMBEDDING_MODEL,
+        embeddedAt: FieldValue.serverTimestamp(),
+      });
+      writes += 1;
+    });
+
+    if (writes > 0) {
+      await batch.commit();
+    }
+
+    await bookSnapshot.ref.update({
+      embeddingModel: OPENAI_EMBEDDING_MODEL,
+      embeddedChunkCount: writes,
+      embeddedAt: FieldValue.serverTimestamp(),
+      updatedAt: FieldValue.serverTimestamp(),
+    });
+
+    return {
+      ok: true,
+      bookId,
+      embeddedChunkCount: writes,
     };
   }
 );

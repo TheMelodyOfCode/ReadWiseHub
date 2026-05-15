@@ -631,6 +631,62 @@ input {
   font-size: 1rem;
 }
 
+.book-detail-panel {
+  display: grid;
+  gap: 14px;
+  padding: 18px;
+  margin-bottom: 18px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: var(--shadow);
+}
+
+.metadata-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin: 0 0 14px;
+}
+
+.metadata-grid div {
+  padding: 12px;
+  border-radius: 8px;
+  background: var(--surface-strong);
+}
+
+.metadata-grid dt {
+  color: var(--muted);
+  font-weight: 800;
+}
+
+.metadata-grid dd {
+  margin: 4px 0 0;
+  color: var(--text);
+  font-weight: 900;
+}
+
+.chunk-preview-list {
+  display: grid;
+  gap: 10px;
+}
+
+.chunk-preview-list article {
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-strong);
+}
+
+.chunk-preview-list h4 {
+  margin: 0 0 8px;
+}
+
+.privacy-actions {
+  display: grid;
+  gap: 10px;
+}
+
 .history-list {
   display: grid;
   gap: 12px;
