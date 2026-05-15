@@ -566,6 +566,15 @@ input {
   font-weight: 800;
 }
 
+.history-warning {
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--border));
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  color: var(--text);
+  font-weight: 800;
+}
+
 .search-results article {
   padding: 14px;
   background: var(--surface-strong);
@@ -615,9 +624,26 @@ input {
   opacity: 0.62;
 }
 
+.button.compact {
+  min-height: 40px;
+  width: fit-content;
+  padding: 8px 12px;
+  font-size: 0.92rem;
+}
+
 .small-note,
 .selected-file {
   font-size: 0.96rem;
+}
+
+.selected-file {
+  padding: 12px;
+  border: 1px solid color-mix(in srgb, var(--primary) 42%, var(--border));
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--primary) 10%, transparent);
+  color: var(--text);
+  font-weight: 800;
+  overflow-wrap: anywhere;
 }
 
 .backend-lock {

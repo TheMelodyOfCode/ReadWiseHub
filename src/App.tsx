@@ -55,6 +55,9 @@ type ConversationRecord = {
   title: string;
   latestAnswerPreview: string;
   sourceCount: number;
+  sourceBookIds: string[];
+  hasUnavailableSources: boolean;
+  unavailableBookTitles: string[];
   updatedAtMs: number;
 };
 
@@ -176,6 +179,8 @@ export function App() {
   const [selectedBookScope, setSelectedBookScope] = useState("");
   const [deleteBusyId, setDeleteBusyId] = useState("");
   const [confirmDeleteBookId, setConfirmDeleteBookId] = useState("");
+  const [deleteConversationBusyId, setDeleteConversationBusyId] = useState("");
+  const [lastUploadedBookId, setLastUploadedBookId] = useState("");
   const [usage, setUsage] = useState<UserUsage>({
     messages: 0,
     monthlyMessages: 50,
@@ -190,6 +195,7 @@ export function App() {
     () => books.filter((book) => book.status === "text_ready"),
     [books]
   );
+  const activeBookIds = useMemo(() => new Set(books.map((book) => book.id)), [books]);
   const userLabel = user?.displayName || user?.email?.split("@")[0] || t.userFallback;
   const activeStorageBytes = useMemo(
     () => books.reduce((total, book) => total + book.sizeBytes, 0),
@@ -319,6 +325,13 @@ export function App() {
                     ? data.latestAnswerPreview
                     : "",
                 sourceCount: typeof data.sourceCount === "number" ? data.sourceCount : 0,
+                sourceBookIds: Array.isArray(data.sourceBookIds)
+                  ? data.sourceBookIds.filter((bookId) => typeof bookId === "string")
+                  : [],
+                hasUnavailableSources: data.hasUnavailableSources === true,
+                unavailableBookTitles: Array.isArray(data.unavailableBookTitles)
+                  ? data.unavailableBookTitles.filter((title) => typeof title === "string")
+                  : [],
                 updatedAtMs:
                   typeof data.updatedAt?.toMillis === "function"
                     ? data.updatedAt.toMillis()
@@ -336,6 +349,27 @@ export function App() {
       }
     );
   }, [t.untitledQuestion, user]);
+
+  useEffect(() => {
+    if (!lastUploadedBookId) {
+      return;
+    }
+
+    const uploadedBook = books.find((book) => book.id === lastUploadedBookId);
+    if (!uploadedBook) {
+      return;
+    }
+
+    if (uploadedBook.status === "text_ready") {
+      setUploadMessage(`${t.uploadReady}: ${uploadedBook.title}`);
+      setLastUploadedBookId("");
+      return;
+    }
+
+    if (uploadedBook.status === "processing") {
+      setUploadMessage(`${t.uploadProcessing}: ${uploadedBook.title}`);
+    }
+  }, [books, lastUploadedBookId, t.uploadProcessing, t.uploadReady]);
 
   async function handlePasswordAuth(
     event: FormEvent<HTMLFormElement>,
@@ -439,7 +473,8 @@ export function App() {
 
       await finalizeReservation({ bookId: reservation.data.bookId });
       setSelectedFile(null);
-      setUploadMessage("Upload queued.");
+      setLastUploadedBookId(reservation.data.bookId);
+      setUploadMessage(t.uploadQueued);
     } catch (error) {
       setUploadMessage(getErrorMessage(error, "Upload failed"));
     } finally {
@@ -570,6 +605,24 @@ export function App() {
     }
   }
 
+  async function deleteRecentQuestion(conversationId: string) {
+    setDeleteConversationBusyId(conversationId);
+    setAskMessage("");
+
+    try {
+      const deleteConversation = httpsCallable<
+        { conversationId: string },
+        { ok: boolean }
+      >(functions, "deleteConversation");
+      await deleteConversation({ conversationId });
+      setAskMessage(t.questionDeleted);
+    } catch (error) {
+      setAskMessage(getErrorMessage(error, "Delete failed"));
+    } finally {
+      setDeleteConversationBusyId("");
+    }
+  }
+
   if (user) {
     return (
       <div className="app-shell workspace-shell">
@@ -652,9 +705,9 @@ export function App() {
                 />
               </label>
               {selectedFile ? (
-                <p className="selected-file">
+                <div className="selected-file">
                   {t.selectedFile}: <strong>{selectedFile.name}</strong>
-                </p>
+                </div>
               ) : null}
               <button
                 className="button primary"
@@ -814,9 +867,28 @@ export function App() {
                       ) : (
                         <p>{t.historyNoPreview}</p>
                       )}
+                      {conversation.hasUnavailableSources ||
+                      conversation.sourceBookIds.some((bookId) => !activeBookIds.has(bookId)) ? (
+                        <p className="history-warning">
+                          {t.historyUnavailable}
+                          {conversation.unavailableBookTitles.length > 0
+                            ? ` ${conversation.unavailableBookTitles.join(", ")}`
+                            : ""}
+                        </p>
+                      ) : null}
                       <span>
                         {conversation.sourceCount} {t.historySources}
                       </span>
+                      <button
+                        className="button compact danger"
+                        type="button"
+                        disabled={deleteConversationBusyId === conversation.id}
+                        onClick={() => deleteRecentQuestion(conversation.id)}
+                      >
+                        {deleteConversationBusyId === conversation.id
+                          ? t.deletingQuestion
+                          : t.deleteQuestion}
+                      </button>
                     </article>
                   ))}
                 </div>

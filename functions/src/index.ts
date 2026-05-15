@@ -53,6 +53,11 @@ type LibrarySearchResult = {
   excerpt: string;
 };
 
+type SourceBookSummary = {
+  bookId: string;
+  bookTitle: string;
+};
+
 function requireAuth(auth: AuthContext | undefined): AuthContext {
   if (!auth?.uid) {
     throw new HttpsError("unauthenticated", "Sign in before using ReadWiseHub.");
@@ -646,6 +651,42 @@ async function clearIngestionJobs(bookId: string) {
   }
 }
 
+async function clearConversationMessages(conversationId: string) {
+  const snapshot = await db
+    .collection("conversations")
+    .doc(conversationId)
+    .collection("messages")
+    .limit(300)
+    .get();
+
+  if (snapshot.empty) {
+    return;
+  }
+
+  const batch = db.batch();
+  snapshot.docs.forEach((docSnapshot) => batch.delete(docSnapshot.ref));
+  await batch.commit();
+
+  if (snapshot.size === 300) {
+    await clearConversationMessages(conversationId);
+  }
+}
+
+function summarizeSourceBooks(results: LibrarySearchResult[]): SourceBookSummary[] {
+  const sourceBooks = new Map<string, string>();
+
+  results.forEach((result) => {
+    if (!sourceBooks.has(result.bookId)) {
+      sourceBooks.set(result.bookId, result.bookTitle);
+    }
+  });
+
+  return Array.from(sourceBooks.entries()).map(([bookId, bookTitle]) => ({
+    bookId,
+    bookTitle,
+  }));
+}
+
 async function refreshUserBookUsage(userId: string) {
   const [books, storageBytes] = await Promise.all([
     getActiveBookCount(userId),
@@ -1063,6 +1104,29 @@ export const deleteBook = onCall(
       await getStorage().bucket().file(storagePath).delete({ ignoreNotFound: true });
     }
 
+    const linkedConversations = await db
+      .collection("conversations")
+      .where("sourceBookIds", "array-contains", bookId)
+      .limit(300)
+      .get();
+    if (!linkedConversations.empty) {
+      const batch = db.batch();
+      linkedConversations.docs.forEach((conversationSnapshot) => {
+        if (conversationSnapshot.get("userId") !== auth.uid) {
+          return;
+        }
+
+        batch.update(conversationSnapshot.ref, {
+          hasUnavailableSources: true,
+          unavailableBookTitles: FieldValue.arrayUnion(
+            assertString(bookSnapshot.get("title"), "title")
+          ),
+          updatedAt: FieldValue.serverTimestamp(),
+        });
+      });
+      await batch.commit();
+    }
+
     await clearExistingChunks(bookId);
     await clearIngestionJobs(bookId);
     await bookRef.delete();
@@ -1168,6 +1232,7 @@ export const askLibrary = onCall(
 
     const results = await runLibrarySearch(auth.uid, queryText, bookId);
     const answer = createGroundedDraft(queryText, results, locale);
+    const sourceBooks = summarizeSourceBooks(results);
     const now = FieldValue.serverTimestamp();
     const userRef = db.collection("users").doc(auth.uid);
     const conversationRef = db.collection("conversations").doc();
@@ -1198,6 +1263,10 @@ export const askLibrary = onCall(
         latestAnswerPreview: answer.slice(0, 360),
         scopedBookId: bookId,
         scope: bookId ? "single_book" : "library",
+        sourceBookIds: sourceBooks.map((sourceBook) => sourceBook.bookId),
+        sourceBookTitles: sourceBooks.map((sourceBook) => sourceBook.bookTitle),
+        hasUnavailableSources: false,
+        unavailableBookTitles: [],
         createdAt: now,
         updatedAt: now,
       });
@@ -1233,6 +1302,35 @@ export const askLibrary = onCall(
       answer,
       conversationId: conversationRef.id,
       results,
+    };
+  }
+);
+
+export const deleteConversation = onCall(
+  { region: "us-central1", timeoutSeconds: 60, memory: "256MiB" },
+  async (request) => {
+    const auth = requireAuth(request.auth?.token
+      ? {
+          uid: request.auth.uid,
+          email: request.auth.token.email,
+          name: request.auth.token.name,
+          picture: request.auth.token.picture,
+        }
+      : undefined);
+    const conversationId = assertString(request.data?.conversationId, "conversationId");
+    const conversationRef = db.collection("conversations").doc(conversationId);
+    const conversationSnapshot = await conversationRef.get();
+
+    if (!conversationSnapshot.exists || conversationSnapshot.get("userId") !== auth.uid) {
+      throw new HttpsError("not-found", "Question was not found.");
+    }
+
+    await clearConversationMessages(conversationId);
+    await conversationRef.delete();
+
+    return {
+      ok: true,
+      conversationId,
     };
   }
 );
