@@ -28,7 +28,7 @@ service cloud.firestore {
         ])
         && request.resource.data.plan == 'free'
         && request.resource.data.subscriptionStatus == 'none'
-        && request.resource.data.limits.maxBooks == 1
+        && request.resource.data.limits.maxBooks == 2
         && request.resource.data.limits.maxStorageBytes == 20 * 1024 * 1024
         && request.resource.data.limits.maxFileBytes == 20 * 1024 * 1024
         && request.resource.data.limits.monthlyMessages == 50

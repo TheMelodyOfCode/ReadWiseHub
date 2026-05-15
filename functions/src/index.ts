@@ -8,7 +8,7 @@ initializeApp();
 const db = getFirestore();
 
 const FREE_LIMITS = {
-  maxBooks: 1,
+  maxBooks: 2,
   maxStorageBytes: 20 * 1024 * 1024,
   maxFileBytes: 20 * 1024 * 1024,
   monthlyMessages: 50,
@@ -175,7 +175,7 @@ export const createUploadReservation = onCall(
     if (activeBookCount >= FREE_LIMITS.maxBooks) {
       throw new HttpsError(
         "resource-exhausted",
-        "The current Free plan allows one active book."
+        `The current Free plan allows ${FREE_LIMITS.maxBooks} active books.`
       );
     }
 

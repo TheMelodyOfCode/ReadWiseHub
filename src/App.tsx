@@ -80,7 +80,7 @@ async function ensureUserRecord(user: User, locale: Locale, theme: Theme) {
       locale,
       theme,
       limits: {
-        maxBooks: 1,
+        maxBooks: 2,
         maxStorageBytes: 20 * 1024 * 1024,
         maxFileBytes: 20 * 1024 * 1024,
         monthlyMessages: 50,
@@ -100,7 +100,9 @@ async function ensureUserRecord(user: User, locale: Locale, theme: Theme) {
 
 function getErrorMessage(error: unknown, fallback: string) {
   if (error instanceof FirebaseError) {
-    return `${fallback} (${error.code})`;
+    return error.message
+      ? `${fallback}: ${error.message} (${error.code})`
+      : `${fallback} (${error.code})`;
   }
 
   if (error instanceof Error && error.message) {
@@ -602,7 +604,7 @@ export function App() {
             <div className="dashboard-grid">
               <article>
                 <h3>Free</h3>
-                <p>1 book · 20 MB · 50 messages/month</p>
+                <p>2 books · 20 MB · 50 messages/month</p>
               </article>
               <article>
                 <h3>Secure foundation</h3>
