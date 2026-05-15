@@ -18,7 +18,9 @@ import {
   setDoc,
   where,
 } from "firebase/firestore";
-import { auth, db, googleProvider } from "./firebase";
+import { httpsCallable } from "firebase/functions";
+import { ref, uploadBytesResumable } from "firebase/storage";
+import { auth, db, functions, googleProvider, storage } from "./firebase";
 import { Locale, detectInitialLocale, dictionaries } from "./i18n";
 
 type Theme = "light" | "dark";
@@ -29,6 +31,14 @@ type BookRecord = {
   status: string;
   sizeBytes: number;
 };
+
+const UPLOAD_BACKEND_ENABLED = false;
+const MAX_FREE_FILE_BYTES = 20 * 1024 * 1024;
+const ALLOWED_UPLOAD_TYPES = new Set([
+  "application/pdf",
+  "text/plain",
+  "text/markdown",
+]);
 
 function getInitialTheme(): Theme {
   const stored = window.localStorage.getItem("readwisehub_theme");
@@ -111,6 +121,9 @@ export function App() {
   const [status, setStatus] = useState("");
   const [books, setBooks] = useState<BookRecord[]>([]);
   const [booksReady, setBooksReady] = useState(false);
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [uploadMessage, setUploadMessage] = useState("");
+  const [uploadBusy, setUploadBusy] = useState(false);
 
   const t = useMemo(() => dictionaries[locale], [locale]);
 
@@ -209,6 +222,78 @@ export function App() {
     }
   }
 
+  function handleFileSelection(file: File | undefined) {
+    setUploadMessage("");
+
+    if (!file) {
+      setSelectedFile(null);
+      return;
+    }
+
+    if (file.size > MAX_FREE_FILE_BYTES) {
+      setSelectedFile(null);
+      setUploadMessage(t.fileTooLarge);
+      return;
+    }
+
+    if (!ALLOWED_UPLOAD_TYPES.has(file.type)) {
+      setSelectedFile(null);
+      setUploadMessage(t.fileTypeBlocked);
+      return;
+    }
+
+    setSelectedFile(file);
+    setUploadMessage("");
+  }
+
+  async function reserveAndUploadFile() {
+    if (!selectedFile || !UPLOAD_BACKEND_ENABLED) {
+      setUploadMessage(t.uploadBlocked);
+      return;
+    }
+
+    setUploadBusy(true);
+    setUploadMessage("");
+
+    try {
+      const createReservation = httpsCallable<
+        { fileName: string; contentType: string; sizeBytes: number },
+        { bookId: string; storagePath: string }
+      >(functions, "createUploadReservation");
+      const finalizeReservation = httpsCallable<
+        { bookId: string },
+        { bookId: string; jobId: string; status: string }
+      >(functions, "finalizeUploadReservation");
+
+      const reservation = await createReservation({
+        fileName: selectedFile.name,
+        contentType: selectedFile.type,
+        sizeBytes: selectedFile.size,
+      });
+      const uploadRef = ref(storage, reservation.data.storagePath);
+      const uploadTask = uploadBytesResumable(uploadRef, selectedFile, {
+        contentType: selectedFile.type,
+      });
+
+      await new Promise<void>((resolve, reject) => {
+        uploadTask.on(
+          "state_changed",
+          undefined,
+          reject,
+          () => resolve()
+        );
+      });
+
+      await finalizeReservation({ bookId: reservation.data.bookId });
+      setSelectedFile(null);
+      setUploadMessage("Upload queued.");
+    } catch (error) {
+      setUploadMessage(getErrorMessage(error, "Upload failed"));
+    } finally {
+      setUploadBusy(false);
+    }
+  }
+
   if (user) {
     return (
       <div className="app-shell workspace-shell">
@@ -251,9 +336,40 @@ export function App() {
                 <p className="eyebrow">{t.navLibrary}</p>
                 <h2>{t.libraryTitle}</h2>
               </div>
-              <button className="button primary" type="button" disabled>
+            </div>
+
+            <div className="upload-panel">
+              <div>
+                <h3>{t.uploadTitle}</h3>
+                <p>{t.uploadCopy}</p>
+                <p className="small-note">{t.allowedFiles}</p>
+              </div>
+              <label className="file-picker">
+                {t.chooseFile}
+                <input
+                  type="file"
+                  accept=".pdf,.txt,.md,application/pdf,text/plain,text/markdown"
+                  onChange={(event) => handleFileSelection(event.target.files?.[0])}
+                />
+              </label>
+              {selectedFile ? (
+                <p className="selected-file">
+                  {t.selectedFile}: <strong>{selectedFile.name}</strong>
+                </p>
+              ) : null}
+              <button
+                className="button primary"
+                type="button"
+                disabled={!selectedFile || uploadBusy || !UPLOAD_BACKEND_ENABLED}
+                onClick={reserveAndUploadFile}
+              >
                 Upload
               </button>
+              <div className="backend-lock">
+                <h3>{t.uploadBlockedTitle}</h3>
+                <p>{t.uploadBlocked}</p>
+              </div>
+              {uploadMessage ? <p className="error-text">{uploadMessage}</p> : null}
             </div>
 
             {!booksReady ? (

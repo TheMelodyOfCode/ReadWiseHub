@@ -39,6 +39,17 @@ export const dictionaries: Record<Locale, Dictionary> = {
     libraryEmptyTitle: "No books yet",
     libraryEmpty:
       "The upload pipeline is the next implementation step. For now, this library is ready to show only books that belong to your account.",
+    uploadTitle: "Upload a document",
+    uploadCopy:
+      "Upload is prepared in the interface, but it stays locked until Firebase Storage is initialized and Functions can be deployed on Blaze.",
+    uploadBlockedTitle: "Upload backend pending",
+    uploadBlocked:
+      "Firebase Storage and callable Functions must be live before files can be uploaded safely.",
+    chooseFile: "Choose file",
+    selectedFile: "Selected file",
+    allowedFiles: "PDF, TXT, or Markdown up to 20 MB.",
+    fileTooLarge: "This file is larger than the 20 MB Free limit.",
+    fileTypeBlocked: "Only PDF, TXT, and Markdown files are allowed right now.",
     usageTitle: "Your Free limits",
     usageBooks: "1 book",
     usageStorage: "20 MB storage",
@@ -96,6 +107,17 @@ export const dictionaries: Record<Locale, Dictionary> = {
     libraryEmptyTitle: "Noch keine Bücher",
     libraryEmpty:
       "Die Upload-Strecke ist der nächste Umsetzungsschritt. Diese Bibliothek ist vorbereitet und zeigt später nur Bücher, die zu deinem Konto gehören.",
+    uploadTitle: "Dokument hochladen",
+    uploadCopy:
+      "Der Upload ist in der Oberfläche vorbereitet, bleibt aber gesperrt, bis Firebase Storage eingerichtet ist und Functions auf Blaze deployt werden können.",
+    uploadBlockedTitle: "Upload-Backend fehlt noch",
+    uploadBlocked:
+      "Firebase Storage und Callable Functions müssen live sein, bevor Dateien sicher hochgeladen werden können.",
+    chooseFile: "Datei auswählen",
+    selectedFile: "Ausgewählte Datei",
+    allowedFiles: "PDF, TXT oder Markdown bis 20 MB.",
+    fileTooLarge: "Diese Datei ist größer als das Free-Limit von 20 MB.",
+    fileTypeBlocked: "Aktuell sind nur PDF, TXT und Markdown erlaubt.",
     usageTitle: "Deine Free-Grenzen",
     usageBooks: "1 Buch",
     usageStorage: "20 MB Speicher",
