@@ -1019,6 +1019,8 @@ export const askLibrary = onCall(
         sourceCount: results.length,
         latestQuestion: queryText,
         latestAnswerPreview: answer.slice(0, 360),
+        scopedBookId: bookId,
+        scope: bookId ? "single_book" : "library",
         createdAt: now,
         updatedAt: now,
       });

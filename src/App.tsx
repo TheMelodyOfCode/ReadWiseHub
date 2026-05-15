@@ -163,6 +163,7 @@ export function App() {
   const [askSources, setAskSources] = useState<LibrarySearchResult[]>([]);
   const [conversations, setConversations] = useState<ConversationRecord[]>([]);
   const [conversationsReady, setConversationsReady] = useState(false);
+  const [selectedBookScope, setSelectedBookScope] = useState("");
 
   const t = useMemo(() => dictionaries[locale], [locale]);
   const textReadyBooks = useMemo(
@@ -435,10 +436,13 @@ export function App() {
 
     try {
       const searchLibrary = httpsCallable<
-        { query: string },
+        { query: string; bookId?: string },
         { ok: boolean; results: LibrarySearchResult[] }
       >(functions, "searchLibrary");
-      const response = await searchLibrary({ query: searchQuestion.trim() });
+      const response = await searchLibrary({
+        query: searchQuestion.trim(),
+        bookId: selectedBookScope || undefined,
+      });
       const results = response.data.results ?? [];
       setSearchResults(results);
       setSearchMessage(results.length === 0 ? t.noSearchResults : "");
@@ -463,12 +467,13 @@ export function App() {
 
     try {
       const askLibrary = httpsCallable<
-        { query: string; locale: Locale },
+        { query: string; locale: Locale; bookId?: string },
         AskLibraryResponse
       >(functions, "askLibrary");
       const response = await askLibrary({
         query: askQuestion.trim(),
         locale,
+        bookId: selectedBookScope || undefined,
       });
       setAskAnswer(response.data.answer);
       setAskSources(response.data.results ?? []);
@@ -572,6 +577,21 @@ export function App() {
                 <p>{t.askCopy}</p>
               </div>
               <label>
+                {t.bookScope}
+                <select
+                  value={selectedBookScope}
+                  onChange={(event) => setSelectedBookScope(event.target.value)}
+                  disabled={textReadyBooks.length === 0}
+                >
+                  <option value="">{t.allReadyBooks}</option>
+                  {textReadyBooks.map((book) => (
+                    <option key={book.id} value={book.id}>
+                      {book.title}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
                 {t.askLabel}
                 <input
                   type="search"
@@ -614,6 +634,21 @@ export function App() {
                 <h3>{t.searchTitle}</h3>
                 <p>{t.searchCopy}</p>
               </div>
+              <label>
+                {t.bookScope}
+                <select
+                  value={selectedBookScope}
+                  onChange={(event) => setSelectedBookScope(event.target.value)}
+                  disabled={textReadyBooks.length === 0}
+                >
+                  <option value="">{t.allReadyBooks}</option>
+                  {textReadyBooks.map((book) => (
+                    <option key={book.id} value={book.id}>
+                      {book.title}
+                    </option>
+                  ))}
+                </select>
+              </label>
               <label>
                 {t.searchLabel}
                 <input
