@@ -189,6 +189,7 @@ export function App() {
     () => books.filter((book) => book.status === "text_ready"),
     [books]
   );
+  const userLabel = user?.displayName || user?.email?.split("@")[0] || t.userFallback;
   const activeStorageBytes = useMemo(
     () => books.reduce((total, book) => total + book.sizeBytes, 0),
     [books]
@@ -588,6 +589,22 @@ export function App() {
             <a href="#library">{t.navLibrary}</a>
             <a href="#account">{t.navAccount}</a>
           </nav>
+
+          <div className="user-header-actions">
+            <span className="welcome-user">
+              {t.welcomeBack}, <strong>{userLabel}</strong>
+            </span>
+            <button
+              className="button header-button"
+              type="button"
+              onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
+            >
+              {theme === "dark" ? t.light : t.dark}
+            </button>
+            <button className="button header-button" type="button" onClick={() => signOut(auth)}>
+              {t.signOut}
+            </button>
+          </div>
         </header>
 
         <main>

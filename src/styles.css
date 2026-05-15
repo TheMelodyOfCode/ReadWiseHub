@@ -76,6 +76,7 @@ select {
   align-items: center;
   justify-content: space-between;
   gap: 16px;
+  flex-wrap: wrap;
   padding: 14px clamp(16px, 4vw, 48px);
   background: color-mix(in srgb, var(--bg) 88%, transparent);
   border-bottom: 1px solid var(--border);
@@ -116,6 +117,32 @@ select {
 
 .top-nav a {
   text-decoration: none;
+}
+
+.user-header-actions {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.welcome-user {
+  width: 100%;
+  color: var(--muted);
+  font-size: 0.95rem;
+}
+
+.welcome-user strong {
+  color: var(--text);
+}
+
+.header-button {
+  min-height: 42px;
+  padding: 9px 12px;
+  background: var(--surface);
+  color: var(--text);
+  border-color: var(--border);
 }
 
 .hero {
@@ -595,6 +622,20 @@ input {
 @media (min-width: 720px) {
   .top-nav {
     display: flex;
+  }
+
+  .user-header-actions {
+    width: auto;
+    justify-content: flex-end;
+    margin-left: auto;
+  }
+
+  .welcome-user {
+    width: auto;
+    max-width: 220px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 
   .controls-band {
