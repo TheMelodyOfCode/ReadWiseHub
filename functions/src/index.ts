@@ -213,6 +213,58 @@ function scoreChunk(text: string, terms: string[]): number {
   }, 0);
 }
 
+function scorePhrase(text: string, query: string): number {
+  const normalizedText = text.toLowerCase().replace(/\s+/g, " ");
+  const normalizedQuery = query.toLowerCase().replace(/\s+/g, " ").trim();
+
+  if (normalizedQuery.length < 8) {
+    return 0;
+  }
+
+  return normalizedText.includes(normalizedQuery) ? 20 : 0;
+}
+
+function nearestReadableStart(text: string, preferredStart: number): number {
+  if (preferredStart <= 0) {
+    return 0;
+  }
+
+  const windowStart = Math.max(0, preferredStart - 80);
+  const slice = text.slice(windowStart, preferredStart + 1);
+  const sentenceBreak = Math.max(
+    slice.lastIndexOf(". "),
+    slice.lastIndexOf("! "),
+    slice.lastIndexOf("? "),
+    slice.lastIndexOf("\n")
+  );
+
+  if (sentenceBreak >= 0) {
+    return windowStart + sentenceBreak + 2;
+  }
+
+  const spaceBreak = slice.lastIndexOf(" ");
+  return spaceBreak >= 0 ? windowStart + spaceBreak + 1 : preferredStart;
+}
+
+function nearestReadableEnd(text: string, preferredEnd: number): number {
+  if (preferredEnd >= text.length) {
+    return text.length;
+  }
+
+  const windowEnd = Math.min(text.length, preferredEnd + 80);
+  const slice = text.slice(preferredEnd, windowEnd);
+  const sentenceBreaks = [slice.indexOf(". "), slice.indexOf("! "), slice.indexOf("? ")].filter(
+    (index) => index >= 0
+  );
+
+  if (sentenceBreaks.length > 0) {
+    return preferredEnd + Math.min(...sentenceBreaks) + 1;
+  }
+
+  const spaceBreak = slice.indexOf(" ");
+  return spaceBreak >= 0 ? preferredEnd + spaceBreak : preferredEnd;
+}
+
 function createExcerpt(text: string, terms: string[]): string {
   const lower = text.toLowerCase();
   const firstMatch = terms
@@ -220,8 +272,8 @@ function createExcerpt(text: string, terms: string[]): string {
     .filter((index) => index >= 0)
     .sort((left, right) => left - right)[0];
   const center = firstMatch ?? 0;
-  const start = Math.max(0, center - 180);
-  const end = Math.min(text.length, center + 420);
+  const start = nearestReadableStart(text, Math.max(0, center - 180));
+  const end = nearestReadableEnd(text, Math.min(text.length, center + 420));
   const prefix = start > 0 ? "... " : "";
   const suffix = end < text.length ? " ..." : "";
 
@@ -780,7 +832,7 @@ export const searchLibrary = onCall(
         }
 
         const text = assertString(chunkSnapshot.get("text"), "text");
-        const score = scoreChunk(text, terms);
+        const score = scoreChunk(text, terms) + scorePhrase(text, queryText);
 
         if (score <= 0) {
           return;
