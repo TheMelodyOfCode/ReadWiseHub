@@ -133,7 +133,12 @@ function chunkText(text: string) {
       break;
     }
 
-    start = Math.max(0, end - CHUNK_OVERLAP);
+    const nextStart = Math.max(0, end - CHUNK_OVERLAP);
+    const nextWhitespace = text.indexOf(" ", nextStart);
+    start =
+      nextWhitespace > nextStart && nextWhitespace - nextStart <= 80
+        ? nextWhitespace + 1
+        : nextStart;
   }
 
   return chunks;
@@ -296,6 +301,43 @@ function avoidWordEndCut(text: string, end: number): number {
   return safeEnd;
 }
 
+function trimLeadingChunkFragment(text: string, start: number): { start: number; fragmentTrimmed: boolean } {
+  if (start !== 0 || text.length === 0) {
+    return {
+      start,
+      fragmentTrimmed: false,
+    };
+  }
+
+  const firstWord = text.match(/^\S+/)?.[0] ?? "";
+  const firstBreak = text.search(/\s/);
+
+  if (
+    firstWord.length > 0 &&
+    firstBreak > 0 &&
+    !/^[A-Z0-9"'(<[]/.test(firstWord) &&
+    !/^[.!?]/.test(firstWord)
+  ) {
+    return {
+      start: firstBreak + 1,
+      fragmentTrimmed: true,
+    };
+  }
+
+  if (/^[,;:)]/.test(text)) {
+    const nextWord = text.search(/[A-Za-z0-9]/);
+    return {
+      start: nextWord > 0 ? nextWord : start,
+      fragmentTrimmed: nextWord > 0,
+    };
+  }
+
+  return {
+    start,
+    fragmentTrimmed: false,
+  };
+}
+
 function createExcerpt(text: string, terms: string[]): string {
   const lower = text.toLowerCase();
   const firstMatch = terms
@@ -303,9 +345,11 @@ function createExcerpt(text: string, terms: string[]): string {
     .filter((index) => index >= 0)
     .sort((left, right) => left - right)[0];
   const center = firstMatch ?? 0;
-  const start = avoidWordStartCut(text, nearestReadableStart(text, Math.max(0, center - 180)));
+  const initialStart = avoidWordStartCut(text, nearestReadableStart(text, Math.max(0, center - 180)));
+  const cleanedStart = trimLeadingChunkFragment(text, initialStart);
+  const start = cleanedStart.start;
   const end = avoidWordEndCut(text, nearestReadableEnd(text, Math.min(text.length, center + 420)));
-  const prefix = start > 0 ? "... " : "";
+  const prefix = start > 0 || cleanedStart.fragmentTrimmed ? "... " : "";
   const suffix = end < text.length ? " ..." : "";
 
   return `${prefix}${text.slice(start, end).trim()}${suffix}`;
