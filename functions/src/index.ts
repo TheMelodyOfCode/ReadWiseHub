@@ -28,6 +28,15 @@ const CHUNK_OVERLAP = 160;
 const MAX_EXTRACTED_TEXT_BYTES = 2_500_000;
 const MAX_SEARCH_QUERY_LENGTH = 240;
 const MAX_SEARCH_RESULTS = 5;
+const ACTIVE_BOOK_STATUSES = [
+  "upload_reserved",
+  "uploading",
+  "queued",
+  "processing",
+  "text_ready",
+  "ready",
+  "failed",
+];
 
 type AuthContext = {
   uid: string;
@@ -533,17 +542,23 @@ async function getActiveBookCount(userId: string): Promise<number> {
   const snapshot = await db
     .collection("books")
     .where("userId", "==", userId)
-    .where("status", "in", [
-      "upload_reserved",
-      "uploading",
-      "queued",
-      "processing",
-      "ready",
-      "failed",
-    ])
+    .where("status", "in", ACTIVE_BOOK_STATUSES)
     .get();
 
   return snapshot.size;
+}
+
+async function getActiveStorageBytes(userId: string): Promise<number> {
+  const snapshot = await db
+    .collection("books")
+    .where("userId", "==", userId)
+    .where("status", "in", ACTIVE_BOOK_STATUSES)
+    .get();
+
+  return snapshot.docs.reduce((total, bookSnapshot) => {
+    const sizeBytes = Number(bookSnapshot.get("sizeBytes"));
+    return total + (Number.isFinite(sizeBytes) && sizeBytes > 0 ? sizeBytes : 0);
+  }, 0);
 }
 
 async function extractTextFromStorageFile(storagePath: string, contentType: string) {
@@ -805,6 +820,14 @@ export const createUploadReservation = onCall(
       );
     }
 
+    const activeStorageBytes = await getActiveStorageBytes(auth.uid);
+    if (activeStorageBytes + sizeBytes > FREE_LIMITS.maxStorageBytes) {
+      throw new HttpsError(
+        "resource-exhausted",
+        "This upload would exceed the current Free storage limit."
+      );
+    }
+
     const bookRef = db.collection("books").doc();
     const storagePath = `userUploads/${auth.uid}/${bookRef.id}/${fileName}`;
     const now = FieldValue.serverTimestamp();
@@ -880,6 +903,24 @@ export const finalizeUploadReservation = onCall(
 
     const jobRef = db.collection("ingestionJobs").doc();
     const now = FieldValue.serverTimestamp();
+    const userRef = db.collection("users").doc(auth.uid);
+    const activeBookCount = await getActiveBookCount(auth.uid);
+    const activeStorageBytes = await getActiveStorageBytes(auth.uid);
+    const currentBookSize = Number(bookSnapshot.get("sizeBytes")) || 0;
+
+    if (activeBookCount > FREE_LIMITS.maxBooks) {
+      throw new HttpsError(
+        "resource-exhausted",
+        `The current Free plan allows ${FREE_LIMITS.maxBooks} active books.`
+      );
+    }
+
+    if (activeStorageBytes - currentBookSize + sizeBytes > FREE_LIMITS.maxStorageBytes) {
+      throw new HttpsError(
+        "resource-exhausted",
+        "This upload would exceed the current Free storage limit."
+      );
+    }
 
     await db.runTransaction(async (transaction) => {
       transaction.update(bookRef, {
@@ -899,6 +940,13 @@ export const finalizeUploadReservation = onCall(
         errorCode: "",
         errorMessageSafe: "",
         createdAt: now,
+        updatedAt: now,
+      });
+
+      transaction.update(userRef, {
+        "usageCurrentPeriod.books": activeBookCount,
+        "usageCurrentPeriod.storageBytes": activeStorageBytes - currentBookSize + sizeBytes,
+        "usageCurrentPeriod.ingestions": FieldValue.increment(1),
         updatedAt: now,
       });
     });
@@ -1057,14 +1105,10 @@ export const askLibrary = onCall(
         })),
         createdAt: now,
       });
-      transaction.set(
-        userRef,
-        {
-          "usageCurrentPeriod.messages": FieldValue.increment(1),
-          updatedAt: now,
-        },
-        { merge: true }
-      );
+      transaction.update(userRef, {
+        "usageCurrentPeriod.messages": FieldValue.increment(1),
+        updatedAt: now,
+      });
     });
 
     return {
