@@ -32,7 +32,7 @@ type BookRecord = {
   sizeBytes: number;
 };
 
-const UPLOAD_BACKEND_ENABLED = false;
+const UPLOAD_BACKEND_ENABLED = true;
 const MAX_FREE_FILE_BYTES = 20 * 1024 * 1024;
 const ALLOWED_UPLOAD_TYPES = new Set([
   "application/pdf",
