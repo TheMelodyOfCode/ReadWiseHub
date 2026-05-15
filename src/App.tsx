@@ -66,6 +66,7 @@ type LibrarySearchResult = {
 type AskLibraryResponse = {
   ok: boolean;
   answer: string;
+  mode: string;
   conversationId: string;
   results: LibrarySearchResult[];
 };
@@ -73,12 +74,28 @@ type AskLibraryResponse = {
 type ConversationRecord = {
   id: string;
   title: string;
+  mode: string;
   latestAnswerPreview: string;
   sourceCount: number;
   sourceBookIds: string[];
   hasUnavailableSources: boolean;
   unavailableBookTitles: string[];
   updatedAtMs: number;
+};
+
+type ConversationMessage = {
+  id: string;
+  role: string;
+  text: string;
+  mode: string;
+  sources: LibrarySearchResult[];
+};
+
+type ConversationDetail = {
+  id: string;
+  title: string;
+  mode: string;
+  messages: ConversationMessage[];
 };
 
 type UserUsage = {
@@ -194,9 +211,12 @@ export function App() {
   const [askMessage, setAskMessage] = useState("");
   const [askBusy, setAskBusy] = useState(false);
   const [askAnswer, setAskAnswer] = useState("");
+  const [askMode, setAskMode] = useState("");
   const [askSources, setAskSources] = useState<LibrarySearchResult[]>([]);
   const [conversations, setConversations] = useState<ConversationRecord[]>([]);
   const [conversationsReady, setConversationsReady] = useState(false);
+  const [conversationDetail, setConversationDetail] = useState<ConversationDetail | null>(null);
+  const [conversationDetailBusyId, setConversationDetailBusyId] = useState("");
   const [selectedBookScope, setSelectedBookScope] = useState("");
   const [deleteBusyId, setDeleteBusyId] = useState("");
   const [confirmDeleteBookId, setConfirmDeleteBookId] = useState("");
@@ -409,6 +429,7 @@ export function App() {
               return {
                 id: conversationDoc.id,
                 title: typeof data.title === "string" ? data.title : t.untitledQuestion,
+                mode: typeof data.mode === "string" ? data.mode : "",
                 latestAnswerPreview:
                   typeof data.latestAnswerPreview === "string"
                     ? data.latestAnswerPreview
@@ -701,6 +722,7 @@ export function App() {
     setAskBusy(true);
     setAskMessage("");
     setAskAnswer("");
+    setAskMode("");
     setAskSources([]);
 
     try {
@@ -714,6 +736,7 @@ export function App() {
         bookId: selectedBookScope || undefined,
       });
       setAskAnswer(response.data.answer);
+      setAskMode(response.data.mode);
       setAskSources(response.data.results ?? []);
       setAskMessage(response.data.results.length === 0 ? t.noSearchResults : "");
     } catch (error) {
@@ -769,32 +792,41 @@ export function App() {
     setBookChunkPreviews([]);
 
     try {
-      const chunksQuery = query(
-        collection(db, "bookChunks"),
-        where("userId", "==", user?.uid ?? ""),
-        where("bookId", "==", book.id)
-      );
-      const snapshot = await getDocs(chunksQuery);
+      const getBookDetail = httpsCallable<
+        { bookId: string },
+        { ok: boolean; chunks: BookChunkPreview[] }
+      >(functions, "getBookDetail");
+      const response = await getBookDetail({ bookId: book.id });
       setBookChunkPreviews(
-        snapshot.docs
-          .map((chunkDoc) => {
-            const data = chunkDoc.data();
-            return {
-              id: chunkDoc.id,
-              chunkIndex: typeof data.chunkIndex === "number" ? data.chunkIndex : 0,
-              textPreview:
-                typeof data.textPreview === "string"
-                  ? data.textPreview
-                  : typeof data.text === "string"
-                    ? data.text.slice(0, 240)
-                    : "",
-            };
-          })
+        (response.data.chunks ?? [])
           .sort((left, right) => left.chunkIndex - right.chunkIndex)
           .slice(0, 12)
       );
     } catch (error) {
       setBookDetailMessage(getErrorMessage(error, "Book detail failed"));
+    }
+  }
+
+  async function openConversationDetail(conversationId: string) {
+    setConversationDetailBusyId(conversationId);
+    setAskMessage("");
+
+    try {
+      const getConversationDetail = httpsCallable<
+        { conversationId: string },
+        { ok: boolean; conversation: { id: string; title: string; mode: string }; messages: ConversationMessage[] }
+      >(functions, "getConversationDetail");
+      const response = await getConversationDetail({ conversationId });
+      setConversationDetail({
+        id: response.data.conversation.id,
+        title: response.data.conversation.title,
+        mode: response.data.conversation.mode,
+        messages: response.data.messages ?? [],
+      });
+    } catch (error) {
+      setAskMessage(getErrorMessage(error, "Question detail failed"));
+    } finally {
+      setConversationDetailBusyId("");
     }
   }
 
@@ -1257,7 +1289,14 @@ export function App() {
               {askMessage ? <p className="error-text">{askMessage}</p> : null}
               {askAnswer ? (
                 <div className="answer-box">
-                  <h4>{t.answerTitle}</h4>
+                  <div className="answer-heading">
+                    <h4>{t.answerTitle}</h4>
+                    {askMode ? (
+                      <span className="mode-badge">
+                        {askMode === "ai_grounded" ? t.aiGroundedMode : t.sourceDraftMode}
+                      </span>
+                    ) : null}
+                  </div>
                   <p>{askAnswer}</p>
                   {askSources.length > 0 ? (
                     <div className="source-pills">
@@ -1289,7 +1328,16 @@ export function App() {
                 <div className="history-list">
                   {conversations.map((conversation) => (
                     <article key={conversation.id}>
-                      <h4>{conversation.title}</h4>
+                      <div className="history-title-row">
+                        <h4>{conversation.title}</h4>
+                        {conversation.mode ? (
+                          <span className="mode-badge">
+                            {conversation.mode === "ai_grounded"
+                              ? t.aiGroundedMode
+                              : t.sourceDraftMode}
+                          </span>
+                        ) : null}
+                      </div>
                       {conversation.latestAnswerPreview ? (
                         <p>{conversation.latestAnswerPreview}</p>
                       ) : (
@@ -1308,6 +1356,16 @@ export function App() {
                         {conversation.sourceCount} {t.historySources}
                       </span>
                       <button
+                        className="button compact secondary"
+                        type="button"
+                        disabled={conversationDetailBusyId === conversation.id}
+                        onClick={() => openConversationDetail(conversation.id)}
+                      >
+                        {conversationDetailBusyId === conversation.id
+                          ? t.loading
+                          : t.openQuestion}
+                      </button>
+                      <button
                         className="button compact danger"
                         type="button"
                         disabled={deleteConversationBusyId === conversation.id}
@@ -1322,6 +1380,46 @@ export function App() {
                 </div>
               )}
             </section>
+                {conversationDetail ? (
+                  <section className="conversation-detail-panel">
+                    <div className="section-heading">
+                      <div>
+                        <p className="eyebrow">{t.questionDetail}</p>
+                        <h3>{conversationDetail.title}</h3>
+                      </div>
+                      <button
+                        className="button secondary compact"
+                        type="button"
+                        onClick={() => setConversationDetail(null)}
+                      >
+                        {t.close}
+                      </button>
+                    </div>
+                    <div className="message-list">
+                      {conversationDetail.messages.map((message) => (
+                        <article key={message.id} className={`message-card ${message.role}`}>
+                          <span className="mode-badge">
+                            {message.role === "assistant"
+                              ? message.mode === "ai_grounded"
+                                ? t.aiGroundedMode
+                                : t.sourceDraftMode
+                              : t.yourQuestion}
+                          </span>
+                          <p>{message.text}</p>
+                          {message.sources?.length > 0 ? (
+                            <div className="source-pills">
+                              {message.sources.slice(0, 3).map((source) => (
+                                <span key={`${source.bookId}-${source.chunkIndex}`}>
+                                  {source.bookTitle} · {t.sourceChunk} {source.chunkIndex + 1}
+                                </span>
+                              ))}
+                            </div>
+                          ) : null}
+                        </article>
+                      ))}
+                    </div>
+                  </section>
+                ) : null}
               </div>
             ) : null}
 

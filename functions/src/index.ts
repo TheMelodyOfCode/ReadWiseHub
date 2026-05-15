@@ -1209,6 +1209,113 @@ export const exportAccountData = onCall(
   }
 );
 
+export const getBookDetail = onCall(
+  { region: "us-central1", timeoutSeconds: 60, memory: "512MiB" },
+  async (request) => {
+    const auth = requireAuth(request.auth?.token
+      ? {
+          uid: request.auth.uid,
+          email: request.auth.token.email,
+          name: request.auth.token.name,
+          picture: request.auth.token.picture,
+        }
+      : undefined);
+    const bookId = assertString(request.data?.bookId, "bookId");
+    const bookSnapshot = await db.collection("books").doc(bookId).get();
+
+    if (!bookSnapshot.exists || bookSnapshot.get("userId") !== auth.uid) {
+      throw new HttpsError("not-found", "Book was not found.");
+    }
+
+    const chunksSnapshot = await db
+      .collection("bookChunks")
+      .where("bookId", "==", bookId)
+      .limit(24)
+      .get();
+    const chunks = chunksSnapshot.docs
+      .filter((chunkSnapshot) => chunkSnapshot.get("userId") === auth.uid)
+      .map((chunkSnapshot) => ({
+        id: chunkSnapshot.id,
+        chunkIndex: Number(chunkSnapshot.get("chunkIndex")) || 0,
+        textPreview:
+          typeof chunkSnapshot.get("textPreview") === "string"
+            ? chunkSnapshot.get("textPreview")
+            : "",
+      }))
+      .sort((left, right) => left.chunkIndex - right.chunkIndex)
+      .slice(0, 12);
+
+    return {
+      ok: true,
+      book: {
+        id: bookSnapshot.id,
+        title: bookSnapshot.get("title") ?? "Untitled",
+        status: bookSnapshot.get("status") ?? "unknown",
+        language: bookSnapshot.get("language") ?? "",
+        chunkCount: Number(bookSnapshot.get("chunkCount")) || 0,
+        embeddedChunkCount: Number(bookSnapshot.get("embeddedChunkCount")) || 0,
+        pageCount: Number(bookSnapshot.get("pageCount")) || 0,
+        textLength: Number(bookSnapshot.get("textLength")) || 0,
+        sizeBytes: Number(bookSnapshot.get("sizeBytes")) || 0,
+      },
+      chunks,
+    };
+  }
+);
+
+export const getConversationDetail = onCall(
+  { region: "us-central1", timeoutSeconds: 60, memory: "512MiB" },
+  async (request) => {
+    const auth = requireAuth(request.auth?.token
+      ? {
+          uid: request.auth.uid,
+          email: request.auth.token.email,
+          name: request.auth.token.name,
+          picture: request.auth.token.picture,
+        }
+      : undefined);
+    const conversationId = assertString(request.data?.conversationId, "conversationId");
+    const conversationSnapshot = await db.collection("conversations").doc(conversationId).get();
+
+    if (!conversationSnapshot.exists || conversationSnapshot.get("userId") !== auth.uid) {
+      throw new HttpsError("not-found", "Question was not found.");
+    }
+
+    const messagesSnapshot = await conversationSnapshot.ref.collection("messages").get();
+    const messages = messagesSnapshot.docs
+      .filter((messageSnapshot) => messageSnapshot.get("userId") === auth.uid)
+      .map((messageSnapshot) => ({
+        id: messageSnapshot.id,
+        role: messageSnapshot.get("role") ?? "",
+        text: messageSnapshot.get("text") ?? "",
+        mode: messageSnapshot.get("mode") ?? "",
+        sources: Array.isArray(messageSnapshot.get("sources"))
+          ? messageSnapshot.get("sources")
+          : [],
+        createdAtMs:
+          typeof messageSnapshot.get("createdAt")?.toMillis === "function"
+            ? messageSnapshot.get("createdAt").toMillis()
+            : 0,
+      }))
+      .sort((left, right) => left.createdAtMs - right.createdAtMs);
+
+    return {
+      ok: true,
+      conversation: {
+        id: conversationSnapshot.id,
+        title: conversationSnapshot.get("title") ?? "Untitled",
+        mode: conversationSnapshot.get("mode") ?? "",
+        sourceCount: Number(conversationSnapshot.get("sourceCount")) || 0,
+        hasUnavailableSources: conversationSnapshot.get("hasUnavailableSources") === true,
+        unavailableBookTitles: Array.isArray(conversationSnapshot.get("unavailableBookTitles"))
+          ? conversationSnapshot.get("unavailableBookTitles")
+          : [],
+      },
+      messages,
+    };
+  }
+);
+
 export const createUploadReservation = onCall(
   { region: "us-central1" },
   async (request) => {
@@ -1643,6 +1750,7 @@ export const askLibrary = onCall(
       ok: true,
       query: queryText,
       answer,
+      mode: aiAnswer ? "ai_grounded" : "source_draft",
       conversationId: conversationRef.id,
       results,
     };
