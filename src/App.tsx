@@ -175,6 +175,7 @@ export function App() {
   const [conversationsReady, setConversationsReady] = useState(false);
   const [selectedBookScope, setSelectedBookScope] = useState("");
   const [deleteBusyId, setDeleteBusyId] = useState("");
+  const [confirmDeleteBookId, setConfirmDeleteBookId] = useState("");
   const [usage, setUsage] = useState<UserUsage>({
     messages: 0,
     monthlyMessages: 50,
@@ -387,7 +388,8 @@ export function App() {
       return;
     }
 
-    if (!ALLOWED_UPLOAD_TYPES.has(file.type)) {
+    const extensionAllowed = /\.(pdf|txt|md|markdown)$/i.test(file.name);
+    if (!ALLOWED_UPLOAD_TYPES.has(file.type) && !extensionAllowed) {
       setSelectedFile(null);
       setUploadMessage(t.fileTypeBlocked);
       return;
@@ -418,12 +420,12 @@ export function App() {
 
       const reservation = await createReservation({
         fileName: selectedFile.name,
-        contentType: selectedFile.type,
+        contentType: selectedFile.type || "application/octet-stream",
         sizeBytes: selectedFile.size,
       });
       const uploadRef = ref(storage, reservation.data.storagePath);
       const uploadTask = uploadBytesResumable(uploadRef, selectedFile, {
-        contentType: selectedFile.type,
+        contentType: selectedFile.type || "application/octet-stream",
       });
 
       await new Promise<void>((resolve, reject) => {
@@ -547,12 +549,8 @@ export function App() {
   }
 
   async function deleteLibraryBook(book: BookRecord) {
-    const confirmed = window.confirm(`${t.deleteConfirm} ${book.title}?`);
-    if (!confirmed) {
-      return;
-    }
-
     setDeleteBusyId(book.id);
+    setConfirmDeleteBookId("");
     setUploadMessage("");
 
     try {
@@ -674,10 +672,12 @@ export function App() {
               >
                 {processBusy ? t.processingQueued : t.processQueued}
               </button>
-              <div className="backend-lock">
-                <h3>{t.uploadBlockedTitle}</h3>
-                <p>{t.uploadBlocked}</p>
-              </div>
+              {!UPLOAD_BACKEND_ENABLED ? (
+                <div className="backend-lock">
+                  <h3>{t.uploadBlockedTitle}</h3>
+                  <p>{t.uploadBlocked}</p>
+                </div>
+              ) : null}
               {uploadMessage ? <p className="error-text">{uploadMessage}</p> : null}
             </div>
 
@@ -837,16 +837,39 @@ export function App() {
                     <h3>{book.title}</h3>
                     <p>{book.status === "text_ready" ? t.textReady : book.status}</p>
                     {book.chunkCount > 0 ? <p>{book.chunkCount} chunks</p> : null}
-                    <div className="book-actions">
-                      <button
-                        className="button danger"
-                        type="button"
-                        disabled={deleteBusyId === book.id || book.status === "processing"}
-                        onClick={() => deleteLibraryBook(book)}
-                      >
-                        {deleteBusyId === book.id ? t.deletingBook : t.deleteBook}
-                      </button>
-                    </div>
+                    {confirmDeleteBookId === book.id ? (
+                      <div className="inline-confirm">
+                        <p>{t.deleteInlineConfirm}</p>
+                        <div className="book-actions">
+                          <button
+                            className="button danger"
+                            type="button"
+                            disabled={deleteBusyId === book.id}
+                            onClick={() => deleteLibraryBook(book)}
+                          >
+                            {deleteBusyId === book.id ? t.deletingBook : t.deleteBook}
+                          </button>
+                          <button
+                            className="button secondary"
+                            type="button"
+                            onClick={() => setConfirmDeleteBookId("")}
+                          >
+                            {t.cancel}
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="book-actions">
+                        <button
+                          className="button danger"
+                          type="button"
+                          disabled={deleteBusyId === book.id || book.status === "processing"}
+                          onClick={() => setConfirmDeleteBookId(book.id)}
+                        >
+                          {deleteBusyId === book.id ? t.deletingBook : t.deleteBook}
+                        </button>
+                      </div>
+                    )}
                   </article>
                 ))}
               </div>

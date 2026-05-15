@@ -89,6 +89,25 @@ function assertAllowedContentType(contentType: string) {
   }
 }
 
+function resolveContentType(contentType: string, fileName: string): string {
+  if (ALLOWED_CONTENT_TYPES.has(contentType)) {
+    return contentType;
+  }
+
+  const lowerName = fileName.toLowerCase();
+  if (lowerName.endsWith(".md") || lowerName.endsWith(".markdown")) {
+    return "text/markdown";
+  }
+  if (lowerName.endsWith(".txt")) {
+    return "text/plain";
+  }
+  if (lowerName.endsWith(".pdf")) {
+    return "application/pdf";
+  }
+
+  return contentType;
+}
+
 function normalizeText(text: string): string {
   return text
     .replace(/\r\n/g, "\n")
@@ -832,7 +851,9 @@ export const createUploadReservation = onCall(
         }
       : undefined);
     const fileName = sanitizeFileName(assertString(request.data?.fileName, "fileName"));
-    const contentType = assertString(request.data?.contentType, "contentType");
+    const rawContentType =
+      typeof request.data?.contentType === "string" ? request.data.contentType.trim() : "";
+    const contentType = resolveContentType(rawContentType, fileName);
     const sizeBytes = Number(request.data?.sizeBytes);
 
     assertAllowedContentType(contentType);
@@ -927,7 +948,10 @@ export const finalizeUploadReservation = onCall(
     const storagePath = assertString(bookSnapshot.get("storagePath"), "storagePath");
     const [metadata] = await getStorage().bucket().file(storagePath).getMetadata();
     const sizeBytes = Number(metadata.size);
-    const contentType = metadata.contentType ?? "";
+    const contentType = resolveContentType(
+      metadata.contentType ?? "",
+      assertString(bookSnapshot.get("originalFileName"), "originalFileName")
+    );
 
     assertAllowedContentType(contentType);
 

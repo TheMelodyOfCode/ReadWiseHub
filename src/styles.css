@@ -449,6 +449,20 @@ input {
   margin-top: 12px;
 }
 
+.inline-confirm {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  margin-top: 12px;
+  border: 1px solid color-mix(in srgb, var(--danger) 50%, var(--border));
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--danger) 8%, transparent);
+}
+
+.inline-confirm p {
+  margin: 0;
+}
+
 .upload-panel {
   display: grid;
   gap: 14px;
@@ -571,14 +585,29 @@ input {
 }
 
 .file-picker {
-  display: grid;
-  gap: 8px;
-  color: var(--muted);
+  display: inline-flex;
+  min-height: 52px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px 18px;
+  background: var(--surface-strong);
+  color: var(--text);
   font-weight: 800;
+  cursor: pointer;
 }
 
 .file-picker input {
-  padding: 12px;
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.file-picker:hover {
+  border-color: var(--primary);
 }
 
 .button[disabled] {
