@@ -201,6 +201,26 @@ export function App() {
     () => books.reduce((total, book) => total + book.sizeBytes, 0),
     [books]
   );
+  const languageToggle = (
+    <div className="language-toggle" aria-label={t.language}>
+      <button
+        type="button"
+        className={locale === "de" ? "active" : ""}
+        aria-pressed={locale === "de"}
+        onClick={() => setLocale("de")}
+      >
+        DE
+      </button>
+      <button
+        type="button"
+        className={locale === "en" ? "active" : ""}
+        aria-pressed={locale === "en"}
+        onClick={() => setLocale("en")}
+      >
+        EN
+      </button>
+    </div>
+  );
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
@@ -645,6 +665,7 @@ export function App() {
             <span className="welcome-user">
               {t.welcomeBack}, <strong>{userLabel}</strong>
             </span>
+            {languageToggle}
             <button
               className="button header-button"
               type="button"
@@ -1012,6 +1033,17 @@ export function App() {
           <a href="#pricing">{t.navPricing}</a>
           <a href="#help">{t.navHelp}</a>
         </nav>
+
+        <div className="public-header-actions">
+          {languageToggle}
+          <button
+            className="button header-button"
+            type="button"
+            onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
+          >
+            {theme === "dark" ? t.light : t.dark}
+          </button>
+        </div>
       </header>
 
       <main id="top">

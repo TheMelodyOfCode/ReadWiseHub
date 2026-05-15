@@ -127,6 +127,14 @@ select {
   flex-wrap: wrap;
 }
 
+.public-header-actions {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
 .welcome-user {
   width: 100%;
   color: var(--muted);
@@ -143,6 +151,35 @@ select {
   background: var(--surface);
   color: var(--text);
   border-color: var(--border);
+}
+
+.language-toggle {
+  display: inline-grid;
+  grid-template-columns: repeat(2, minmax(48px, 1fr));
+  min-height: 42px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.language-toggle button {
+  min-height: 40px;
+  border: 0;
+  padding: 8px 12px;
+  background: transparent;
+  color: var(--muted);
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.language-toggle button + button {
+  border-left: 1px solid var(--border);
+}
+
+.language-toggle button.active {
+  background: var(--primary);
+  color: #fff;
 }
 
 .hero {
@@ -680,6 +717,12 @@ input {
   }
 
   .user-header-actions {
+    width: auto;
+    justify-content: flex-end;
+    margin-left: auto;
+  }
+
+  .public-header-actions {
     width: auto;
     justify-content: flex-end;
     margin-left: auto;
