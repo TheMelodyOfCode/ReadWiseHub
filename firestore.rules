@@ -1,0 +1,71 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function owns(userId) {
+      return signedIn() && request.auth.uid == userId;
+    }
+
+    match /users/{userId} {
+      allow create: if owns(userId)
+        && request.resource.data.keys().hasOnly([
+          'email',
+          'displayName',
+          'photoURL',
+          'plan',
+          'subscriptionStatus',
+          'createdAt',
+          'updatedAt',
+          'lastLoginAt',
+          'locale',
+          'theme',
+          'limits',
+          'usageCurrentPeriod'
+        ])
+        && request.resource.data.plan == 'free'
+        && request.resource.data.subscriptionStatus == 'none'
+        && request.resource.data.limits.maxBooks == 1
+        && request.resource.data.limits.maxStorageBytes == 20 * 1024 * 1024
+        && request.resource.data.limits.maxFileBytes == 20 * 1024 * 1024
+        && request.resource.data.limits.monthlyMessages == 50
+        && request.resource.data.limits.monthlyIngestions == 2
+        && request.resource.data.usageCurrentPeriod.messages == 0
+        && request.resource.data.usageCurrentPeriod.ingestions == 0
+        && request.resource.data.usageCurrentPeriod.storageBytes == 0
+        && request.resource.data.usageCurrentPeriod.books == 0;
+      allow read: if owns(userId);
+      allow update: if owns(userId)
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'displayName',
+          'photoURL',
+          'locale',
+          'theme',
+          'lastLoginAt',
+          'updatedAt'
+        ])
+        && request.resource.data.plan == resource.data.plan
+        && request.resource.data.subscriptionStatus == resource.data.subscriptionStatus
+        && request.resource.data.limits == resource.data.limits
+        && request.resource.data.usageCurrentPeriod == resource.data.usageCurrentPeriod;
+      allow delete: if false;
+    }
+
+    match /books/{bookId} {
+      allow read: if signedIn() && resource.data.userId == request.auth.uid;
+      allow write: if false;
+    }
+
+    match /conversations/{conversationId} {
+      allow read: if signedIn() && resource.data.userId == request.auth.uid;
+      allow write: if false;
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
