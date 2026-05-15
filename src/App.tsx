@@ -173,6 +173,7 @@ export function App() {
   const [conversations, setConversations] = useState<ConversationRecord[]>([]);
   const [conversationsReady, setConversationsReady] = useState(false);
   const [selectedBookScope, setSelectedBookScope] = useState("");
+  const [deleteBusyId, setDeleteBusyId] = useState("");
   const [usage, setUsage] = useState<UserUsage>({
     messages: 0,
     monthlyMessages: 50,
@@ -543,6 +544,32 @@ export function App() {
     }
   }
 
+  async function deleteLibraryBook(book: BookRecord) {
+    const confirmed = window.confirm(`${t.deleteConfirm} ${book.title}?`);
+    if (!confirmed) {
+      return;
+    }
+
+    setDeleteBusyId(book.id);
+    setUploadMessage("");
+
+    try {
+      const deleteBook = httpsCallable<{ bookId: string }, { ok: boolean }>(
+        functions,
+        "deleteBook"
+      );
+      await deleteBook({ bookId: book.id });
+      if (selectedBookScope === book.id) {
+        setSelectedBookScope("");
+      }
+      setUploadMessage(t.deleteDone);
+    } catch (error) {
+      setUploadMessage(getErrorMessage(error, "Delete failed"));
+    } finally {
+      setDeleteBusyId("");
+    }
+  }
+
   if (user) {
     return (
       <div className="app-shell workspace-shell">
@@ -792,6 +819,16 @@ export function App() {
                     <h3>{book.title}</h3>
                     <p>{book.status === "text_ready" ? t.textReady : book.status}</p>
                     {book.chunkCount > 0 ? <p>{book.chunkCount} chunks</p> : null}
+                    <div className="book-actions">
+                      <button
+                        className="button danger"
+                        type="button"
+                        disabled={deleteBusyId === book.id || book.status === "processing"}
+                        onClick={() => deleteLibraryBook(book)}
+                      >
+                        {deleteBusyId === book.id ? t.deletingBook : t.deleteBook}
+                      </button>
+                    </div>
                   </article>
                 ))}
               </div>

@@ -607,6 +607,44 @@ async function clearExistingChunks(bookId: string) {
   }
 }
 
+async function clearIngestionJobs(bookId: string) {
+  const snapshot = await db
+    .collection("ingestionJobs")
+    .where("bookId", "==", bookId)
+    .limit(300)
+    .get();
+
+  if (snapshot.empty) {
+    return;
+  }
+
+  const batch = db.batch();
+  snapshot.docs.forEach((docSnapshot) => batch.delete(docSnapshot.ref));
+  await batch.commit();
+
+  if (snapshot.size === 300) {
+    await clearIngestionJobs(bookId);
+  }
+}
+
+async function refreshUserBookUsage(userId: string) {
+  const [books, storageBytes] = await Promise.all([
+    getActiveBookCount(userId),
+    getActiveStorageBytes(userId),
+  ]);
+
+  await db.collection("users").doc(userId).update({
+    "usageCurrentPeriod.books": books,
+    "usageCurrentPeriod.storageBytes": storageBytes,
+    updatedAt: FieldValue.serverTimestamp(),
+  });
+
+  return {
+    books,
+    storageBytes,
+  };
+}
+
 async function writeChunks(chunks: ReturnType<typeof chunkText>, userId: string, bookId: string) {
   let batch: WriteBatch = db.batch();
   let writes = 0;
@@ -956,6 +994,60 @@ export const finalizeUploadReservation = onCall(
       bookId,
       jobId: jobRef.id,
       status: "queued",
+    };
+  }
+);
+
+export const deleteBook = onCall(
+  { region: "us-central1", timeoutSeconds: 120, memory: "512MiB" },
+  async (request) => {
+    const auth = requireAuth(request.auth?.token
+      ? {
+          uid: request.auth.uid,
+          email: request.auth.token.email,
+          name: request.auth.token.name,
+          picture: request.auth.token.picture,
+        }
+      : undefined);
+    const bookId = assertString(request.data?.bookId, "bookId");
+    const bookRef = db.collection("books").doc(bookId);
+    const bookSnapshot = await bookRef.get();
+
+    if (!bookSnapshot.exists || bookSnapshot.get("userId") !== auth.uid) {
+      throw new HttpsError("not-found", "Book was not found.");
+    }
+
+    const status = assertString(bookSnapshot.get("status"), "status");
+    if (status === "processing") {
+      throw new HttpsError(
+        "failed-precondition",
+        "This book is processing. Try deleting it after processing finishes."
+      );
+    }
+
+    const storagePath =
+      typeof bookSnapshot.get("storagePath") === "string"
+        ? bookSnapshot.get("storagePath")
+        : "";
+
+    await bookRef.update({
+      status: "deleting",
+      updatedAt: FieldValue.serverTimestamp(),
+    });
+
+    if (storagePath) {
+      await getStorage().bucket().file(storagePath).delete({ ignoreNotFound: true });
+    }
+
+    await clearExistingChunks(bookId);
+    await clearIngestionJobs(bookId);
+    await bookRef.delete();
+    const usage = await refreshUserBookUsage(auth.uid);
+
+    return {
+      ok: true,
+      bookId,
+      usage,
     };
   }
 );
