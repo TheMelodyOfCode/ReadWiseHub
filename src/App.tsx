@@ -23,6 +23,7 @@ import { httpsCallable } from "firebase/functions";
 import { ref, uploadBytesResumable } from "firebase/storage";
 import { auth, db, functions, googleProvider, storage } from "./firebase";
 import { Locale, detectInitialLocale, dictionaries } from "./i18n";
+import readWiseHubIcon from "./assets/readwisehub-icon.png";
 
 type Theme = "light" | "dark";
 
@@ -575,7 +576,7 @@ export function App() {
       <div className="app-shell workspace-shell">
         <header className="site-header">
           <a className="brand" href="#dashboard" aria-label="ReadWiseHub home">
-            <span className="brand-mark">R</span>
+            <img className="brand-mark" src={readWiseHubIcon} alt="" aria-hidden="true" />
             <span>
               <strong>ReadWiseHub</strong>
               <small>{t.brandTagline}</small>
@@ -887,7 +888,7 @@ export function App() {
     <div className="app-shell">
       <header className="site-header">
         <a className="brand" href="#top" aria-label="ReadWiseHub home">
-          <span className="brand-mark">R</span>
+          <img className="brand-mark" src={readWiseHubIcon} alt="" aria-hidden="true" />
           <span>
             <strong>ReadWiseHub</strong>
             <small>{t.brandTagline}</small>
