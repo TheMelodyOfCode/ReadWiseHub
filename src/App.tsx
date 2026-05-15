@@ -26,6 +26,7 @@ import { Locale, detectInitialLocale, dictionaries } from "./i18n";
 import readWiseHubIcon from "./assets/readwisehub-icon.png";
 
 type Theme = "light" | "dark";
+type WorkspaceTab = "ask" | "library" | "history" | "help";
 
 type BookRecord = {
   id: string;
@@ -33,6 +34,15 @@ type BookRecord = {
   status: string;
   sizeBytes: number;
   chunkCount: number;
+};
+
+type IngestionJobRecord = {
+  id: string;
+  bookId: string;
+  status: string;
+  stage: string;
+  progress: number;
+  errorMessageSafe: string;
 };
 
 type LibrarySearchResult = {
@@ -161,6 +171,7 @@ export function App() {
   const [status, setStatus] = useState("");
   const [books, setBooks] = useState<BookRecord[]>([]);
   const [booksReady, setBooksReady] = useState(false);
+  const [ingestionJobs, setIngestionJobs] = useState<IngestionJobRecord[]>([]);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [uploadMessage, setUploadMessage] = useState("");
   const [uploadBusy, setUploadBusy] = useState(false);
@@ -181,6 +192,8 @@ export function App() {
   const [confirmDeleteBookId, setConfirmDeleteBookId] = useState("");
   const [deleteConversationBusyId, setDeleteConversationBusyId] = useState("");
   const [lastUploadedBookId, setLastUploadedBookId] = useState("");
+  const [workspaceTab, setWorkspaceTab] = useState<WorkspaceTab>("ask");
+  const [processingBookId, setProcessingBookId] = useState("");
   const [usage, setUsage] = useState<UserUsage>({
     messages: 0,
     monthlyMessages: 50,
@@ -196,6 +209,11 @@ export function App() {
     [books]
   );
   const activeBookIds = useMemo(() => new Set(books.map((book) => book.id)), [books]);
+  const jobsByBookId = useMemo(() => {
+    const jobs = new Map<string, IngestionJobRecord>();
+    ingestionJobs.forEach((job) => jobs.set(job.bookId, job));
+    return jobs;
+  }, [ingestionJobs]);
   const userLabel = user?.displayName || user?.email?.split("@")[0] || t.userFallback;
   const activeStorageBytes = useMemo(
     () => books.reduce((total, book) => total + book.sizeBytes, 0),
@@ -278,6 +296,37 @@ export function App() {
       (error) => {
         setAuthError(getErrorMessage(error, "Library sync failed"));
         setBooksReady(true);
+      }
+    );
+  }, [user]);
+
+  useEffect(() => {
+    if (!user) {
+      setIngestionJobs([]);
+      return;
+    }
+
+    const jobsQuery = query(collection(db, "ingestionJobs"), where("userId", "==", user.uid));
+    return onSnapshot(
+      jobsQuery,
+      (snapshot) => {
+        setIngestionJobs(
+          snapshot.docs.map((jobDoc) => {
+            const data = jobDoc.data();
+            return {
+              id: jobDoc.id,
+              bookId: typeof data.bookId === "string" ? data.bookId : "",
+              status: typeof data.status === "string" ? data.status : "unknown",
+              stage: typeof data.stage === "string" ? data.stage : "",
+              progress: typeof data.progress === "number" ? data.progress : 0,
+              errorMessageSafe:
+                typeof data.errorMessageSafe === "string" ? data.errorMessageSafe : "",
+            };
+          })
+        );
+      },
+      (error) => {
+        setAuthError(getErrorMessage(error, "Ingestion status sync failed"));
       }
     );
   }, [user]);
@@ -541,6 +590,57 @@ export function App() {
     }
   }
 
+  async function processBookJob(book: BookRecord) {
+    if (!user) {
+      return;
+    }
+
+    const job = jobsByBookId.get(book.id);
+    if (!job || (job.status !== "queued" && job.status !== "failed")) {
+      setUploadMessage(t.noProcessableJob);
+      return;
+    }
+
+    setProcessingBookId(book.id);
+    setUploadMessage(`${t.uploadProcessing}: ${book.title}`);
+
+    try {
+      const processJob = httpsCallable<{ jobId: string }, { ok: boolean }>(
+        functions,
+        "processIngestionJob"
+      );
+      await processJob({ jobId: job.id });
+      setUploadMessage(t.processQueuedDone);
+    } catch (error) {
+      setUploadMessage(getErrorMessage(error, "Processing failed"));
+    } finally {
+      setProcessingBookId("");
+    }
+  }
+
+  function getBookStatusLabel(book: BookRecord) {
+    const job = jobsByBookId.get(book.id);
+    const status = job?.status || book.status;
+
+    if (book.status === "text_ready") {
+      return t.textReady;
+    }
+    if (status === "queued") {
+      return t.statusQueued;
+    }
+    if (status === "processing" || book.status === "processing") {
+      return t.statusProcessing;
+    }
+    if (status === "failed" || book.status === "failed") {
+      return t.statusFailed;
+    }
+    if (book.status === "upload_reserved") {
+      return t.statusUploadReserved;
+    }
+
+    return book.status;
+  }
+
   async function searchExtractedText(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
@@ -703,14 +803,36 @@ export function App() {
             </div>
           </section>
 
-          <section id="library" className="content-section">
+          <section id="library" className="content-section workspace-section">
             <div className="section-heading">
               <div>
                 <p className="eyebrow">{t.navLibrary}</p>
-                <h2>{t.libraryTitle}</h2>
+                <h2>{t.workspaceToolsTitle}</h2>
               </div>
             </div>
 
+            <div className="workspace-tabs" aria-label={t.workspaceToolsTitle}>
+              {(["ask", "library", "history", "help"] as WorkspaceTab[]).map((tab) => (
+                <button
+                  key={tab}
+                  type="button"
+                  className={workspaceTab === tab ? "active" : ""}
+                  aria-pressed={workspaceTab === tab}
+                  onClick={() => setWorkspaceTab(tab)}
+                >
+                  {tab === "ask"
+                    ? t.tabAsk
+                    : tab === "library"
+                      ? t.tabLibrary
+                      : tab === "history"
+                        ? t.tabHistory
+                        : t.tabHelp}
+                </button>
+              ))}
+            </div>
+
+            {workspaceTab === "library" ? (
+              <div className="workspace-tab-panel">
             <div className="upload-panel">
               <div>
                 <h3>{t.uploadTitle}</h3>
@@ -754,64 +876,6 @@ export function App() {
               ) : null}
               {uploadMessage ? <p className="error-text">{uploadMessage}</p> : null}
             </div>
-
-            <form className="ask-panel" onSubmit={askLibraryQuestion}>
-              <div>
-                <h3>{t.askTitle}</h3>
-                <p>{t.askCopy}</p>
-              </div>
-              <label>
-                {t.bookScope}
-                <select
-                  value={selectedBookScope}
-                  onChange={(event) => setSelectedBookScope(event.target.value)}
-                  disabled={textReadyBooks.length === 0}
-                >
-                  <option value="">{t.allReadyBooks}</option>
-                  {textReadyBooks.map((book) => (
-                    <option key={book.id} value={book.id}>
-                      {book.title}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label>
-                {t.askLabel}
-                <input
-                  type="search"
-                  value={askQuestion}
-                  onChange={(event) => setAskQuestion(event.target.value)}
-                  placeholder={t.askPlaceholder}
-                  disabled={textReadyBooks.length === 0}
-                />
-              </label>
-              <button
-                className="button primary"
-                type="submit"
-                disabled={askBusy || textReadyBooks.length === 0 || !askQuestion.trim()}
-              >
-                {askBusy ? t.asking : t.askButton}
-              </button>
-              {textReadyBooks.length === 0 ? (
-                <p className="small-note">{t.searchNeedsText}</p>
-              ) : null}
-              {askMessage ? <p className="error-text">{askMessage}</p> : null}
-              {askAnswer ? (
-                <div className="answer-box">
-                  <h4>{t.answerTitle}</h4>
-                  <p>{askAnswer}</p>
-                  {askSources.length > 0 ? (
-                    <div className="source-pills">
-                      {askSources.slice(0, 3).map((source) => (
-                        <span key={`${source.bookId}-${source.chunkIndex}`}>
-                          {source.bookTitle} · {t.sourceChunk} {source.chunkIndex + 1}
-                        </span>
-                      ))}
-                    </div>
-                  ) : null}
-                </div>
-              ) : null}
-            </form>
 
             <form className="search-panel" onSubmit={searchExtractedText}>
               <div>
@@ -869,6 +933,148 @@ export function App() {
               ) : null}
             </form>
 
+            {!booksReady ? (
+              <p>Loading...</p>
+            ) : books.length === 0 ? (
+              <div className="empty-state">
+                <h3>{t.libraryEmptyTitle}</h3>
+                <p>{t.libraryEmpty}</p>
+              </div>
+            ) : (
+              <div className="book-list">
+                {books.map((book) => {
+                  const job = jobsByBookId.get(book.id);
+                  return (
+                  <article key={book.id}>
+                    <h3>{book.title}</h3>
+                    <p className={`status-pill status-${book.status.replace(/_/g, "-")}`}>
+                      {getBookStatusLabel(book)}
+                    </p>
+                    {job ? (
+                      <div className="job-progress">
+                        <span>{job.stage || job.status}</span>
+                        <progress value={job.progress} max="100" />
+                      </div>
+                    ) : null}
+                    {job?.errorMessageSafe ? (
+                      <p className="error-text">{job.errorMessageSafe}</p>
+                    ) : null}
+                    {book.chunkCount > 0 ? <p>{book.chunkCount} chunks</p> : null}
+                    {job && (job.status === "queued" || job.status === "failed") ? (
+                      <button
+                        className="button secondary compact"
+                        type="button"
+                        disabled={processingBookId === book.id}
+                        onClick={() => processBookJob(book)}
+                      >
+                        {processingBookId === book.id ? t.processingQueued : t.retryProcessing}
+                      </button>
+                    ) : null}
+                    {confirmDeleteBookId === book.id ? (
+                      <div className="inline-confirm">
+                        <p>{t.deleteInlineConfirm}</p>
+                        <div className="book-actions">
+                          <button
+                            className="button danger"
+                            type="button"
+                            disabled={deleteBusyId === book.id}
+                            onClick={() => deleteLibraryBook(book)}
+                          >
+                            {deleteBusyId === book.id ? t.deletingBook : t.deleteBook}
+                          </button>
+                          <button
+                            className="button secondary"
+                            type="button"
+                            onClick={() => setConfirmDeleteBookId("")}
+                          >
+                            {t.cancel}
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="book-actions">
+                        <button
+                          className="button danger"
+                          type="button"
+                          disabled={deleteBusyId === book.id || book.status === "processing"}
+                          onClick={() => setConfirmDeleteBookId(book.id)}
+                        >
+                          {deleteBusyId === book.id ? t.deletingBook : t.deleteBook}
+                        </button>
+                      </div>
+                    )}
+                  </article>
+                  );
+                })}
+              </div>
+            )}
+              </div>
+            ) : null}
+
+            {workspaceTab === "ask" ? (
+              <div className="workspace-tab-panel">
+            <form className="ask-panel" onSubmit={askLibraryQuestion}>
+              <div>
+                <h3>{t.askTitle}</h3>
+                <p>{t.askCopy}</p>
+              </div>
+              <label>
+                {t.bookScope}
+                <select
+                  value={selectedBookScope}
+                  onChange={(event) => setSelectedBookScope(event.target.value)}
+                  disabled={textReadyBooks.length === 0}
+                >
+                  <option value="">{t.allReadyBooks}</option>
+                  {textReadyBooks.map((book) => (
+                    <option key={book.id} value={book.id}>
+                      {book.title}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                {t.askLabel}
+                <input
+                  type="search"
+                  value={askQuestion}
+                  onChange={(event) => setAskQuestion(event.target.value)}
+                  placeholder={t.askPlaceholder}
+                  disabled={textReadyBooks.length === 0}
+                />
+              </label>
+              <button
+                className="button primary"
+                type="submit"
+                disabled={askBusy || textReadyBooks.length === 0 || !askQuestion.trim()}
+              >
+                {askBusy ? t.asking : t.askButton}
+              </button>
+              {textReadyBooks.length === 0 ? (
+                <p className="small-note">{t.searchNeedsText}</p>
+              ) : null}
+              {askMessage ? <p className="error-text">{askMessage}</p> : null}
+              {askAnswer ? (
+                <div className="answer-box">
+                  <h4>{t.answerTitle}</h4>
+                  <p>{askAnswer}</p>
+                  {askSources.length > 0 ? (
+                    <div className="source-pills">
+                      {askSources.slice(0, 3).map((source) => (
+                        <span key={`${source.bookId}-${source.chunkIndex}`}>
+                          {source.bookTitle} · {t.sourceChunk} {source.chunkIndex + 1}
+                        </span>
+                      ))}
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
+            </form>
+              </div>
+            ) : null}
+
+            {workspaceTab === "history" ? (
+              <div className="workspace-tab-panel">
             <section className="history-panel">
               <div>
                 <h3>{t.historyTitle}</h3>
@@ -915,58 +1121,37 @@ export function App() {
                 </div>
               )}
             </section>
+              </div>
+            ) : null}
 
-            {!booksReady ? (
-              <p>Loading...</p>
-            ) : books.length === 0 ? (
-              <div className="empty-state">
-                <h3>{t.libraryEmptyTitle}</h3>
-                <p>{t.libraryEmpty}</p>
+            {workspaceTab === "help" ? (
+              <div className="workspace-tab-panel">
+                <section className="help-panel">
+                  <div>
+                    <h3>{t.helpAppTitle}</h3>
+                    <p>{t.helpAppCopy}</p>
+                  </div>
+                  <div className="help-grid">
+                    <article>
+                      <h4>{t.helpUploadTitle}</h4>
+                      <p>{t.helpUploadCopy}</p>
+                    </article>
+                    <article>
+                      <h4>{t.helpAskTitle}</h4>
+                      <p>{t.helpAskCopy}</p>
+                    </article>
+                    <article>
+                      <h4>{t.helpPrivacyTitle}</h4>
+                      <p>{t.helpPrivacyCopy}</p>
+                    </article>
+                    <article>
+                      <h4>{t.helpVectorTitle}</h4>
+                      <p>{t.helpVectorCopy}</p>
+                    </article>
+                  </div>
+                </section>
               </div>
-            ) : (
-              <div className="book-list">
-                {books.map((book) => (
-                  <article key={book.id}>
-                    <h3>{book.title}</h3>
-                    <p>{book.status === "text_ready" ? t.textReady : book.status}</p>
-                    {book.chunkCount > 0 ? <p>{book.chunkCount} chunks</p> : null}
-                    {confirmDeleteBookId === book.id ? (
-                      <div className="inline-confirm">
-                        <p>{t.deleteInlineConfirm}</p>
-                        <div className="book-actions">
-                          <button
-                            className="button danger"
-                            type="button"
-                            disabled={deleteBusyId === book.id}
-                            onClick={() => deleteLibraryBook(book)}
-                          >
-                            {deleteBusyId === book.id ? t.deletingBook : t.deleteBook}
-                          </button>
-                          <button
-                            className="button secondary"
-                            type="button"
-                            onClick={() => setConfirmDeleteBookId("")}
-                          >
-                            {t.cancel}
-                          </button>
-                        </div>
-                      </div>
-                    ) : (
-                      <div className="book-actions">
-                        <button
-                          className="button danger"
-                          type="button"
-                          disabled={deleteBusyId === book.id || book.status === "processing"}
-                          onClick={() => setConfirmDeleteBookId(book.id)}
-                        >
-                          {deleteBusyId === book.id ? t.deletingBook : t.deleteBook}
-                        </button>
-                      </div>
-                    )}
-                  </article>
-                ))}
-              </div>
-            )}
+            ) : null}
           </section>
 
           <section className="content-section next-step-section">

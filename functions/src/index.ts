@@ -28,6 +28,7 @@ const CHUNK_OVERLAP = 160;
 const MAX_EXTRACTED_TEXT_BYTES = 2_500_000;
 const MAX_SEARCH_QUERY_LENGTH = 240;
 const MAX_SEARCH_RESULTS = 5;
+const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-4.1-mini";
 const ACTIVE_BOOK_STATUSES = [
   "upload_reserved",
   "uploading",
@@ -518,6 +519,99 @@ function createGroundedDraft(queryText: string, results: LibrarySearchResult[], 
     "Sources:",
     sourceList,
   ].join("\n");
+}
+
+function buildGroundingContext(results: LibrarySearchResult[]) {
+  return results
+    .slice(0, 5)
+    .map(
+      (result, index) =>
+        `[${index + 1}] ${result.bookTitle}, chunk ${result.chunkIndex + 1}\n${result.excerpt}`
+    )
+    .join("\n\n");
+}
+
+function extractOpenAiText(payload: unknown): string {
+  if (!payload || typeof payload !== "object") {
+    return "";
+  }
+
+  const outputText = (payload as { output_text?: unknown }).output_text;
+  if (typeof outputText === "string") {
+    return outputText.trim();
+  }
+
+  const output = (payload as { output?: unknown }).output;
+  if (!Array.isArray(output)) {
+    return "";
+  }
+
+  return output
+    .flatMap((item) => {
+      if (!item || typeof item !== "object") {
+        return [];
+      }
+      const content = (item as { content?: unknown }).content;
+      if (!Array.isArray(content)) {
+        return [];
+      }
+      return content
+        .map((part) => {
+          if (!part || typeof part !== "object") {
+            return "";
+          }
+          const text = (part as { text?: unknown }).text;
+          return typeof text === "string" ? text : "";
+        })
+        .filter(Boolean);
+    })
+    .join("\n")
+    .trim();
+}
+
+async function createAiGroundedAnswer(
+  queryText: string,
+  results: LibrarySearchResult[],
+  locale: string
+): Promise<string | null> {
+  const apiKey = process.env.OPENAI_API_KEY;
+  if (!apiKey || results.length === 0) {
+    return null;
+  }
+
+  const systemInstruction =
+    locale === "de"
+      ? "Du bist ReadWiseHub. Antworte klar und einfach auf Deutsch. Nutze nur die bereitgestellten Quellen. Wenn die Quellen nicht ausreichen, sage das ehrlich. Verweise knapp auf Quellen wie [1] oder [2]."
+      : "You are ReadWiseHub. Answer clearly and simply in English. Use only the provided sources. If the sources are not enough, say so honestly. Cite sources briefly as [1] or [2].";
+  const response = await fetch("https://api.openai.com/v1/responses", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      model: OPENAI_MODEL,
+      instructions: systemInstruction,
+      input: [
+        `Question: ${queryText}`,
+        "",
+        "Sources:",
+        buildGroundingContext(results),
+      ].join("\n"),
+      max_output_tokens: 700,
+    }),
+  });
+
+  if (!response.ok) {
+    console.error("OpenAI answer generation failed", {
+      status: response.status,
+      statusText: response.statusText,
+    });
+    return null;
+  }
+
+  const payload = await response.json();
+  return extractOpenAiText(payload) || null;
 }
 
 async function ensureUserProfile(auth: AuthContext) {
@@ -1230,22 +1324,35 @@ export const askLibrary = onCall(
 
     await ensureUserProfile(auth);
 
+    const userRef = db.collection("users").doc(auth.uid);
+    const userSnapshot = await userRef.get();
+    const currentMessages = Number(userSnapshot.get("usageCurrentPeriod.messages")) || 0;
+    const monthlyMessages =
+      Number(userSnapshot.get("limits.monthlyMessages")) || FREE_LIMITS.monthlyMessages;
+    if (currentMessages >= monthlyMessages) {
+      throw new HttpsError(
+        "resource-exhausted",
+        "Your current plan message limit has been reached."
+      );
+    }
+
     const results = await runLibrarySearch(auth.uid, queryText, bookId);
-    const answer = createGroundedDraft(queryText, results, locale);
+    const aiAnswer = await createAiGroundedAnswer(queryText, results, locale);
+    const answer = aiAnswer ?? createGroundedDraft(queryText, results, locale);
     const sourceBooks = summarizeSourceBooks(results);
     const now = FieldValue.serverTimestamp();
-    const userRef = db.collection("users").doc(auth.uid);
     const conversationRef = db.collection("conversations").doc();
     const userMessageRef = conversationRef.collection("messages").doc();
     const assistantMessageRef = conversationRef.collection("messages").doc();
 
     await db.runTransaction(async (transaction) => {
-      const userSnapshot = await transaction.get(userRef);
-      const currentMessages = Number(userSnapshot.get("usageCurrentPeriod.messages")) || 0;
-      const monthlyMessages =
-        Number(userSnapshot.get("limits.monthlyMessages")) || FREE_LIMITS.monthlyMessages;
+      const latestUserSnapshot = await transaction.get(userRef);
+      const latestMessages =
+        Number(latestUserSnapshot.get("usageCurrentPeriod.messages")) || 0;
+      const latestMonthlyMessages =
+        Number(latestUserSnapshot.get("limits.monthlyMessages")) || FREE_LIMITS.monthlyMessages;
 
-      if (currentMessages >= monthlyMessages) {
+      if (latestMessages >= latestMonthlyMessages) {
         throw new HttpsError(
           "resource-exhausted",
           "Your current plan message limit has been reached."
@@ -1255,7 +1362,7 @@ export const askLibrary = onCall(
       transaction.set(conversationRef, {
         userId: auth.uid,
         title: queryText.slice(0, 90),
-        mode: "source_draft",
+        mode: aiAnswer ? "ai_grounded" : "source_draft",
         status: "answered",
         messageCount: 2,
         sourceCount: results.length,
@@ -1280,7 +1387,7 @@ export const askLibrary = onCall(
         userId: auth.uid,
         role: "assistant",
         text: answer,
-        mode: "source_draft",
+        mode: aiAnswer ? "ai_grounded" : "source_draft",
         sources: results.map((result) => ({
           bookId: result.bookId,
           bookTitle: result.bookTitle,

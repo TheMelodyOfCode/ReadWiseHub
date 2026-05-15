@@ -474,6 +474,34 @@ input {
   opacity: 0.62;
 }
 
+.workspace-tabs {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.workspace-tabs button {
+  min-height: 48px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.workspace-tabs button.active {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: #fff;
+}
+
+.workspace-tab-panel {
+  display: grid;
+  gap: 14px;
+}
+
 .book-list {
   display: grid;
   gap: 12px;
@@ -575,6 +603,34 @@ input {
   gap: 12px;
 }
 
+.help-panel {
+  display: grid;
+  gap: 14px;
+  padding: 18px;
+  margin-bottom: 18px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: var(--shadow);
+}
+
+.help-grid {
+  display: grid;
+  gap: 12px;
+}
+
+.help-grid article {
+  padding: 14px;
+  background: var(--surface-strong);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.help-grid h4 {
+  margin: 0 0 8px;
+  font-size: 1rem;
+}
+
 .history-list {
   display: grid;
   gap: 12px;
@@ -601,6 +657,46 @@ input {
 .history-list span {
   color: var(--primary);
   font-weight: 800;
+}
+
+.status-pill {
+  display: inline-flex;
+  width: fit-content;
+  margin-bottom: 10px;
+  padding: 7px 10px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--primary) 12%, transparent);
+  color: var(--primary);
+  font-weight: 900;
+}
+
+.status-failed {
+  background: color-mix(in srgb, var(--danger) 12%, transparent);
+  color: var(--danger);
+}
+
+.status-processing,
+.status-queued,
+.status-upload-reserved {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: var(--accent);
+}
+
+.job-progress {
+  display: grid;
+  gap: 6px;
+  margin: 10px 0;
+}
+
+.job-progress span {
+  color: var(--muted);
+  font-weight: 800;
+}
+
+.job-progress progress {
+  width: 100%;
+  height: 12px;
+  accent-color: var(--primary);
 }
 
 .history-warning {
@@ -761,6 +857,10 @@ input {
     align-items: center;
   }
 
+  .workspace-tabs {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+
   .book-list {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -789,6 +889,10 @@ input {
   .search-panel .small-note,
   .search-results {
     grid-column: 1 / -1;
+  }
+
+  .help-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 

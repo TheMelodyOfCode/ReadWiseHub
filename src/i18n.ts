@@ -36,7 +36,12 @@ export const dictionaries: Record<Locale, Dictionary> = {
     proPlanCopy: "Advanced writing, follow-ups, priority processing, and deeper analysis.",
     dashboardTitle: "Your reading workspace",
     dashboardEmpty:
-      "Upload and chat features are intentionally not active yet. This first build establishes secure sign-in, account records, language, and theme.",
+      "Upload documents, ask source-grounded questions, and keep your reading history under your account.",
+    workspaceToolsTitle: "Workspace",
+    tabAsk: "Ask",
+    tabLibrary: "Library",
+    tabHistory: "History",
+    tabHelp: "Help",
     libraryTitle: "Library",
     libraryEmptyTitle: "No books yet",
     libraryEmpty:
@@ -47,13 +52,19 @@ export const dictionaries: Record<Locale, Dictionary> = {
     uploadBlockedTitle: "Upload backend pending",
     uploadBlocked:
       "Firebase Storage and callable Functions must be live before files can be uploaded safely.",
+    statusQueued: "Waiting for processing",
+    statusProcessing: "Processing text",
+    statusFailed: "Processing failed",
+    statusUploadReserved: "Upload reserved",
+    retryProcessing: "Retry processing",
+    noProcessableJob: "No queued or failed job was found for this book.",
     processQueued: "Process queued jobs",
     processingQueued: "Processing queued jobs...",
     processQueuedDone: "Queued job processing request finished.",
     textReady: "Text extracted",
     askTitle: "Ask your library",
     askCopy:
-      "This first answer mode uses your retrieved sources only. AI writing will be added after the retrieval path is stable.",
+      "Answers are grounded in your uploaded documents. If AI generation is not configured, ReadWiseHub falls back to a source draft.",
     askLabel: "Your question",
     askPlaceholder: "What does my book say about building AI agents?",
     askButton: "Ask",
@@ -70,6 +81,21 @@ export const dictionaries: Record<Locale, Dictionary> = {
     deleteQuestion: "Delete question",
     deletingQuestion: "Deleting...",
     questionDeleted: "Question deleted.",
+    helpAppTitle: "How ReadWiseHub works",
+    helpAppCopy:
+      "Keep it simple: upload a document, wait until the text is ready, then ask direct questions about the content.",
+    helpUploadTitle: "Upload",
+    helpUploadCopy:
+      "Free accounts can upload PDF, TXT, or Markdown files up to 20 MB. Processing status appears on each book card.",
+    helpAskTitle: "Ask",
+    helpAskCopy:
+      "Choose one book or all processed books. Good questions mention the topic, person, chapter, or idea you want to find.",
+    helpPrivacyTitle: "Privacy",
+    helpPrivacyCopy:
+      "Your books and questions are tied to your account. Deleting a book removes the stored file, extracted chunks, and ingestion jobs.",
+    helpVectorTitle: "Search quality",
+    helpVectorCopy:
+      "This MVP uses extracted text search first. A vector database should be added after the UX and safety boundaries stay stable.",
     untitledQuestion: "Untitled question",
     searchTitle: "Search your extracted text",
     searchCopy:
@@ -152,7 +178,12 @@ export const dictionaries: Record<Locale, Dictionary> = {
     proPlanCopy: "Fortgeschrittenes Schreiben, Follow-ups, Priorität und tiefere Analyse.",
     dashboardTitle: "Dein Lesebereich",
     dashboardEmpty:
-      "Upload und Chat sind bewusst noch nicht aktiv. Dieser erste Build legt sichere Anmeldung, Kontodaten, Sprache und Designmodus an.",
+      "Lade Dokumente hoch, stelle quellenbasierte Fragen und behalte deinen Leseverlauf in deinem Konto.",
+    workspaceToolsTitle: "Arbeitsbereich",
+    tabAsk: "Fragen",
+    tabLibrary: "Bibliothek",
+    tabHistory: "Verlauf",
+    tabHelp: "Hilfe",
     libraryTitle: "Bibliothek",
     libraryEmptyTitle: "Noch keine Bücher",
     libraryEmpty:
@@ -163,13 +194,19 @@ export const dictionaries: Record<Locale, Dictionary> = {
     uploadBlockedTitle: "Upload-Backend fehlt noch",
     uploadBlocked:
       "Firebase Storage und Callable Functions müssen live sein, bevor Dateien sicher hochgeladen werden können.",
+    statusQueued: "Wartet auf Verarbeitung",
+    statusProcessing: "Text wird verarbeitet",
+    statusFailed: "Verarbeitung fehlgeschlagen",
+    statusUploadReserved: "Upload reserviert",
+    retryProcessing: "Verarbeitung erneut starten",
+    noProcessableJob: "Für dieses Buch wurde kein wartender oder fehlgeschlagener Job gefunden.",
     processQueued: "Wartende Jobs verarbeiten",
     processingQueued: "Wartende Jobs werden verarbeitet...",
     processQueuedDone: "Anfrage zur Verarbeitung wartender Jobs abgeschlossen.",
     textReady: "Text extrahiert",
     askTitle: "Bibliothek fragen",
     askCopy:
-      "Dieser erste Antwortmodus nutzt nur gefundene Quellen. KI-Antworten folgen, wenn die Retrieval-Strecke stabil ist.",
+      "Antworten werden aus deinen hochgeladenen Dokumenten abgeleitet. Wenn KI-Antworten noch nicht konfiguriert sind, nutzt ReadWiseHub einen Quellenentwurf.",
     askLabel: "Deine Frage",
     askPlaceholder: "Was sagt mein Buch über KI-Agenten?",
     askButton: "Fragen",
@@ -186,6 +223,21 @@ export const dictionaries: Record<Locale, Dictionary> = {
     deleteQuestion: "Frage löschen",
     deletingQuestion: "Wird gelöscht...",
     questionDeleted: "Frage gelöscht.",
+    helpAppTitle: "So funktioniert ReadWiseHub",
+    helpAppCopy:
+      "Einfach starten: Dokument hochladen, warten bis der Text bereit ist und dann direkte Fragen zum Inhalt stellen.",
+    helpUploadTitle: "Upload",
+    helpUploadCopy:
+      "Free-Konten können PDF, TXT oder Markdown bis 20 MB hochladen. Der Verarbeitungsstatus steht direkt auf jeder Buchkarte.",
+    helpAskTitle: "Fragen",
+    helpAskCopy:
+      "Wähle ein Buch oder alle verarbeiteten Bücher. Gute Fragen nennen Thema, Person, Kapitel oder Idee, die du finden möchtest.",
+    helpPrivacyTitle: "Datenschutz",
+    helpPrivacyCopy:
+      "Deine Bücher und Fragen gehören zu deinem Konto. Beim Löschen eines Buchs werden Datei, Textabschnitte und Verarbeitungsjobs entfernt.",
+    helpVectorTitle: "Suchqualität",
+    helpVectorCopy:
+      "Dieses MVP nutzt zuerst extrahierte Textsuche. Eine Vektordatenbank sollte folgen, sobald UX und Sicherheitsgrenzen stabil sind.",
     untitledQuestion: "Unbenannte Frage",
     searchTitle: "Extrahierten Text durchsuchen",
     searchCopy:
