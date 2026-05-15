@@ -421,6 +421,7 @@ input {
 }
 
 .ask-panel,
+.history-panel,
 .search-panel {
   display: grid;
   gap: 14px;
@@ -481,6 +482,34 @@ input {
 .search-results {
   display: grid;
   gap: 12px;
+}
+
+.history-list {
+  display: grid;
+  gap: 12px;
+}
+
+.history-list article {
+  display: grid;
+  gap: 8px;
+  padding: 14px;
+  background: var(--surface-strong);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.history-list h4 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.history-list p {
+  margin: 0;
+}
+
+.history-list span {
+  color: var(--primary);
+  font-weight: 800;
 }
 
 .search-results article {
@@ -590,6 +619,7 @@ input {
   }
 
   .ask-panel,
+  .history-panel,
   .search-panel {
     grid-template-columns: minmax(0, 1fr) minmax(260px, 360px);
     align-items: start;
@@ -601,6 +631,8 @@ input {
   .ask-panel .error-text,
   .ask-panel .small-note,
   .answer-box,
+  .history-list,
+  .history-panel .small-note,
   .search-panel .error-text,
   .search-panel .small-note,
   .search-results {

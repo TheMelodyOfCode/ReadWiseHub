@@ -49,6 +49,14 @@ type AskLibraryResponse = {
   results: LibrarySearchResult[];
 };
 
+type ConversationRecord = {
+  id: string;
+  title: string;
+  latestAnswerPreview: string;
+  sourceCount: number;
+  updatedAtMs: number;
+};
+
 const UPLOAD_BACKEND_ENABLED = true;
 const MAX_FREE_FILE_BYTES = 20 * 1024 * 1024;
 const ALLOWED_UPLOAD_TYPES = new Set([
@@ -153,6 +161,8 @@ export function App() {
   const [askBusy, setAskBusy] = useState(false);
   const [askAnswer, setAskAnswer] = useState("");
   const [askSources, setAskSources] = useState<LibrarySearchResult[]>([]);
+  const [conversations, setConversations] = useState<ConversationRecord[]>([]);
+  const [conversationsReady, setConversationsReady] = useState(false);
 
   const t = useMemo(() => dictionaries[locale], [locale]);
   const textReadyBooks = useMemo(
@@ -219,6 +229,50 @@ export function App() {
       }
     );
   }, [user]);
+
+  useEffect(() => {
+    if (!user) {
+      setConversations([]);
+      setConversationsReady(false);
+      return;
+    }
+
+    const conversationsQuery = query(
+      collection(db, "conversations"),
+      where("userId", "==", user.uid)
+    );
+    return onSnapshot(
+      conversationsQuery,
+      (snapshot) => {
+        setConversations(
+          snapshot.docs
+            .map((conversationDoc) => {
+              const data = conversationDoc.data();
+              return {
+                id: conversationDoc.id,
+                title: typeof data.title === "string" ? data.title : t.untitledQuestion,
+                latestAnswerPreview:
+                  typeof data.latestAnswerPreview === "string"
+                    ? data.latestAnswerPreview
+                    : "",
+                sourceCount: typeof data.sourceCount === "number" ? data.sourceCount : 0,
+                updatedAtMs:
+                  typeof data.updatedAt?.toMillis === "function"
+                    ? data.updatedAt.toMillis()
+                    : 0,
+              };
+            })
+            .sort((left, right) => right.updatedAtMs - left.updatedAtMs)
+            .slice(0, 5)
+        );
+        setConversationsReady(true);
+      },
+      (error) => {
+        setAuthError(getErrorMessage(error, "Conversation sync failed"));
+        setConversationsReady(true);
+      }
+    );
+  }, [t.untitledQuestion, user]);
 
   async function handlePasswordAuth(
     event: FormEvent<HTMLFormElement>,
@@ -595,6 +649,34 @@ export function App() {
                 </div>
               ) : null}
             </form>
+
+            <section className="history-panel">
+              <div>
+                <h3>{t.historyTitle}</h3>
+                <p>{t.historyCopy}</p>
+              </div>
+              {!conversationsReady ? (
+                <p>Loading...</p>
+              ) : conversations.length === 0 ? (
+                <p className="small-note">{t.historyEmpty}</p>
+              ) : (
+                <div className="history-list">
+                  {conversations.map((conversation) => (
+                    <article key={conversation.id}>
+                      <h4>{conversation.title}</h4>
+                      {conversation.latestAnswerPreview ? (
+                        <p>{conversation.latestAnswerPreview}</p>
+                      ) : (
+                        <p>{t.historyNoPreview}</p>
+                      )}
+                      <span>
+                        {conversation.sourceCount} {t.historySources}
+                      </span>
+                    </article>
+                  ))}
+                </div>
+              )}
+            </section>
 
             {!booksReady ? (
               <p>Loading...</p>

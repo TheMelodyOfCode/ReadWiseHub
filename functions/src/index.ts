@@ -1017,6 +1017,8 @@ export const askLibrary = onCall(
         status: "answered",
         messageCount: 2,
         sourceCount: results.length,
+        latestQuestion: queryText,
+        latestAnswerPreview: answer.slice(0, 360),
         createdAt: now,
         updatedAt: now,
       });
