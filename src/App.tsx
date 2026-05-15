@@ -57,6 +57,15 @@ type ConversationRecord = {
   updatedAtMs: number;
 };
 
+type UserUsage = {
+  messages: number;
+  monthlyMessages: number;
+  books: number;
+  maxBooks: number;
+  storageBytes: number;
+  maxStorageBytes: number;
+};
+
 const UPLOAD_BACKEND_ENABLED = true;
 const MAX_FREE_FILE_BYTES = 20 * 1024 * 1024;
 const ALLOWED_UPLOAD_TYPES = new Set([
@@ -164,10 +173,22 @@ export function App() {
   const [conversations, setConversations] = useState<ConversationRecord[]>([]);
   const [conversationsReady, setConversationsReady] = useState(false);
   const [selectedBookScope, setSelectedBookScope] = useState("");
+  const [usage, setUsage] = useState<UserUsage>({
+    messages: 0,
+    monthlyMessages: 50,
+    books: 0,
+    maxBooks: 2,
+    storageBytes: 0,
+    maxStorageBytes: 20 * 1024 * 1024,
+  });
 
   const t = useMemo(() => dictionaries[locale], [locale]);
   const textReadyBooks = useMemo(
     () => books.filter((book) => book.status === "text_ready"),
+    [books]
+  );
+  const activeStorageBytes = useMemo(
+    () => books.reduce((total, book) => total + book.sizeBytes, 0),
     [books]
   );
 
@@ -230,6 +251,43 @@ export function App() {
       }
     );
   }, [user]);
+
+  useEffect(() => {
+    if (!user) {
+      return;
+    }
+
+    return onSnapshot(
+      doc(db, "users", user.uid),
+      (snapshot) => {
+        const data = snapshot.data();
+        const current = data?.usageCurrentPeriod ?? {};
+        const limits = data?.limits ?? {};
+
+        setUsage({
+          messages: typeof current.messages === "number" ? current.messages : 0,
+          monthlyMessages:
+            typeof limits.monthlyMessages === "number" ? limits.monthlyMessages : 50,
+          books:
+            typeof current.books === "number"
+              ? Math.max(current.books, books.length)
+              : books.length,
+          maxBooks: typeof limits.maxBooks === "number" ? limits.maxBooks : 2,
+          storageBytes:
+            typeof current.storageBytes === "number"
+              ? Math.max(current.storageBytes, activeStorageBytes)
+              : activeStorageBytes,
+          maxStorageBytes:
+            typeof limits.maxStorageBytes === "number"
+              ? limits.maxStorageBytes
+              : 20 * 1024 * 1024,
+        });
+      },
+      (error) => {
+        setAuthError(getErrorMessage(error, "Usage sync failed"));
+      }
+    );
+  }, [activeStorageBytes, books.length, user]);
 
   useEffect(() => {
     if (!user) {
@@ -514,9 +572,16 @@ export function App() {
             <div className="quick-panel">
               <h2>{t.usageTitle}</h2>
               <ul className="usage-list">
-                <li>{t.usageBooks}</li>
-                <li>{t.usageStorage}</li>
-                <li>{t.usageMessages}</li>
+                <li>
+                  {usage.books}/{usage.maxBooks} {t.usageBooksLabel}
+                </li>
+                <li>
+                  {Math.round(usage.storageBytes / 1024 / 1024)}/
+                  {Math.round(usage.maxStorageBytes / 1024 / 1024)} MB {t.usageStorageLabel}
+                </li>
+                <li>
+                  {usage.messages}/{usage.monthlyMessages} {t.usageMessagesLabel}
+                </li>
               </ul>
             </div>
           </section>

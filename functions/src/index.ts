@@ -1005,11 +1005,24 @@ export const askLibrary = onCall(
     const results = await runLibrarySearch(auth.uid, queryText, bookId);
     const answer = createGroundedDraft(queryText, results, locale);
     const now = FieldValue.serverTimestamp();
+    const userRef = db.collection("users").doc(auth.uid);
     const conversationRef = db.collection("conversations").doc();
     const userMessageRef = conversationRef.collection("messages").doc();
     const assistantMessageRef = conversationRef.collection("messages").doc();
 
     await db.runTransaction(async (transaction) => {
+      const userSnapshot = await transaction.get(userRef);
+      const currentMessages = Number(userSnapshot.get("usageCurrentPeriod.messages")) || 0;
+      const monthlyMessages =
+        Number(userSnapshot.get("limits.monthlyMessages")) || FREE_LIMITS.monthlyMessages;
+
+      if (currentMessages >= monthlyMessages) {
+        throw new HttpsError(
+          "resource-exhausted",
+          "Your current plan message limit has been reached."
+        );
+      }
+
       transaction.set(conversationRef, {
         userId: auth.uid,
         title: queryText.slice(0, 90),
@@ -1045,7 +1058,7 @@ export const askLibrary = onCall(
         createdAt: now,
       });
       transaction.set(
-        db.collection("users").doc(auth.uid),
+        userRef,
         {
           "usageCurrentPeriod.messages": FieldValue.increment(1),
           updatedAt: now,

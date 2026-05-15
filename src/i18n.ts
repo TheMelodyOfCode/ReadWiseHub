@@ -84,6 +84,9 @@ export const dictionaries: Record<Locale, Dictionary> = {
     usageBooks: "2 books",
     usageStorage: "20 MB storage",
     usageMessages: "50 messages/month",
+    usageBooksLabel: "books",
+    usageStorageLabel: "storage",
+    usageMessagesLabel: "messages/month",
     nextStepTitle: "Next build step",
     nextStepCopy:
       "Add the controlled upload flow, ingestion job status, and document validation before chat is enabled.",
@@ -182,6 +185,9 @@ export const dictionaries: Record<Locale, Dictionary> = {
     usageBooks: "2 Bücher",
     usageStorage: "20 MB Speicher",
     usageMessages: "50 Nachrichten/Monat",
+    usageBooksLabel: "Bücher",
+    usageStorageLabel: "Speicher",
+    usageMessagesLabel: "Nachrichten/Monat",
     nextStepTitle: "Nächster Entwicklungsschritt",
     nextStepCopy:
       "Als Nächstes folgen kontrollierter Upload, Verarbeitungsstatus und Dokumentprüfung, bevor der Chat aktiviert wird.",
