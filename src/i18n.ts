@@ -45,6 +45,10 @@ export const dictionaries: Record<Locale, Dictionary> = {
     uploadBlockedTitle: "Upload backend pending",
     uploadBlocked:
       "Firebase Storage and callable Functions must be live before files can be uploaded safely.",
+    processQueued: "Process queued jobs",
+    processingQueued: "Processing queued jobs...",
+    processQueuedDone: "Queued job processing request finished.",
+    textReady: "Text extracted",
     chooseFile: "Choose file",
     selectedFile: "Selected file",
     allowedFiles: "PDF, TXT, or Markdown up to 20 MB.",
@@ -113,6 +117,10 @@ export const dictionaries: Record<Locale, Dictionary> = {
     uploadBlockedTitle: "Upload-Backend fehlt noch",
     uploadBlocked:
       "Firebase Storage und Callable Functions müssen live sein, bevor Dateien sicher hochgeladen werden können.",
+    processQueued: "Wartende Jobs verarbeiten",
+    processingQueued: "Wartende Jobs werden verarbeitet...",
+    processQueuedDone: "Anfrage zur Verarbeitung wartender Jobs abgeschlossen.",
+    textReady: "Text extrahiert",
     chooseFile: "Datei auswählen",
     selectedFile: "Ausgewählte Datei",
     allowedFiles: "PDF, TXT oder Markdown bis 20 MB.",

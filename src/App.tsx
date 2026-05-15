@@ -12,6 +12,7 @@ import {
   collection,
   doc,
   getDoc,
+  getDocs,
   onSnapshot,
   query,
   serverTimestamp,
@@ -30,6 +31,7 @@ type BookRecord = {
   title: string;
   status: string;
   sizeBytes: number;
+  chunkCount: number;
 };
 
 const UPLOAD_BACKEND_ENABLED = true;
@@ -126,6 +128,7 @@ export function App() {
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [uploadMessage, setUploadMessage] = useState("");
   const [uploadBusy, setUploadBusy] = useState(false);
+  const [processBusy, setProcessBusy] = useState(false);
 
   const t = useMemo(() => dictionaries[locale], [locale]);
 
@@ -174,6 +177,8 @@ export function App() {
                 status: typeof data.status === "string" ? data.status : "unknown",
                 sizeBytes:
                   typeof data.sizeBytes === "number" ? data.sizeBytes : 0,
+                chunkCount:
+                  typeof data.chunkCount === "number" ? data.chunkCount : 0,
               };
             })
             .sort((left, right) => left.title.localeCompare(right.title))
@@ -296,6 +301,45 @@ export function App() {
     }
   }
 
+  async function processQueuedJobs() {
+    if (!user) {
+      return;
+    }
+
+    const queuedBooks = books.filter((book) => book.status === "queued");
+
+    if (queuedBooks.length === 0) {
+      setUploadMessage(t.processQueuedDone);
+      return;
+    }
+
+    setProcessBusy(true);
+    setUploadMessage(t.processingQueued);
+
+    try {
+      const processJob = httpsCallable<{ jobId: string }, { ok: boolean }>(
+        functions,
+        "processIngestionJob"
+      );
+      const jobsQuery = query(
+        collection(db, "ingestionJobs"),
+        where("userId", "==", user.uid),
+        where("status", "==", "queued")
+      );
+
+      const snapshot = await getDocs(jobsQuery);
+      for (const jobDoc of snapshot.docs) {
+        await processJob({ jobId: jobDoc.id });
+      }
+
+      setUploadMessage(t.processQueuedDone);
+    } catch (error) {
+      setUploadMessage(getErrorMessage(error, "Processing failed"));
+    } finally {
+      setProcessBusy(false);
+    }
+  }
+
   if (user) {
     return (
       <div className="app-shell workspace-shell">
@@ -367,6 +411,14 @@ export function App() {
               >
                 Upload
               </button>
+              <button
+                className="button secondary"
+                type="button"
+                disabled={processBusy || books.every((book) => book.status !== "queued")}
+                onClick={processQueuedJobs}
+              >
+                {processBusy ? t.processingQueued : t.processQueued}
+              </button>
               <div className="backend-lock">
                 <h3>{t.uploadBlockedTitle}</h3>
                 <p>{t.uploadBlocked}</p>
@@ -386,7 +438,8 @@ export function App() {
                 {books.map((book) => (
                   <article key={book.id}>
                     <h3>{book.title}</h3>
-                    <p>{book.status}</p>
+                    <p>{book.status === "text_ready" ? t.textReady : book.status}</p>
+                    {book.chunkCount > 0 ? <p>{book.chunkCount} chunks</p> : null}
                   </article>
                 ))}
               </div>
