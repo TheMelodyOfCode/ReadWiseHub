@@ -67,6 +67,11 @@ service cloud.firestore {
     match /conversations/{conversationId} {
       allow read: if signedIn() && resource.data.userId == request.auth.uid;
       allow write: if false;
+
+      match /messages/{messageId} {
+        allow read: if signedIn() && resource.data.userId == request.auth.uid;
+        allow write: if false;
+      }
     }
 
     match /{document=**} {

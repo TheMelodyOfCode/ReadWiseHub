@@ -36,6 +36,14 @@ type AuthContext = {
   picture?: string;
 };
 
+type LibrarySearchResult = {
+  bookId: string;
+  bookTitle: string;
+  chunkIndex: number;
+  score: number;
+  excerpt: string;
+};
+
 function requireAuth(auth: AuthContext | undefined): AuthContext {
   if (!auth?.uid) {
     throw new HttpsError("unauthenticated", "Sign in before using ReadWiseHub.");
@@ -353,6 +361,130 @@ function createExcerpt(text: string, terms: string[]): string {
   const suffix = end < text.length ? " ..." : "";
 
   return `${prefix}${text.slice(start, end).trim()}${suffix}`;
+}
+
+async function collectSearchableBooks(userId: string, bookId: string) {
+  const books = new Map<string, { title: string }>();
+
+  if (bookId) {
+    const bookSnapshot = await db.collection("books").doc(bookId).get();
+    if (
+      bookSnapshot.exists &&
+      bookSnapshot.get("userId") === userId &&
+      bookSnapshot.get("status") === "text_ready"
+    ) {
+      books.set(bookSnapshot.id, {
+        title: assertString(bookSnapshot.get("title"), "title"),
+      });
+    }
+    return books;
+  }
+
+  const booksSnapshot = await db
+    .collection("books")
+    .where("userId", "==", userId)
+    .where("status", "==", "text_ready")
+    .get();
+
+  booksSnapshot.docs.forEach((bookSnapshot) => {
+    books.set(bookSnapshot.id, {
+      title: assertString(bookSnapshot.get("title"), "title"),
+    });
+  });
+
+  return books;
+}
+
+async function runLibrarySearch(userId: string, queryText: string, bookId = "") {
+  const terms = tokenizeSearchQuery(queryText);
+
+  if (terms.length === 0) {
+    throw new HttpsError("invalid-argument", "Please use a more specific question.");
+  }
+
+  const books = await collectSearchableBooks(userId, bookId);
+
+  if (books.size === 0) {
+    return [];
+  }
+
+  const chunkSnapshots = await Promise.all(
+    Array.from(books.keys()).map((currentBookId) =>
+      db
+        .collection("bookChunks")
+        .where("bookId", "==", currentBookId)
+        .limit(800)
+        .get()
+    )
+  );
+  const scoredResults: LibrarySearchResult[] = [];
+
+  chunkSnapshots.forEach((snapshot) => {
+    snapshot.docs.forEach((chunkSnapshot) => {
+      const currentBookId = assertString(chunkSnapshot.get("bookId"), "bookId");
+      const book = books.get(currentBookId);
+
+      if (!book || chunkSnapshot.get("userId") !== userId) {
+        return;
+      }
+
+      const text = assertString(chunkSnapshot.get("text"), "text");
+      const score = scoreChunk(text, terms) + scorePhrase(text, queryText);
+
+      if (score <= 0) {
+        return;
+      }
+
+      scoredResults.push({
+        bookId: currentBookId,
+        bookTitle: book.title,
+        chunkIndex: Number(chunkSnapshot.get("chunkIndex")) || 0,
+        score,
+        excerpt: createExcerpt(text, terms),
+      });
+    });
+  });
+
+  scoredResults.sort((left, right) => right.score - left.score);
+
+  return scoredResults.slice(0, MAX_SEARCH_RESULTS);
+}
+
+function createGroundedDraft(queryText: string, results: LibrarySearchResult[], locale: string) {
+  if (results.length === 0) {
+    return locale === "de"
+      ? "Ich habe dazu noch keine passende Stelle in deinen hochgeladenen Dokumenten gefunden."
+      : "I could not find a matching passage in your uploaded documents yet.";
+  }
+
+  const topResults = results.slice(0, 3);
+  const sourceList = topResults
+    .map((result, index) => `${index + 1}. ${result.bookTitle}, chunk ${result.chunkIndex + 1}`)
+    .join("\n");
+
+  if (locale === "de") {
+    return [
+      `Frage: ${queryText}`,
+      "",
+      "Ich habe passende Quellenstellen gefunden. Eine echte KI-Antwort ist noch nicht aktiv; diese Antwort fasst aktuell nur die gefundenen Quellen zusammen.",
+      "",
+      topResults.map((result) => `- ${result.excerpt}`).join("\n"),
+      "",
+      "Quellen:",
+      sourceList,
+    ].join("\n");
+  }
+
+  return [
+    `Question: ${queryText}`,
+    "",
+    "I found matching source passages. Full AI answer generation is not active yet; this response currently summarizes the retrieved sources only.",
+    "",
+    topResults.map((result) => `- ${result.excerpt}`).join("\n"),
+    "",
+    "Sources:",
+    sourceList,
+  ].join("\n");
 }
 
 async function ensureUserProfile(auth: AuthContext) {
@@ -837,98 +969,93 @@ export const searchLibrary = onCall(
       typeof request.data?.bookId === "string" && request.data.bookId.trim()
         ? request.data.bookId.trim()
         : "";
-    const terms = tokenizeSearchQuery(queryText);
-
-    if (terms.length === 0) {
-      throw new HttpsError("invalid-argument", "Please use a more specific question.");
-    }
 
     await ensureUserProfile(auth);
-
-    const books = new Map<string, { title: string }>();
-
-    if (bookId) {
-      const bookSnapshot = await db.collection("books").doc(bookId).get();
-      if (
-        bookSnapshot.exists &&
-        bookSnapshot.get("userId") === auth.uid &&
-        bookSnapshot.get("status") === "text_ready"
-      ) {
-        books.set(bookSnapshot.id, {
-          title: assertString(bookSnapshot.get("title"), "title"),
-        });
-      }
-    } else {
-      const booksSnapshot = await db
-        .collection("books")
-        .where("userId", "==", auth.uid)
-        .where("status", "==", "text_ready")
-        .get();
-
-      booksSnapshot.docs.forEach((bookSnapshot) => {
-        books.set(bookSnapshot.id, {
-          title: assertString(bookSnapshot.get("title"), "title"),
-        });
-      });
-    }
-
-    if (books.size === 0) {
-      return {
-        ok: true,
-        query: queryText,
-        results: [],
-      };
-    }
-
-    const chunkSnapshots = await Promise.all(
-      Array.from(books.keys()).map((currentBookId) =>
-        db
-          .collection("bookChunks")
-          .where("bookId", "==", currentBookId)
-          .limit(800)
-          .get()
-      )
-    );
-    const scoredResults: Array<{
-      bookId: string;
-      bookTitle: string;
-      chunkIndex: number;
-      score: number;
-      excerpt: string;
-    }> = [];
-
-    chunkSnapshots.forEach((snapshot) => {
-      snapshot.docs.forEach((chunkSnapshot) => {
-        const currentBookId = assertString(chunkSnapshot.get("bookId"), "bookId");
-        const book = books.get(currentBookId);
-
-        if (!book || chunkSnapshot.get("userId") !== auth.uid) {
-          return;
-        }
-
-        const text = assertString(chunkSnapshot.get("text"), "text");
-        const score = scoreChunk(text, terms) + scorePhrase(text, queryText);
-
-        if (score <= 0) {
-          return;
-        }
-
-        scoredResults.push({
-          bookId: currentBookId,
-          bookTitle: book.title,
-          chunkIndex: Number(chunkSnapshot.get("chunkIndex")) || 0,
-          score,
-          excerpt: createExcerpt(text, terms),
-        });
-      });
-    });
-
-    scoredResults.sort((left, right) => right.score - left.score);
+    const results = await runLibrarySearch(auth.uid, queryText, bookId);
 
     return {
       ok: true,
       query: queryText,
-      results: scoredResults.slice(0, MAX_SEARCH_RESULTS),
+      results,
+    };
+  }
+);
+
+export const askLibrary = onCall(
+  { region: "us-central1", timeoutSeconds: 60, memory: "512MiB" },
+  async (request) => {
+    const auth = requireAuth(request.auth?.token
+      ? {
+          uid: request.auth.uid,
+          email: request.auth.token.email,
+          name: request.auth.token.name,
+          picture: request.auth.token.picture,
+        }
+      : undefined);
+    const queryText = assertString(request.data?.query, "query").slice(0, MAX_SEARCH_QUERY_LENGTH);
+    const locale =
+      typeof request.data?.locale === "string" && request.data.locale === "de" ? "de" : "en";
+    const bookId =
+      typeof request.data?.bookId === "string" && request.data.bookId.trim()
+        ? request.data.bookId.trim()
+        : "";
+
+    await ensureUserProfile(auth);
+
+    const results = await runLibrarySearch(auth.uid, queryText, bookId);
+    const answer = createGroundedDraft(queryText, results, locale);
+    const now = FieldValue.serverTimestamp();
+    const conversationRef = db.collection("conversations").doc();
+    const userMessageRef = conversationRef.collection("messages").doc();
+    const assistantMessageRef = conversationRef.collection("messages").doc();
+
+    await db.runTransaction(async (transaction) => {
+      transaction.set(conversationRef, {
+        userId: auth.uid,
+        title: queryText.slice(0, 90),
+        mode: "source_draft",
+        status: "answered",
+        messageCount: 2,
+        sourceCount: results.length,
+        createdAt: now,
+        updatedAt: now,
+      });
+      transaction.set(userMessageRef, {
+        userId: auth.uid,
+        role: "user",
+        text: queryText,
+        createdAt: now,
+      });
+      transaction.set(assistantMessageRef, {
+        userId: auth.uid,
+        role: "assistant",
+        text: answer,
+        mode: "source_draft",
+        sources: results.map((result) => ({
+          bookId: result.bookId,
+          bookTitle: result.bookTitle,
+          chunkIndex: result.chunkIndex,
+          excerpt: result.excerpt,
+          score: result.score,
+        })),
+        createdAt: now,
+      });
+      transaction.set(
+        db.collection("users").doc(auth.uid),
+        {
+          "usageCurrentPeriod.messages": FieldValue.increment(1),
+          updatedAt: now,
+        },
+        { merge: true }
+      );
+    });
+
+    return {
+      ok: true,
+      query: queryText,
+      answer,
+      conversationId: conversationRef.id,
+      results,
     };
   }
 );

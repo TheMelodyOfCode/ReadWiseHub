@@ -420,6 +420,7 @@ input {
   box-shadow: var(--shadow);
 }
 
+.ask-panel,
 .search-panel {
   display: grid;
   gap: 14px;
@@ -431,10 +432,49 @@ input {
   box-shadow: var(--shadow);
 }
 
+.ask-panel {
+  border-color: color-mix(in srgb, var(--primary) 45%, var(--border));
+}
+
+.ask-panel label,
 .search-panel label {
   display: grid;
   gap: 8px;
   color: var(--muted);
+  font-weight: 800;
+}
+
+.answer-box {
+  display: grid;
+  gap: 12px;
+  padding: 16px;
+  background: var(--surface-strong);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.answer-box h4 {
+  margin: 0;
+  font-size: 1.05rem;
+}
+
+.answer-box p {
+  margin: 0;
+  white-space: pre-line;
+}
+
+.source-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.source-pills span {
+  display: inline-flex;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--primary) 14%, transparent);
+  color: var(--primary);
   font-weight: 800;
 }
 
@@ -549,6 +589,7 @@ input {
     align-items: start;
   }
 
+  .ask-panel,
   .search-panel {
     grid-template-columns: minmax(0, 1fr) minmax(260px, 360px);
     align-items: start;
@@ -557,6 +598,9 @@ input {
   .backend-lock,
   .selected-file,
   .upload-panel .error-text,
+  .ask-panel .error-text,
+  .ask-panel .small-note,
+  .answer-box,
   .search-panel .error-text,
   .search-panel .small-note,
   .search-results {

@@ -49,6 +49,14 @@ export const dictionaries: Record<Locale, Dictionary> = {
     processingQueued: "Processing queued jobs...",
     processQueuedDone: "Queued job processing request finished.",
     textReady: "Text extracted",
+    askTitle: "Ask your library",
+    askCopy:
+      "This first answer mode uses your retrieved sources only. AI writing will be added after the retrieval path is stable.",
+    askLabel: "Your question",
+    askPlaceholder: "What does my book say about building AI agents?",
+    askButton: "Ask",
+    asking: "Looking for sources...",
+    answerTitle: "Source-based answer",
     searchTitle: "Search your extracted text",
     searchCopy:
       "This is the first retrieval test. It finds matching source passages before AI chat is added.",
@@ -131,6 +139,14 @@ export const dictionaries: Record<Locale, Dictionary> = {
     processingQueued: "Wartende Jobs werden verarbeitet...",
     processQueuedDone: "Anfrage zur Verarbeitung wartender Jobs abgeschlossen.",
     textReady: "Text extrahiert",
+    askTitle: "Bibliothek fragen",
+    askCopy:
+      "Dieser erste Antwortmodus nutzt nur gefundene Quellen. KI-Antworten folgen, wenn die Retrieval-Strecke stabil ist.",
+    askLabel: "Deine Frage",
+    askPlaceholder: "Was sagt mein Buch über KI-Agenten?",
+    askButton: "Fragen",
+    asking: "Quellen werden gesucht...",
+    answerTitle: "Quellenbasierte Antwort",
     searchTitle: "Extrahierten Text durchsuchen",
     searchCopy:
       "Das ist der erste Retrieval-Test. Er findet passende Quellenstellen, bevor der KI-Chat ergänzt wird.",

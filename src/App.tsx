@@ -42,6 +42,13 @@ type LibrarySearchResult = {
   excerpt: string;
 };
 
+type AskLibraryResponse = {
+  ok: boolean;
+  answer: string;
+  conversationId: string;
+  results: LibrarySearchResult[];
+};
+
 const UPLOAD_BACKEND_ENABLED = true;
 const MAX_FREE_FILE_BYTES = 20 * 1024 * 1024;
 const ALLOWED_UPLOAD_TYPES = new Set([
@@ -141,6 +148,11 @@ export function App() {
   const [searchMessage, setSearchMessage] = useState("");
   const [searchBusy, setSearchBusy] = useState(false);
   const [searchResults, setSearchResults] = useState<LibrarySearchResult[]>([]);
+  const [askQuestion, setAskQuestion] = useState("");
+  const [askMessage, setAskMessage] = useState("");
+  const [askBusy, setAskBusy] = useState(false);
+  const [askAnswer, setAskAnswer] = useState("");
+  const [askSources, setAskSources] = useState<LibrarySearchResult[]>([]);
 
   const t = useMemo(() => dictionaries[locale], [locale]);
   const textReadyBooks = useMemo(
@@ -383,6 +395,37 @@ export function App() {
     }
   }
 
+  async function askLibraryQuestion(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+
+    if (!askQuestion.trim() || textReadyBooks.length === 0) {
+      return;
+    }
+
+    setAskBusy(true);
+    setAskMessage("");
+    setAskAnswer("");
+    setAskSources([]);
+
+    try {
+      const askLibrary = httpsCallable<
+        { query: string; locale: Locale },
+        AskLibraryResponse
+      >(functions, "askLibrary");
+      const response = await askLibrary({
+        query: askQuestion.trim(),
+        locale,
+      });
+      setAskAnswer(response.data.answer);
+      setAskSources(response.data.results ?? []);
+      setAskMessage(response.data.results.length === 0 ? t.noSearchResults : "");
+    } catch (error) {
+      setAskMessage(getErrorMessage(error, "Ask failed"));
+    } finally {
+      setAskBusy(false);
+    }
+  }
+
   if (user) {
     return (
       <div className="app-shell workspace-shell">
@@ -468,6 +511,49 @@ export function App() {
               </div>
               {uploadMessage ? <p className="error-text">{uploadMessage}</p> : null}
             </div>
+
+            <form className="ask-panel" onSubmit={askLibraryQuestion}>
+              <div>
+                <h3>{t.askTitle}</h3>
+                <p>{t.askCopy}</p>
+              </div>
+              <label>
+                {t.askLabel}
+                <input
+                  type="search"
+                  value={askQuestion}
+                  onChange={(event) => setAskQuestion(event.target.value)}
+                  placeholder={t.askPlaceholder}
+                  disabled={textReadyBooks.length === 0}
+                />
+              </label>
+              <button
+                className="button primary"
+                type="submit"
+                disabled={askBusy || textReadyBooks.length === 0 || !askQuestion.trim()}
+              >
+                {askBusy ? t.asking : t.askButton}
+              </button>
+              {textReadyBooks.length === 0 ? (
+                <p className="small-note">{t.searchNeedsText}</p>
+              ) : null}
+              {askMessage ? <p className="error-text">{askMessage}</p> : null}
+              {askAnswer ? (
+                <div className="answer-box">
+                  <h4>{t.answerTitle}</h4>
+                  <p>{askAnswer}</p>
+                  {askSources.length > 0 ? (
+                    <div className="source-pills">
+                      {askSources.slice(0, 3).map((source) => (
+                        <span key={`${source.bookId}-${source.chunkIndex}`}>
+                          {source.bookTitle} · {t.sourceChunk} {source.chunkIndex + 1}
+                        </span>
+                      ))}
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
+            </form>
 
             <form className="search-panel" onSubmit={searchExtractedText}>
               <div>
