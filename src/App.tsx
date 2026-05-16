@@ -716,6 +716,28 @@ export function App() {
   }, [readerBook]);
 
   useEffect(() => {
+    if (!readerBook) {
+      return;
+    }
+
+    let selectionTimeout: number | null = null;
+    function handleSelectionChange() {
+      if (selectionTimeout) {
+        window.clearTimeout(selectionTimeout);
+      }
+      selectionTimeout = window.setTimeout(captureReaderSelection, 90);
+    }
+
+    document.addEventListener("selectionchange", handleSelectionChange);
+    return () => {
+      document.removeEventListener("selectionchange", handleSelectionChange);
+      if (selectionTimeout) {
+        window.clearTimeout(selectionTimeout);
+      }
+    };
+  }, [readerBook, readerParagraphs]);
+
+  useEffect(() => {
     function handlePointerDown(event: PointerEvent) {
       const target = event.target;
       if (!(target instanceof Node)) {
@@ -1519,6 +1541,10 @@ export function App() {
       text,
       paragraphId: paragraph.id,
     });
+  }
+
+  function captureReaderSelectionSoon() {
+    window.setTimeout(captureReaderSelection, 120);
   }
 
   function highlightReaderSelection() {
@@ -2377,7 +2403,7 @@ export function App() {
                         className="book-page"
                         ref={bookPageRef}
                         onMouseUp={captureReaderSelection}
-                        onTouchEnd={captureReaderSelection}
+                        onTouchEnd={captureReaderSelectionSoon}
                       >
                         <div className="book-page-top">
                           <span>{readerBook.title}</span>

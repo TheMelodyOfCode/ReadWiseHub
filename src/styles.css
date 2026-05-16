@@ -1383,9 +1383,10 @@ input {
   color: inherit;
   font-size: clamp(1.04rem, 2.4vw, 1.22rem);
   line-height: 1.78;
+  overflow-wrap: anywhere;
 }
 
-@media (max-width: 420px) {
+@media (max-width: 640px) {
   .content-section,
   .workspace-hero {
     padding-inline: 10px;
@@ -1393,7 +1394,7 @@ input {
 
   .reader-panel {
     padding: 10px 6px;
-    overflow: hidden;
+    overflow: clip;
   }
 
   .reader-header {
@@ -1412,7 +1413,7 @@ input {
   }
 
   .book-page {
-    width: 100%;
+    width: min(100%, calc(100vw - 20px));
     min-height: 460px;
     border-radius: 4px;
     padding: 18px 12px;
@@ -1433,6 +1434,30 @@ input {
   .book-page > p {
     font-size: 1rem;
     line-height: 1.68;
+  }
+
+  .selection-toolbar {
+    position: fixed;
+    right: max(10px, env(safe-area-inset-right));
+    bottom: max(12px, env(safe-area-inset-bottom));
+    left: max(10px, env(safe-area-inset-left));
+    top: auto;
+    z-index: 20;
+    width: auto;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 10px;
+  }
+
+  .selection-toolbar span {
+    flex: 1 1 100%;
+    text-align: center;
+  }
+
+  .selection-toolbar .button {
+    flex: 1 1 0;
+    min-height: 44px;
+    padding-inline: 10px;
   }
 }
 
