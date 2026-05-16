@@ -74,7 +74,7 @@ export const dictionaries: Record<Locale, Dictionary> = {
     textReady: "Text extracted",
     askTitle: "Ask your library",
     askCopy:
-      "Answers are grounded in your uploaded documents. If AI generation is not configured, ReadWiseHub falls back to a source draft.",
+      "Ask questions across your books and get AI answers grounded in source passages.",
     askLabel: "Your question",
     askPlaceholder: "What does my book say about building AI agents?",
     askButton: "Ask",
@@ -105,7 +105,7 @@ export const dictionaries: Record<Locale, Dictionary> = {
       "Free accounts can upload PDF, TXT, or Markdown files up to 20 MB. Processing status appears on each book card.",
     helpAskTitle: "Ask",
     helpAskCopy:
-      "Choose one book or all processed books. Good questions mention the topic, person, chapter, or idea you want to find.",
+      "Choose one book or all your books. Good questions mention the topic, person, chapter, or idea you want to find.",
     helpPrivacyTitle: "Privacy",
     helpPrivacyCopy:
       "Your books and questions are tied to your account. Deleting a book removes the stored file, extracted chunks, and ingestion jobs.",
@@ -115,7 +115,7 @@ export const dictionaries: Record<Locale, Dictionary> = {
     untitledQuestion: "Untitled question",
     searchTitle: "Search your extracted text",
     searchCopy:
-      "This is the first retrieval test. It finds matching source passages before AI chat is added.",
+      "Find exact source passages in your books before or after asking an AI question.",
     searchLabel: "Question or search words",
     searchPlaceholder: "What does the book say about habits?",
     searchButton: "Search sources",
@@ -237,7 +237,7 @@ export const dictionaries: Record<Locale, Dictionary> = {
     textReady: "Text extrahiert",
     askTitle: "Bibliothek fragen",
     askCopy:
-      "Antworten werden aus deinen hochgeladenen Dokumenten abgeleitet. Wenn KI-Antworten noch nicht konfiguriert sind, nutzt ReadWiseHub einen Quellenentwurf.",
+      "Stelle Fragen zu deinen Büchern und erhalte KI-Antworten mit passenden Quellenstellen.",
     askLabel: "Deine Frage",
     askPlaceholder: "Was sagt mein Buch über KI-Agenten?",
     askButton: "Fragen",
@@ -268,7 +268,7 @@ export const dictionaries: Record<Locale, Dictionary> = {
       "Free-Konten können PDF, TXT oder Markdown bis 20 MB hochladen. Der Verarbeitungsstatus steht direkt auf jeder Buchkarte.",
     helpAskTitle: "Fragen",
     helpAskCopy:
-      "Wähle ein Buch oder alle verarbeiteten Bücher. Gute Fragen nennen Thema, Person, Kapitel oder Idee, die du finden möchtest.",
+      "Wähle ein Buch oder alle deine Bücher. Gute Fragen nennen Thema, Person, Kapitel oder Idee, die du finden möchtest.",
     helpPrivacyTitle: "Datenschutz",
     helpPrivacyCopy:
       "Deine Bücher und Fragen gehören zu deinem Konto. Beim Löschen eines Buchs werden Datei, Textabschnitte und Verarbeitungsjobs entfernt.",
@@ -278,7 +278,7 @@ export const dictionaries: Record<Locale, Dictionary> = {
     untitledQuestion: "Unbenannte Frage",
     searchTitle: "Extrahierten Text durchsuchen",
     searchCopy:
-      "Das ist der erste Retrieval-Test. Er findet passende Quellenstellen, bevor der KI-Chat ergänzt wird.",
+      "Finde genaue Quellenstellen in deinen Büchern, vor oder nach einer KI-Frage.",
     searchLabel: "Frage oder Suchwörter",
     searchPlaceholder: "Was sagt das Buch über Gewohnheiten?",
     searchButton: "Quellen suchen",
