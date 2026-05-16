@@ -875,7 +875,7 @@ input {
 
 .reader-controls {
   display: grid;
-  grid-template-columns: 44px minmax(0, 1fr) auto;
+  grid-template-columns: 44px minmax(0, 1fr) 44px 44px;
   align-items: center;
   gap: 8px;
 }
@@ -923,6 +923,7 @@ input {
 .reader-footer {
   display: flex;
   align-items: center;
+  justify-content: center;
   gap: 10px;
   flex-wrap: wrap;
 }
@@ -1006,14 +1007,7 @@ input {
 
 .reader-bookmark-menu {
   position: relative;
-  display: inline-grid;
-  grid-template-columns: 44px 34px;
-  gap: 6px;
-}
-
-.reader-bookmark-menu .reader-icon-button:last-of-type {
-  width: 34px;
-  min-width: 34px;
+  display: inline-block;
 }
 
 .reader-bookmark-button.active {
@@ -1095,6 +1089,18 @@ input {
   color: var(--text);
   cursor: pointer;
   font-weight: 900;
+}
+
+.bookmark-current-button {
+  min-height: 42px;
+  border: 1px solid color-mix(in srgb, var(--primary) 36%, var(--border));
+  border-radius: 8px;
+  padding: 9px 10px;
+  background: color-mix(in srgb, var(--primary) 10%, var(--surface));
+  color: var(--text);
+  cursor: pointer;
+  font-weight: 900;
+  text-align: left;
 }
 
 .bookmark-dropdown p {
@@ -1592,7 +1598,7 @@ input {
   }
 
   .reader-controls {
-    grid-template-columns: 44px minmax(0, 1fr) auto;
+    grid-template-columns: 44px minmax(0, 1fr) 44px 44px;
   }
 
   .workspace-tabs {

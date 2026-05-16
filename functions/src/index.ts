@@ -932,6 +932,29 @@ async function clearUserBooks(userId: string) {
   }
 }
 
+async function clearUserReaderSettings(userId: string) {
+  const snapshot = await db
+    .collection("users")
+    .doc(userId)
+    .collection("readerSettings")
+    .limit(100)
+    .get();
+
+  if (snapshot.empty) {
+    return;
+  }
+
+  const batch = db.batch();
+  snapshot.docs.forEach((settingsSnapshot) => {
+    batch.delete(settingsSnapshot.ref);
+  });
+  await batch.commit();
+
+  if (snapshot.size === 100) {
+    await clearUserReaderSettings(userId);
+  }
+}
+
 function summarizeSourceBooks(results: LibrarySearchResult[]): SourceBookSummary[] {
   const sourceBooks = new Map<string, string>();
 
@@ -1620,6 +1643,12 @@ export const deleteBook = onCall(
 
     await clearExistingChunks(bookId);
     await clearIngestionJobs(bookId);
+    await db
+      .collection("users")
+      .doc(auth.uid)
+      .collection("readerSettings")
+      .doc(bookId)
+      .delete();
     await bookRef.delete();
     const usage = await refreshUserBookUsage(auth.uid);
 
@@ -1855,6 +1884,7 @@ export const deleteAccountData = onCall(
 
     await clearUserBooks(auth.uid);
     await clearUserConversations(auth.uid);
+    await clearUserReaderSettings(auth.uid);
     await db.collection("users").doc(auth.uid).delete();
 
     return {

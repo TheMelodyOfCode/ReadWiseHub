@@ -89,6 +89,56 @@ async function clearBook(bookId) {
   await batch.commit();
 }
 
+async function writeReaderSettingsViaClient(bookId) {
+  const response = await fetch(
+    `https://firestore.googleapis.com/v1/projects/${PROJECT_ID}/databases/(default)/documents/users/${uid}/readerSettings/${bookId}`,
+    {
+      method: "PATCH",
+      headers: {
+        Authorization: `Bearer ${idToken}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        fields: {
+          userId: { stringValue: uid },
+          bookId: { stringValue: bookId },
+          lastPage: { integerValue: "1" },
+          bookmarks: {
+            arrayValue: {
+              values: [
+                {
+                  mapValue: {
+                    fields: {
+                      page: { integerValue: "1" },
+                      label: { stringValue: "Page 2" },
+                      snippet: { stringValue: "safe reader settings regression snippet" },
+                      createdAt: { integerValue: String(Date.now()) },
+                    },
+                  },
+                },
+              ],
+            },
+          },
+          highlights: {
+            mapValue: {
+              fields: {
+                "chunk-1": { stringValue: "safe reader highlight regression text" },
+              },
+            },
+          },
+        },
+      }),
+    }
+  );
+  const payload = await response.json().catch(() => ({}));
+
+  if (!response.ok) {
+    throw new Error(
+      `Reader settings Firestore client write failed: ${response.status} ${JSON.stringify(payload)}`
+    );
+  }
+}
+
 async function clearConversation(conversationId) {
   const messages = await db
     .collection("conversations")
@@ -114,6 +164,15 @@ async function cleanup() {
   const conversations = await db.collection("conversations").where("userId", "==", uid).get();
   for (const conversation of conversations.docs) {
     await clearConversation(conversation.id);
+  }
+
+  const readerSettings = await db
+    .collection("users")
+    .doc(uid)
+    .collection("readerSettings")
+    .get();
+  for (const setting of readerSettings.docs) {
+    await setting.ref.delete();
   }
 
   await db.collection("users").doc(uid).delete().catch(() => undefined);
@@ -274,6 +333,16 @@ async function run() {
     "getBookReader did not return readable chunk text."
   );
 
+  await writeReaderSettingsViaClient(primaryBookId);
+  const readerSettings = await db
+    .collection("users")
+    .doc(uid)
+    .collection("readerSettings")
+    .doc(primaryBookId)
+    .get();
+  check(readerSettings.exists, "Client reader settings write was not stored.");
+  check(readerSettings.get("lastPage") === 1, "Client reader settings lastPage was not stored.");
+
   const conversationDetail = await callFunction(
     "getConversationDetail",
     { conversationId: ask.conversationId },
@@ -306,10 +375,18 @@ async function run() {
   check(deleteBook.ok === true, "deleteBook did not return ok.");
   const deletedBook = await db.collection("books").doc(primaryBookId).get();
   const deletedChunks = await db.collection("bookChunks").where("bookId", "==", primaryBookId).get();
+  const deletedReaderSettings = await db
+    .collection("users")
+    .doc(uid)
+    .collection("readerSettings")
+    .doc(primaryBookId)
+    .get();
   check(!deletedBook.exists, "deleteBook left book document behind.");
   check(deletedChunks.empty, "deleteBook left chunk documents behind.");
+  check(!deletedReaderSettings.exists, "deleteBook left reader settings behind.");
 
   await seedAccountDeleteData();
+  await writeReaderSettingsViaClient(accountDeleteBookId);
   const deleteAccountData = await callFunction("deleteAccountData", {}, idToken);
   check(deleteAccountData.ok === true, "deleteAccountData did not return ok.");
 
@@ -317,10 +394,16 @@ async function run() {
   const remainingBooks = await db.collection("books").where("userId", "==", uid).get();
   const remainingConversations = await db.collection("conversations").where("userId", "==", uid).get();
   const remainingChunks = await db.collection("bookChunks").where("userId", "==", uid).get();
+  const remainingReaderSettings = await db
+    .collection("users")
+    .doc(uid)
+    .collection("readerSettings")
+    .get();
   check(!remainingUser.exists, "deleteAccountData left user document behind.");
   check(remainingBooks.empty, "deleteAccountData left books behind.");
   check(remainingConversations.empty, "deleteAccountData left conversations behind.");
   check(remainingChunks.empty, "deleteAccountData left chunks behind.");
+  check(remainingReaderSettings.empty, "deleteAccountData left reader settings behind.");
 
   if (failures.length > 0) {
     throw new Error(`Callable regression failed:\n- ${failures.join("\n- ")}`);

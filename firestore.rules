@@ -52,6 +52,28 @@ service cloud.firestore {
         && request.resource.data.limits == resource.data.limits
         && request.resource.data.usageCurrentPeriod == resource.data.usageCurrentPeriod;
       allow delete: if false;
+
+      match /readerSettings/{bookId} {
+        allow read: if owns(userId);
+        allow create, update: if owns(userId)
+          && request.resource.data.keys().hasOnly([
+            'userId',
+            'bookId',
+            'lastPage',
+            'bookmarks',
+            'highlights',
+            'updatedAt'
+          ])
+          && request.resource.data.userId == userId
+          && request.resource.data.bookId == bookId
+          && (!('lastPage' in request.resource.data)
+            || request.resource.data.lastPage is int)
+          && (!('bookmarks' in request.resource.data)
+            || request.resource.data.bookmarks is list)
+          && (!('highlights' in request.resource.data)
+            || request.resource.data.highlights is map);
+        allow delete: if owns(userId);
+      }
     }
 
     match /books/{bookId} {

@@ -654,23 +654,10 @@ export function App() {
   }, [books, lastUploadedBookId, t.uploadProcessing, t.uploadReady]);
 
   useEffect(() => {
-    if (!readerHighlightKey) {
-      setReaderHighlights({});
-      return;
-    }
-
-    try {
-      const stored = window.localStorage.getItem(readerHighlightKey);
-      const parsed = stored ? JSON.parse(stored) : {};
-      setReaderHighlights(
-        parsed && typeof parsed === "object" && !Array.isArray(parsed)
-          ? parsed as Record<string, string>
-          : {}
-      );
-    } catch {
+    if (!readerBookId) {
       setReaderHighlights({});
     }
-  }, [readerHighlightKey]);
+  }, [readerBookId]);
 
   useEffect(() => {
     if (!readerBook) {
@@ -1033,29 +1020,54 @@ export function App() {
     const legacyBookmarkKey = user
       ? `readwisehub_reader_bookmark_${user.uid}_${book.id}`
       : "";
-    const savedPage = progressKey
+    const localSavedPage = progressKey
       ? Number(window.localStorage.getItem(progressKey))
       : 0;
-    const savedBookmarks = bookmarkKey
+    const localBookmarks = bookmarkKey
       ? parseReaderBookmarks(window.localStorage.getItem(bookmarkKey))
       : [];
     const legacyBookmark = legacyBookmarkKey
       ? Number(window.localStorage.getItem(legacyBookmarkKey))
       : Number.NaN;
-    const bookmarks =
-      savedBookmarks.length > 0 || !Number.isFinite(legacyBookmark)
-        ? savedBookmarks
+    const localLegacyBookmarks =
+      localBookmarks.length > 0 || !Number.isFinite(legacyBookmark)
+        ? localBookmarks
         : [{
             page: legacyBookmark,
             label: `${t.page} ${legacyBookmark + 1}`,
             snippet: "",
             createdAt: Date.now(),
           }];
-    const targetPage = page >= 0 ? page : Number.isFinite(savedPage) ? savedPage : 0;
+    const localHighlights = readerHighlightKey
+      ? parseReaderHighlights(window.localStorage.getItem(readerHighlightKey))
+      : {};
+    let savedPage = Number.isFinite(localSavedPage) ? localSavedPage : 0;
+    let bookmarks = localLegacyBookmarks;
+    let highlights = localHighlights;
+
+    if (user) {
+      try {
+        const settingsSnapshot = await getDoc(
+          doc(db, "users", user.uid, "readerSettings", book.id)
+        );
+        if (settingsSnapshot.exists()) {
+          const data = settingsSnapshot.data();
+          savedPage =
+            typeof data.lastPage === "number" ? data.lastPage : savedPage;
+          bookmarks = parseReaderBookmarksValue(data.bookmarks);
+          highlights = parseReaderHighlightsValue(data.highlights);
+        }
+      } catch (error) {
+        setReaderMessage(getErrorMessage(error, "Reader settings sync failed"));
+      }
+    }
+
+    const targetPage = page >= 0 ? page : savedPage;
 
     setReaderBookId(book.id);
     setReaderPage(targetPage);
     setReaderBookmarks(bookmarks);
+    setReaderHighlights(highlights);
     setReaderBookmarkMenuOpen(false);
     setReaderBusy(true);
     setReaderMessage("");
@@ -1084,6 +1096,11 @@ export function App() {
       if (progressKey) {
         window.localStorage.setItem(progressKey, String(targetPage));
       }
+      await saveReaderSettings(book.id, {
+        lastPage: targetPage,
+        bookmarks,
+        highlights,
+      });
     } catch (error) {
       setReaderMessage(getErrorMessage(error, "Reader failed"));
     } finally {
@@ -1126,6 +1143,11 @@ export function App() {
 
     setReaderBookmarks(nextBookmarks);
     window.localStorage.setItem(readerBookmarkKey, JSON.stringify(nextBookmarks));
+    void saveReaderSettings(readerBookId, {
+      lastPage: readerPage,
+      bookmarks: nextBookmarks,
+      highlights: readerHighlights,
+    });
     setReaderBookmarkMessage(
       existingBookmark
         ? `${t.bookmarkRemoved}: ${t.page} ${readerPage + 1}`
@@ -1139,25 +1161,83 @@ export function App() {
     }
 
     try {
-      const parsed = JSON.parse(value);
-      if (!Array.isArray(parsed)) {
-        return [];
-      }
-
-      return parsed
-        .filter((bookmark) => typeof bookmark?.page === "number")
-        .map((bookmark) => ({
-          page: bookmark.page,
-          label: typeof bookmark.label === "string"
-            ? bookmark.label
-            : `${t.page} ${bookmark.page + 1}`,
-          snippet: typeof bookmark.snippet === "string" ? bookmark.snippet : "",
-          createdAt:
-            typeof bookmark.createdAt === "number" ? bookmark.createdAt : Date.now(),
-        }))
-        .sort((left, right) => left.page - right.page);
+      return parseReaderBookmarksValue(JSON.parse(value));
     } catch {
       return [];
+    }
+  }
+
+  function parseReaderBookmarksValue(value: unknown): ReaderBookmark[] {
+    if (!Array.isArray(value)) {
+      return [];
+    }
+
+    return value
+      .filter((bookmark) => typeof bookmark?.page === "number")
+      .map((bookmark) => ({
+        page: Math.max(0, Math.floor(bookmark.page)),
+        label: typeof bookmark.label === "string"
+          ? bookmark.label.slice(0, 80)
+          : `${t.page} ${Math.max(0, Math.floor(bookmark.page)) + 1}`,
+        snippet: typeof bookmark.snippet === "string" ? bookmark.snippet.slice(0, 180) : "",
+        createdAt:
+          typeof bookmark.createdAt === "number" ? bookmark.createdAt : Date.now(),
+      }))
+      .sort((left, right) => left.page - right.page);
+  }
+
+  function parseReaderHighlights(value: string | null) {
+    if (!value) {
+      return {};
+    }
+
+    try {
+      return parseReaderHighlightsValue(JSON.parse(value));
+    } catch {
+      return {};
+    }
+  }
+
+  function parseReaderHighlightsValue(value: unknown): Record<string, string> {
+    if (!value || typeof value !== "object" || Array.isArray(value)) {
+      return {};
+    }
+
+    return Object.fromEntries(
+      Object.entries(value)
+        .filter(([key, highlight]) => key.length <= 120 && typeof highlight === "string")
+        .map(([key, highlight]) => [key, highlight.slice(0, 2000)])
+        .slice(0, 200)
+    );
+  }
+
+  async function saveReaderSettings(
+    bookId: string,
+    settings: {
+      lastPage?: number;
+      bookmarks?: ReaderBookmark[];
+      highlights?: Record<string, string>;
+    }
+  ) {
+    if (!user || !bookId) {
+      return;
+    }
+
+    try {
+      await setDoc(
+        doc(db, "users", user.uid, "readerSettings", bookId),
+        {
+          userId: user.uid,
+          bookId,
+          ...("lastPage" in settings ? { lastPage: settings.lastPage } : {}),
+          ...("bookmarks" in settings ? { bookmarks: settings.bookmarks ?? [] } : {}),
+          ...("highlights" in settings ? { highlights: settings.highlights ?? {} } : {}),
+          updatedAt: serverTimestamp(),
+        },
+        { merge: true }
+      );
+    } catch (error) {
+      setReaderMessage(getErrorMessage(error, "Reader settings sync failed"));
     }
   }
 
@@ -1183,6 +1263,11 @@ export function App() {
     const nextBookmarks = readerBookmarks.filter((bookmark) => bookmark.page !== page);
     setReaderBookmarks(nextBookmarks);
     window.localStorage.setItem(readerBookmarkKey, JSON.stringify(nextBookmarks));
+    void saveReaderSettings(readerBookId, {
+      lastPage: readerPage,
+      bookmarks: nextBookmarks,
+      highlights: readerHighlights,
+    });
     setReaderBookmarkMessage(`${t.bookmarkRemoved}: ${t.page} ${page + 1}`);
   }
 
@@ -1273,6 +1358,11 @@ export function App() {
 
     setReaderHighlights(nextHighlights);
     window.localStorage.setItem(readerHighlightKey, JSON.stringify(nextHighlights));
+    void saveReaderSettings(readerBookId, {
+      lastPage: readerPage,
+      bookmarks: readerBookmarks,
+      highlights: nextHighlights,
+    });
     setReaderSelection(null);
     window.getSelection()?.removeAllRanges();
   }
@@ -1848,28 +1938,15 @@ export function App() {
                             }`}
                             type="button"
                             disabled={readerBusy || readerTotalChunks === 0}
-                            onClick={() => {
-                              bookmarkReaderPage();
-                              setReaderBookmarkMenuOpen(true);
-                            }}
-                            aria-label={currentPageBookmarked ? t.removeBookmark : t.bookmarkPage}
-                            title={currentPageBookmarked ? t.removeBookmark : t.bookmarkPage}
-                          >
-                            <span aria-hidden="true" className="bookmark-ribbon" />
-                            {readerBookmarks.length > 0 ? (
-                              <span className="bookmark-count">{readerBookmarks.length}</span>
-                            ) : null}
-                          </button>
-                          <button
-                            className="reader-icon-button"
-                            type="button"
-                            disabled={readerBookmarks.length === 0}
                             onClick={() => setReaderBookmarkMenuOpen((open) => !open)}
                             aria-expanded={readerBookmarkMenuOpen}
                             aria-label={t.bookmarks}
                             title={t.bookmarks}
                           >
-                            <span aria-hidden="true">▾</span>
+                            <span aria-hidden="true" className="bookmark-ribbon" />
+                            {readerBookmarks.length > 0 ? (
+                              <span className="bookmark-count">{readerBookmarks.length}</span>
+                            ) : null}
                           </button>
                           {readerBookmarkMenuOpen ? (
                             <div className="bookmark-dropdown">
@@ -1883,6 +1960,13 @@ export function App() {
                                   ×
                                 </button>
                               </div>
+                              <button
+                                className="bookmark-current-button"
+                                type="button"
+                                onClick={bookmarkReaderPage}
+                              >
+                                {currentPageBookmarked ? t.removeBookmark : t.bookmarkPage}
+                              </button>
                               {readerBookmarks.length === 0 ? (
                                 <p>{t.noBookmarks}</p>
                               ) : (
@@ -1908,6 +1992,20 @@ export function App() {
                             </div>
                           ) : null}
                         </div>
+                        <button
+                          className="reader-icon-button"
+                          type="button"
+                          disabled={
+                            readerBusy ||
+                            readerTotalChunks === 0 ||
+                            (readerPage + 1) * readerPageSize >= readerTotalChunks
+                          }
+                          onClick={() => turnReaderPage(1)}
+                          aria-label={t.nextPage}
+                          title={t.nextPage}
+                        >
+                          <span aria-hidden="true">→</span>
+                        </button>
                       </div>
                     ) : null}
                   </div>
@@ -2053,12 +2151,14 @@ export function App() {
                           {t.backToLibrary}
                         </button>
                         <button
-                          className="button secondary compact"
+                          className="reader-icon-button"
                           type="button"
                           disabled={readerBusy || readerPage === 0}
                           onClick={() => turnReaderPage(-1)}
+                          aria-label={t.previousPage}
+                          title={t.previousPage}
                         >
-                          {t.previousPage}
+                          <span aria-hidden="true">←</span>
                         </button>
                         <span>
                           {Math.min(readerTotalChunks, readerPage * readerPageSize + 1)}-
@@ -2066,7 +2166,7 @@ export function App() {
                           {readerTotalChunks} {t.chunks}
                         </span>
                         <button
-                          className="button secondary compact"
+                          className="reader-icon-button"
                           type="button"
                           disabled={
                             readerBusy ||
@@ -2074,8 +2174,10 @@ export function App() {
                             (readerPage + 1) * readerPageSize >= readerTotalChunks
                           }
                           onClick={() => turnReaderPage(1)}
+                          aria-label={t.nextPage}
+                          title={t.nextPage}
                         >
-                          {t.nextPage}
+                          <span aria-hidden="true">→</span>
                         </button>
                       </div>
                       <div
