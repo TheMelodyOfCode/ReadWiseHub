@@ -839,7 +839,7 @@ input {
 .reader-panel {
   display: grid;
   gap: 16px;
-  padding: 18px;
+  padding: 14px;
   margin-bottom: 18px;
   background: var(--surface);
   border: 1px solid var(--border);
@@ -847,12 +847,44 @@ input {
   box-shadow: var(--shadow);
 }
 
+.reader-header {
+  display: grid;
+  gap: 12px;
+}
+
+.reader-title-block {
+  display: grid;
+  gap: 4px;
+}
+
+.reader-title-block h3,
+.reader-title-block p {
+  margin: 0;
+}
+
+.reader-title-block h3 {
+  font-size: clamp(1.08rem, 5vw, 1.45rem);
+  line-height: 1.2;
+  overflow-wrap: anywhere;
+}
+
 .reader-book-picker {
   display: grid;
   gap: 10px;
 }
 
-.reader-controls,
+.reader-controls {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: center;
+  gap: 10px;
+}
+
+.reader-controls .button,
+.reader-controls .reader-jump {
+  width: 100%;
+}
+
 .reader-footer {
   display: flex;
   align-items: center;
@@ -926,14 +958,55 @@ input {
 
 .reader-jump {
   display: grid;
-  min-width: min(100%, 220px);
   gap: 6px;
   color: var(--muted);
   font-weight: 800;
+  font-size: 0.9rem;
 }
 
 .reader-jump select {
   min-height: 40px;
+}
+
+.reader-scroll-nav {
+  position: fixed;
+  right: 14px;
+  bottom: 18px;
+  z-index: 8;
+  display: grid;
+  gap: 8px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 180ms ease, transform 180ms ease;
+  transform: translateY(8px);
+}
+
+.reader-scroll-nav.visible {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateY(0);
+}
+
+.reader-scroll-nav button {
+  display: grid;
+  width: 44px;
+  height: 44px;
+  place-items: center;
+  border: 1px solid color-mix(in srgb, var(--primary) 34%, var(--border));
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--surface) 92%, transparent);
+  color: var(--text);
+  box-shadow: var(--shadow);
+  cursor: pointer;
+  font-size: 1.2rem;
+  font-weight: 900;
+  backdrop-filter: blur(10px);
+}
+
+.reader-scroll-nav button:hover,
+.reader-scroll-nav button:focus-visible {
+  background: var(--primary);
+  color: #fff;
 }
 
 .book-page {
@@ -1344,6 +1417,19 @@ input {
   .section-heading {
     grid-template-columns: minmax(0, 1fr) auto;
     align-items: center;
+  }
+
+  .reader-panel {
+    padding: 18px;
+  }
+
+  .reader-header {
+    grid-template-columns: minmax(0, 1fr) minmax(360px, 520px);
+    align-items: start;
+  }
+
+  .reader-controls {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 
   .workspace-tabs {

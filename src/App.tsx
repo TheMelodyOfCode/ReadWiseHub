@@ -355,6 +355,8 @@ export function App() {
   const [readerAskQuestion, setReaderAskQuestion] = useState("");
   const [readerReturnParagraphId, setReaderReturnParagraphId] = useState("");
   const [readerBookmarkMessage, setReaderBookmarkMessage] = useState("");
+  const [readerSavedBookmarkPage, setReaderSavedBookmarkPage] = useState<number | null>(null);
+  const [readerScrollNavVisible, setReaderScrollNavVisible] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [accountBusy, setAccountBusy] = useState(false);
   const [confirmDeleteAccount, setConfirmDeleteAccount] = useState(false);
@@ -394,7 +396,11 @@ export function App() {
   const readerHighlightKey = user && readerBookId
     ? `readwisehub_reader_highlights_${user.uid}_${readerBookId}`
     : "";
+  const readerBookmarkKey = user && readerBookId
+    ? `readwisehub_reader_bookmark_${user.uid}_${readerBookId}`
+    : "";
   const bookPageRef = useRef<HTMLDivElement | null>(null);
+  const readerScrollTimeoutRef = useRef<number | null>(null);
   const activeStorageBytes = useMemo(
     () => books.reduce((total, book) => total + book.sizeBytes, 0),
     [books]
@@ -654,6 +660,31 @@ export function App() {
       setReaderHighlights({});
     }
   }, [readerHighlightKey]);
+
+  useEffect(() => {
+    if (!readerBook) {
+      setReaderScrollNavVisible(false);
+      return;
+    }
+
+    function handleScroll() {
+      setReaderScrollNavVisible(true);
+      if (readerScrollTimeoutRef.current) {
+        window.clearTimeout(readerScrollTimeoutRef.current);
+      }
+      readerScrollTimeoutRef.current = window.setTimeout(() => {
+        setReaderScrollNavVisible(false);
+      }, 1800);
+    }
+
+    window.addEventListener("scroll", handleScroll, { passive: true });
+    return () => {
+      window.removeEventListener("scroll", handleScroll);
+      if (readerScrollTimeoutRef.current) {
+        window.clearTimeout(readerScrollTimeoutRef.current);
+      }
+    };
+  }, [readerBook]);
 
   async function handlePasswordAuth(
     event: FormEvent<HTMLFormElement>,
@@ -985,13 +1016,20 @@ export function App() {
     const progressKey = user
       ? `readwisehub_reader_progress_${user.uid}_${book.id}`
       : "";
+    const bookmarkKey = user
+      ? `readwisehub_reader_bookmark_${user.uid}_${book.id}`
+      : "";
     const savedPage = progressKey
       ? Number(window.localStorage.getItem(progressKey))
       : 0;
+    const savedBookmark = bookmarkKey
+      ? Number(window.localStorage.getItem(bookmarkKey))
+      : Number.NaN;
     const targetPage = page >= 0 ? page : Number.isFinite(savedPage) ? savedPage : 0;
 
     setReaderBookId(book.id);
     setReaderPage(targetPage);
+    setReaderSavedBookmarkPage(Number.isFinite(savedBookmark) ? savedBookmark : null);
     setReaderBusy(true);
     setReaderMessage("");
     setReaderChunks([]);
@@ -1040,12 +1078,21 @@ export function App() {
   }
 
   function bookmarkReaderPage() {
-    if (!readerProgressKey) {
+    if (!readerBookmarkKey) {
       return;
     }
 
-    window.localStorage.setItem(readerProgressKey, String(readerPage));
+    window.localStorage.setItem(readerBookmarkKey, String(readerPage));
+    setReaderSavedBookmarkPage(readerPage);
     setReaderBookmarkMessage(`${t.bookmarkSaved}: ${t.page} ${readerPage + 1}`);
+  }
+
+  function goToReaderBookmark() {
+    if (!readerBook || readerSavedBookmarkPage === null) {
+      return;
+    }
+
+    void openBookReader(readerBook, readerSavedBookmarkPage);
   }
 
   function goToReaderPage(page: number) {
@@ -1069,6 +1116,15 @@ export function App() {
     setReaderAskQuestion("");
     setReaderReturnParagraphId("");
     setReaderBookmarkMessage("");
+    setReaderSavedBookmarkPage(null);
+    setReaderScrollNavVisible(false);
+  }
+
+  function scrollReaderPage(direction: -1 | 1) {
+    window.scrollBy({
+      top: direction * Math.max(320, window.innerHeight * 0.72),
+      behavior: "smooth",
+    });
   }
 
   function closeMenu() {
@@ -1658,11 +1714,15 @@ export function App() {
             {workspaceTab === "read" ? (
               <div className="workspace-tab-panel">
                 <section className="reader-panel">
-                  <div className="section-heading">
-                    <div>
+                  <div className="reader-header">
+                    <div className="reader-title-block">
                       <p className="eyebrow">{t.readerEyebrow}</p>
                       <h3>{readerBook ? readerBook.title : t.readerTitle}</h3>
-                      <p>{t.readerCopy}</p>
+                      <p>
+                        {readerBook
+                          ? `${t.page} ${readerPage + 1} / ${readerPageCount}`
+                          : t.readerCopy}
+                      </p>
                     </div>
                     {readerBook ? (
                       <div className="reader-controls">
@@ -1673,6 +1733,20 @@ export function App() {
                         >
                           {t.backToLibrary}
                         </button>
+                        <label className="reader-jump">
+                          {t.chapter}
+                          <select
+                            value={readerPage}
+                            onChange={(event) => goToReaderPage(Number(event.target.value))}
+                            disabled={readerBusy || readerTotalChunks === 0}
+                          >
+                            {Array.from({ length: readerPageCount }, (_, index) => (
+                              <option key={index} value={index}>
+                                {t.chapter} {index + 1}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
                         <button
                           className="button secondary compact"
                           type="button"
@@ -1692,6 +1766,22 @@ export function App() {
                         <button
                           className="button secondary compact"
                           type="button"
+                          disabled={readerBusy || readerSavedBookmarkPage === null}
+                          onClick={goToReaderBookmark}
+                        >
+                          {t.goToBookmark}
+                        </button>
+                        <button
+                          className="button secondary compact"
+                          type="button"
+                          disabled={readerBusy || readerSavedBookmarkPage === null}
+                          onClick={goToReaderBookmark}
+                        >
+                          {t.goToBookmark}
+                        </button>
+                        <button
+                          className="button secondary compact"
+                          type="button"
                           disabled={
                             readerBusy ||
                             readerTotalChunks === 0 ||
@@ -1701,20 +1791,6 @@ export function App() {
                         >
                           {t.nextPage}
                         </button>
-                        <label className="reader-jump">
-                          {t.chapter}
-                          <select
-                            value={readerPage}
-                            onChange={(event) => goToReaderPage(Number(event.target.value))}
-                            disabled={readerBusy || readerTotalChunks === 0}
-                          >
-                            {Array.from({ length: readerPageCount }, (_, index) => (
-                              <option key={index} value={index}>
-                                {t.chapter} {index + 1}
-                              </option>
-                            ))}
-                          </select>
-                        </label>
                       </div>
                     ) : null}
                   </div>
@@ -1891,6 +1967,27 @@ export function App() {
                           onClick={() => turnReaderPage(1)}
                         >
                           {t.nextPage}
+                        </button>
+                      </div>
+                      <div
+                        className={`reader-scroll-nav ${
+                          readerScrollNavVisible ? "visible" : ""
+                        }`}
+                        aria-hidden={!readerScrollNavVisible}
+                      >
+                        <button
+                          type="button"
+                          aria-label={t.scrollUp}
+                          onClick={() => scrollReaderPage(-1)}
+                        >
+                          ↑
+                        </button>
+                        <button
+                          type="button"
+                          aria-label={t.scrollDown}
+                          onClick={() => scrollReaderPage(1)}
+                        >
+                          ↓
                         </button>
                       </div>
                     </>
