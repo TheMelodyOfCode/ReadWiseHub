@@ -196,6 +196,20 @@ export const dictionaries: Record<Locale, Dictionary> = {
     authRequired: "Sign in to open your dashboard.",
     authError: "Sign-in failed. Please check the details and try again.",
     userCreated: "Your ReadWiseHub account is ready.",
+    verificationEmailSent: "Verification email sent. Please open the link in your inbox.",
+    verificationEmailFailed: "Verification email could not be sent.",
+    verificationRefreshFailed: "Verification status could not be refreshed.",
+    verifyEmailPrompt: "Please verify your email address before using uploads and AI tools.",
+    verifyEmailBeforeFeature: "Verify your email address before using this feature.",
+    emailVerifiedReady: "Your email is verified. ReadWiseHub is ready.",
+    emailVerificationEyebrow: "Email verification",
+    emailVerificationTitle: "Verify your email to unlock ReadWiseHub",
+    emailVerificationCopy:
+      "We sent a verification link to your email address. Uploads, search, and AI questions are available after verification.",
+    unexpectedRegistrationCopy:
+      "If you did not request this account, ignore the email. The account cannot use ReadWiseHub features until the email address is verified.",
+    resendVerification: "Resend verification email",
+    refreshVerification: "I verified my email",
   },
   de: {
     brandTagline: "Mit deinen Büchern im Dialog.",
@@ -390,6 +404,20 @@ export const dictionaries: Record<Locale, Dictionary> = {
     authRequired: "Melde dich an, um dein Dashboard zu öffnen.",
     authError: "Die Anmeldung ist fehlgeschlagen. Bitte prüfe die Angaben und versuche es erneut.",
     userCreated: "Dein ReadWiseHub-Konto ist bereit.",
+    verificationEmailSent: "Bestätigungs-E-Mail gesendet. Bitte öffne den Link in deinem Postfach.",
+    verificationEmailFailed: "Die Bestätigungs-E-Mail konnte nicht gesendet werden.",
+    verificationRefreshFailed: "Der Bestätigungsstatus konnte nicht aktualisiert werden.",
+    verifyEmailPrompt: "Bitte bestätige deine E-Mail-Adresse, bevor du Uploads und KI-Werkzeuge nutzt.",
+    verifyEmailBeforeFeature: "Bestätige zuerst deine E-Mail-Adresse, um diese Funktion zu nutzen.",
+    emailVerifiedReady: "Deine E-Mail ist bestätigt. ReadWiseHub ist bereit.",
+    emailVerificationEyebrow: "E-Mail-Bestätigung",
+    emailVerificationTitle: "Bestätige deine E-Mail, um ReadWiseHub freizuschalten",
+    emailVerificationCopy:
+      "Wir haben dir einen Bestätigungslink gesendet. Uploads, Suche und KI-Fragen sind nach der Bestätigung verfügbar.",
+    unexpectedRegistrationCopy:
+      "Wenn du dieses Konto nicht angefordert hast, ignoriere die E-Mail. Das Konto kann ReadWiseHub-Funktionen erst nach Bestätigung der E-Mail-Adresse nutzen.",
+    resendVerification: "Bestätigungs-E-Mail erneut senden",
+    refreshVerification: "Ich habe meine E-Mail bestätigt",
   },
 };
 

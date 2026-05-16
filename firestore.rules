@@ -18,6 +18,12 @@ service cloud.firestore {
           'photoURL',
           'plan',
           'subscriptionStatus',
+          'emailVerified',
+          'onboardingStatus',
+          'billingProvider',
+          'billingCustomerId',
+          'billingPriceId',
+          'billingCurrentPeriodEnd',
           'createdAt',
           'updatedAt',
           'lastLoginAt',
@@ -28,6 +34,16 @@ service cloud.firestore {
         ])
         && request.resource.data.plan == 'free'
         && request.resource.data.subscriptionStatus == 'none'
+        && request.resource.data.emailVerified == request.auth.token.email_verified
+        && request.resource.data.onboardingStatus == (
+          request.auth.token.email_verified == true
+            ? 'active'
+            : 'email_verification_pending'
+        )
+        && request.resource.data.billingProvider == 'none'
+        && request.resource.data.billingCustomerId == ''
+        && request.resource.data.billingPriceId == ''
+        && request.resource.data.billingCurrentPeriodEnd == null
         && request.resource.data.limits.maxBooks == 2
         && request.resource.data.limits.maxStorageBytes == 20 * 1024 * 1024
         && request.resource.data.limits.maxFileBytes == 20 * 1024 * 1024
@@ -44,11 +60,23 @@ service cloud.firestore {
           'photoURL',
           'locale',
           'theme',
+          'emailVerified',
+          'onboardingStatus',
           'lastLoginAt',
           'updatedAt'
         ])
         && request.resource.data.plan == resource.data.plan
         && request.resource.data.subscriptionStatus == resource.data.subscriptionStatus
+        && request.resource.data.billingProvider == resource.data.billingProvider
+        && request.resource.data.billingCustomerId == resource.data.billingCustomerId
+        && request.resource.data.billingPriceId == resource.data.billingPriceId
+        && request.resource.data.billingCurrentPeriodEnd == resource.data.billingCurrentPeriodEnd
+        && request.resource.data.emailVerified == request.auth.token.email_verified
+        && request.resource.data.onboardingStatus == (
+          request.auth.token.email_verified == true
+            ? 'active'
+            : 'email_verification_pending'
+        )
         && request.resource.data.limits == resource.data.limits
         && request.resource.data.usageCurrentPeriod == resource.data.usageCurrentPeriod;
       allow delete: if false;

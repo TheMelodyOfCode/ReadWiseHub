@@ -4,6 +4,8 @@ import {
   User,
   createUserWithEmailAndPassword,
   onAuthStateChanged,
+  reload,
+  sendEmailVerification,
   signInWithEmailAndPassword,
   signInWithPopup,
   signOut,
@@ -256,6 +258,8 @@ async function ensureUserRecord(user: User, locale: Locale, theme: Theme) {
       {
         displayName: user.displayName ?? existing.data().displayName ?? "",
         photoURL: user.photoURL ?? existing.data().photoURL ?? "",
+        emailVerified: user.emailVerified,
+        onboardingStatus: user.emailVerified ? "active" : "email_verification_pending",
         locale,
         theme,
         updatedAt: serverTimestamp(),
@@ -272,6 +276,12 @@ async function ensureUserRecord(user: User, locale: Locale, theme: Theme) {
       photoURL: user.photoURL ?? "",
       plan: "free",
       subscriptionStatus: "none",
+      emailVerified: user.emailVerified,
+      onboardingStatus: user.emailVerified ? "active" : "email_verification_pending",
+      billingProvider: "none",
+      billingCustomerId: "",
+      billingPriceId: "",
+      billingCurrentPeriodEnd: null,
       locale,
       theme,
       limits: {
@@ -316,6 +326,7 @@ export function App() {
   const [password, setPassword] = useState("");
   const [authError, setAuthError] = useState("");
   const [status, setStatus] = useState("");
+  const [verificationBusy, setVerificationBusy] = useState(false);
   const [books, setBooks] = useState<BookRecord[]>([]);
   const [booksReady, setBooksReady] = useState(false);
   const [ingestionJobs, setIngestionJobs] = useState<IngestionJobRecord[]>([]);
@@ -421,6 +432,7 @@ export function App() {
     () => books.reduce((total, book) => total + book.sizeBytes, 0),
     [books]
   );
+  const emailVerified = user?.emailVerified === true;
   const languageToggle = (
     <div className="language-toggle" aria-label={t.language}>
       <button
@@ -731,7 +743,12 @@ export function App() {
           ? await createUserWithEmailAndPassword(auth, email, password)
           : await signInWithEmailAndPassword(auth, email, password);
       await ensureUserRecord(credential.user, locale, theme);
-      setStatus(t.userCreated);
+      if (mode === "signUp" && !credential.user.emailVerified) {
+        await sendEmailVerification(credential.user);
+        setStatus(t.verificationEmailSent);
+        return;
+      }
+      setStatus(credential.user.emailVerified ? t.userCreated : t.verifyEmailPrompt);
     } catch (error) {
       setAuthError(getErrorMessage(error, t.authError));
     }
@@ -748,6 +765,53 @@ export function App() {
     } catch (error) {
       setAuthError(getErrorMessage(error, t.authError));
     }
+  }
+
+  async function resendVerificationEmail() {
+    if (!user) {
+      return;
+    }
+
+    setVerificationBusy(true);
+    setAuthError("");
+
+    try {
+      await sendEmailVerification(user);
+      setStatus(t.verificationEmailSent);
+    } catch (error) {
+      setAuthError(getErrorMessage(error, t.verificationEmailFailed));
+    } finally {
+      setVerificationBusy(false);
+    }
+  }
+
+  async function refreshEmailVerification() {
+    if (!auth.currentUser) {
+      return;
+    }
+
+    setVerificationBusy(true);
+    setAuthError("");
+
+    try {
+      await reload(auth.currentUser);
+      await ensureUserRecord(auth.currentUser, locale, theme);
+      setUser(auth.currentUser);
+      setStatus(auth.currentUser.emailVerified ? t.emailVerifiedReady : t.verifyEmailPrompt);
+    } catch (error) {
+      setAuthError(getErrorMessage(error, t.verificationRefreshFailed));
+    } finally {
+      setVerificationBusy(false);
+    }
+  }
+
+  function requireVerifiedUi(messageSetter: (message: string) => void) {
+    if (emailVerified) {
+      return true;
+    }
+
+    messageSetter(t.verifyEmailBeforeFeature);
+    return false;
   }
 
   function handleFileSelection(file: File | undefined) {
@@ -778,6 +842,9 @@ export function App() {
   async function reserveAndUploadFile() {
     if (!selectedFile || !UPLOAD_BACKEND_ENABLED) {
       setUploadMessage(t.uploadBlocked);
+      return;
+    }
+    if (!requireVerifiedUi(setUploadMessage)) {
       return;
     }
 
@@ -828,6 +895,9 @@ export function App() {
     if (!user) {
       return;
     }
+    if (!requireVerifiedUi(setUploadMessage)) {
+      return;
+    }
 
     const queuedBooks = books.filter((book) => book.status === "queued");
 
@@ -865,6 +935,9 @@ export function App() {
 
   async function processBookJob(book: BookRecord) {
     if (!user) {
+      return;
+    }
+    if (!requireVerifiedUi(setUploadMessage)) {
       return;
     }
 
@@ -920,6 +993,9 @@ export function App() {
     if (!searchQuestion.trim() || textReadyBooks.length === 0) {
       return;
     }
+    if (!requireVerifiedUi(setSearchMessage)) {
+      return;
+    }
 
     setSearchBusy(true);
     setSearchMessage("");
@@ -948,6 +1024,9 @@ export function App() {
     event.preventDefault();
 
     if (!askQuestion.trim() || textReadyBooks.length === 0) {
+      return;
+    }
+    if (!requireVerifiedUi(setAskMessage)) {
       return;
     }
 
@@ -1412,6 +1491,9 @@ export function App() {
     if (!readerBook || !readerSelection) {
       return;
     }
+    if (!requireVerifiedUi(setReaderMessage)) {
+      return;
+    }
 
     const question = `${t.askAboutPassagePrompt}\n\n"${readerSelection.text}"`;
     setReaderAskBusy(true);
@@ -1497,6 +1579,9 @@ export function App() {
   }
 
   async function backfillEmbeddings(book: BookRecord) {
+    if (!requireVerifiedUi(setUploadMessage)) {
+      return;
+    }
     setProcessingBookId(book.id);
     setUploadMessage("");
 
@@ -1645,6 +1730,35 @@ export function App() {
             </div>
           </section>
 
+          {!emailVerified ? (
+            <section className="verification-panel">
+              <div>
+                <p className="eyebrow">{t.emailVerificationEyebrow}</p>
+                <h2>{t.emailVerificationTitle}</h2>
+                <p>{t.emailVerificationCopy}</p>
+                <p className="small-note">{t.unexpectedRegistrationCopy}</p>
+              </div>
+              <div className="verification-actions">
+                <button
+                  className="button primary"
+                  type="button"
+                  disabled={verificationBusy}
+                  onClick={resendVerificationEmail}
+                >
+                  {verificationBusy ? t.loading : t.resendVerification}
+                </button>
+                <button
+                  className="button secondary"
+                  type="button"
+                  disabled={verificationBusy}
+                  onClick={refreshEmailVerification}
+                >
+                  {t.refreshVerification}
+                </button>
+              </div>
+            </section>
+          ) : null}
+
           <section id="library" className="content-section workspace-section">
             <div className="section-heading">
               <div>
@@ -1688,6 +1802,7 @@ export function App() {
                 <input
                   type="file"
                   accept=".pdf,.txt,.md,application/pdf,text/plain,text/markdown"
+                  disabled={!emailVerified}
                   onChange={(event) => handleFileSelection(event.target.files?.[0])}
                 />
               </label>
@@ -1699,7 +1814,7 @@ export function App() {
               <button
                 className="button primary"
                 type="button"
-                disabled={!selectedFile || uploadBusy || !UPLOAD_BACKEND_ENABLED}
+                disabled={!emailVerified || !selectedFile || uploadBusy || !UPLOAD_BACKEND_ENABLED}
                 onClick={reserveAndUploadFile}
               >
                 Upload
@@ -1707,7 +1822,11 @@ export function App() {
               <button
                 className="button secondary"
                 type="button"
-                disabled={processBusy || books.every((book) => book.status !== "queued")}
+                disabled={
+                  !emailVerified ||
+                  processBusy ||
+                  books.every((book) => book.status !== "queued")
+                }
                 onClick={processQueuedJobs}
               >
                 {processBusy ? t.processingQueued : t.processQueued}
@@ -1754,7 +1873,12 @@ export function App() {
               <button
                 className="button primary"
                 type="submit"
-                disabled={searchBusy || textReadyBooks.length === 0 || !searchQuestion.trim()}
+                disabled={
+                  !emailVerified ||
+                  searchBusy ||
+                  textReadyBooks.length === 0 ||
+                  !searchQuestion.trim()
+                }
               >
                 {searchBusy ? t.searching : t.searchButton}
               </button>
@@ -1814,7 +1938,7 @@ export function App() {
                       <button
                         className="button secondary compact"
                         type="button"
-                        disabled={processingBookId === book.id}
+                        disabled={!emailVerified || processingBookId === book.id}
                         onClick={() => processBookJob(book)}
                       >
                         {processingBookId === book.id ? t.processingQueued : t.retryProcessing}
@@ -1841,7 +1965,7 @@ export function App() {
                         <button
                           className="button secondary compact"
                           type="button"
-                          disabled={processingBookId === book.id}
+                          disabled={!emailVerified || processingBookId === book.id}
                           onClick={() => backfillEmbeddings(book)}
                         >
                           {processingBookId === book.id ? t.processingQueued : t.prepareVectorSearch}
@@ -2106,7 +2230,7 @@ export function App() {
                           <button
                             className="button secondary compact"
                             type="button"
-                            disabled={readerAskBusy}
+                            disabled={!emailVerified || readerAskBusy}
                             onClick={askReaderSelectionInline}
                           >
                             {readerAskBusy ? t.asking : t.askAboutSelection}
@@ -2329,7 +2453,12 @@ export function App() {
               <button
                 className="button primary"
                 type="submit"
-                disabled={askBusy || textReadyBooks.length === 0 || !askQuestion.trim()}
+                disabled={
+                  !emailVerified ||
+                  askBusy ||
+                  textReadyBooks.length === 0 ||
+                  !askQuestion.trim()
+                }
               >
                 {askBusy ? t.asking : t.askButton}
               </button>

@@ -13,6 +13,7 @@ let idToken = "";
 let primaryBookId = "";
 let accountDeleteBookId = "";
 let accountDeleteConversationId = "";
+let unverifiedUid = "";
 
 admin.initializeApp({ projectId: PROJECT_ID });
 
@@ -56,6 +57,7 @@ async function createRegressionAuthUser() {
 
   uid = payload.localId;
   idToken = payload.idToken;
+  await auth.updateUser(uid, { emailVerified: true });
   primaryBookId = `${uid}-book`;
   accountDeleteBookId = `${uid}-account-delete-book`;
   accountDeleteConversationId = `${uid}-account-delete-conversation`;
@@ -77,6 +79,24 @@ async function callFunction(name, data, idToken) {
   }
 
   return payload.result;
+}
+
+async function callFunctionExpectFailure(name, data, idToken) {
+  const response = await fetch(`${CALLABLE_BASE_URL}/${name}`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${idToken}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ data }),
+  });
+  const payload = await response.json().catch(() => ({}));
+
+  if (response.ok && !payload.error) {
+    throw new Error(`${name} unexpectedly succeeded.`);
+  }
+
+  return payload.error ?? payload;
 }
 
 async function clearBook(bookId) {
@@ -189,6 +209,9 @@ async function cleanup() {
       body: JSON.stringify({ idToken }),
     }).catch(() => undefined);
   });
+  if (unverifiedUid) {
+    await auth.deleteUser(unverifiedUid).catch(() => undefined);
+  }
 }
 
 async function seedUser() {
@@ -296,6 +319,34 @@ async function run() {
   await createRegressionAuthUser();
   await seedUser();
   await seedBook(primaryBookId, "Callable Regression Book");
+
+  const unverified = await fetch(
+    `https://identitytoolkit.googleapis.com/v1/accounts:signUp?key=${API_KEY}`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        email: `unverified-${runId}@example.invalid`,
+        password,
+        returnSecureToken: true,
+      }),
+    }
+  );
+  const unverifiedPayload = await unverified.json();
+  assert(unverified.ok, "Unverified regression user creation failed.");
+  unverifiedUid = unverifiedPayload.localId;
+  const unverifiedSearch = await callFunctionExpectFailure(
+    "searchLibrary",
+    { query: "blocked before verification", bookId: primaryBookId },
+    unverifiedPayload.idToken
+  );
+  check(
+    unverifiedSearch.status === "FAILED_PRECONDITION" ||
+      unverifiedSearch.code === "failed-precondition",
+    "Unverified user was not blocked by searchLibrary."
+  );
 
   const search = await callFunction(
     "searchLibrary",

@@ -564,7 +564,8 @@ input {
 .empty-state,
 .book-list article,
 .next-step-section,
-.workspace-account {
+.workspace-account,
+.verification-panel {
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: 8px;
@@ -581,11 +582,27 @@ input {
 .help-panel,
 .book-detail-panel,
 .conversation-detail-panel,
-.reader-panel {
+.reader-panel,
+.verification-panel {
   transition:
     border-color 160ms ease,
     box-shadow 160ms ease,
     transform 160ms ease;
+}
+
+.verification-panel {
+  display: grid;
+  gap: 16px;
+  margin: 0 clamp(16px, 5vw, 72px) 18px;
+  padding: 18px;
+  border-color: color-mix(in srgb, var(--accent) 42%, var(--border));
+  background: color-mix(in srgb, var(--accent) 7%, var(--surface));
+}
+
+.verification-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
 }
 
 .quick-panel,

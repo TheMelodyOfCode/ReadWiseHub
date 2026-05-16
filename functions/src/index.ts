@@ -1,4 +1,5 @@
 import { initializeApp } from "firebase-admin/app";
+import { getAuth } from "firebase-admin/auth";
 import { FieldValue, getFirestore, WriteBatch } from "firebase-admin/firestore";
 import { getStorage } from "firebase-admin/storage";
 import { onDocumentCreated } from "firebase-functions/v2/firestore";
@@ -9,6 +10,30 @@ import { PDFParse } from "pdf-parse";
 initializeApp();
 
 const db = getFirestore();
+
+const PLAN_LIMITS = {
+  free: {
+    maxBooks: 2,
+    maxStorageBytes: 20 * 1024 * 1024,
+    maxFileBytes: 20 * 1024 * 1024,
+    monthlyMessages: 20,
+    monthlyIngestions: 2,
+  },
+  plus: {
+    maxBooks: 10,
+    maxStorageBytes: 200 * 1024 * 1024,
+    maxFileBytes: 20 * 1024 * 1024,
+    monthlyMessages: 200,
+    monthlyIngestions: 10,
+  },
+  pro: {
+    maxBooks: 50,
+    maxStorageBytes: 1024 * 1024 * 1024,
+    maxFileBytes: 50 * 1024 * 1024,
+    monthlyMessages: 1000,
+    monthlyIngestions: 50,
+  },
+} as const;
 
 const FREE_LIMITS = {
   maxBooks: 2,
@@ -51,6 +76,8 @@ type AuthContext = {
   picture?: string;
 };
 
+type UserPlan = keyof typeof PLAN_LIMITS;
+
 type LibrarySearchResult = {
   bookId: string;
   bookTitle: string;
@@ -72,6 +99,21 @@ function requireAuth(auth: AuthContext | undefined): AuthContext {
   }
 
   return auth;
+}
+
+async function getAuthEmailVerified(userId: string): Promise<boolean> {
+  const user = await getAuth().getUser(userId);
+  return user.emailVerified === true;
+}
+
+async function requireVerifiedEmail(auth: AuthContext) {
+  if (!(await getAuthEmailVerified(auth.uid))) {
+    throw new HttpsError("failed-precondition", "Verify your email before using this feature.");
+  }
+}
+
+function normalizePlan(plan: unknown): UserPlan {
+  return plan === "plus" || plan === "pro" ? plan : "free";
 }
 
 function assertString(value: unknown, fieldName: string): string {
@@ -719,9 +761,10 @@ async function ensureUserProfile(auth: AuthContext) {
   const userRef = db.collection("users").doc(auth.uid);
   const snapshot = await userRef.get();
   const now = FieldValue.serverTimestamp();
+  const emailVerified = await getAuthEmailVerified(auth.uid);
 
   if (snapshot.exists) {
-    const plan = snapshot.get("plan") || "free";
+    const plan = normalizePlan(snapshot.get("plan"));
     const currentLimits = snapshot.get("limits") ?? {};
     const normalizedFreeLimits =
       plan === "free"
@@ -744,6 +787,12 @@ async function ensureUserProfile(auth: AuthContext) {
         email: auth.email ?? snapshot.get("email") ?? "",
         displayName: auth.name ?? snapshot.get("displayName") ?? "",
         photoURL: auth.picture ?? snapshot.get("photoURL") ?? "",
+        emailVerified,
+        onboardingStatus: emailVerified ? "active" : "email_verification_pending",
+        billingProvider: snapshot.get("billingProvider") ?? "none",
+        billingCustomerId: snapshot.get("billingCustomerId") ?? "",
+        billingPriceId: snapshot.get("billingPriceId") ?? "",
+        billingCurrentPeriodEnd: snapshot.get("billingCurrentPeriodEnd") ?? null,
         limits: normalizedFreeLimits,
         updatedAt: now,
         lastLoginAt: now,
@@ -759,6 +808,12 @@ async function ensureUserProfile(auth: AuthContext) {
     photoURL: auth.picture ?? "",
     plan: "free",
     subscriptionStatus: "none",
+    emailVerified,
+    onboardingStatus: emailVerified ? "active" : "email_verification_pending",
+    billingProvider: "none",
+    billingCustomerId: "",
+    billingPriceId: "",
+    billingCurrentPeriodEnd: null,
     locale: "de",
     theme: "light",
     limits: FREE_LIMITS,
@@ -778,22 +833,24 @@ async function ensureUserProfile(auth: AuthContext) {
 
 async function getUserLimits(userId: string): Promise<PlanLimits> {
   const snapshot = await db.collection("users").doc(userId).get();
+  const plan = normalizePlan(snapshot.get("plan"));
+  const defaults = PLAN_LIMITS[plan];
   const limits = snapshot.get("limits") ?? {};
 
   return {
-    maxBooks: Math.max(Number(limits.maxBooks) || 0, FREE_LIMITS.maxBooks),
+    maxBooks: Math.max(Number(limits.maxBooks) || 0, defaults.maxBooks),
     maxStorageBytes: Math.max(
       Number(limits.maxStorageBytes) || 0,
-      FREE_LIMITS.maxStorageBytes
+      defaults.maxStorageBytes
     ),
-    maxFileBytes: Math.max(Number(limits.maxFileBytes) || 0, FREE_LIMITS.maxFileBytes),
+    maxFileBytes: Math.max(Number(limits.maxFileBytes) || 0, defaults.maxFileBytes),
     monthlyMessages: Math.max(
       Number(limits.monthlyMessages) || 0,
-      FREE_LIMITS.monthlyMessages
+      defaults.monthlyMessages
     ),
     monthlyIngestions: Math.max(
       Number(limits.monthlyIngestions) || 0,
-      FREE_LIMITS.monthlyIngestions
+      defaults.monthlyIngestions
     ),
   };
 }
@@ -1205,10 +1262,13 @@ export const syncUserProfile = onCall({ region: "us-central1" }, async (request)
     : undefined);
 
   await ensureUserProfile(auth);
+  const userSnapshot = await db.collection("users").doc(auth.uid).get();
 
   return {
     ok: true,
     userId: auth.uid,
+    emailVerified: userSnapshot.get("emailVerified") === true,
+    onboardingStatus: userSnapshot.get("onboardingStatus") ?? "",
   };
 });
 
@@ -1270,6 +1330,7 @@ export const getBookDetail = onCall(
         }
       : undefined);
     const bookId = assertString(request.data?.bookId, "bookId");
+    await requireVerifiedEmail(auth);
     const bookSnapshot = await db.collection("books").doc(bookId).get();
 
     if (!bookSnapshot.exists || bookSnapshot.get("userId") !== auth.uid) {
@@ -1441,6 +1502,7 @@ export const createUploadReservation = onCall(
     const sizeBytes = Number(request.data?.sizeBytes);
 
     assertAllowedContentType(contentType);
+    await requireVerifiedEmail(auth);
 
     if (!Number.isFinite(sizeBytes) || sizeBytes <= 0) {
       throw new HttpsError("invalid-argument", "sizeBytes must be a positive number.");
@@ -1518,6 +1580,7 @@ export const finalizeUploadReservation = onCall(
         }
       : undefined);
     const bookId = assertString(request.data?.bookId, "bookId");
+    await requireVerifiedEmail(auth);
 
     const bookRef = db.collection("books").doc(bookId);
     const bookSnapshot = await bookRef.get();
@@ -1705,6 +1768,7 @@ export const processIngestionJob = onCall(
         }
       : undefined);
     const jobId = assertString(request.data?.jobId, "jobId");
+    await requireVerifiedEmail(auth);
     const jobSnapshot = await db.collection("ingestionJobs").doc(jobId).get();
 
     if (!jobSnapshot.exists || jobSnapshot.get("userId") !== auth.uid) {
@@ -1746,6 +1810,7 @@ export const searchLibrary = onCall(
           picture: request.auth.token.picture,
         }
       : undefined);
+    await requireVerifiedEmail(auth);
     const queryText = assertString(request.data?.query, "query").slice(0, MAX_SEARCH_QUERY_LENGTH);
     const bookId =
       typeof request.data?.bookId === "string" && request.data.bookId.trim()
@@ -1774,6 +1839,7 @@ export const askLibrary = onCall(
           picture: request.auth.token.picture,
         }
       : undefined);
+    await requireVerifiedEmail(auth);
     const queryText = assertString(request.data?.query, "query").slice(0, MAX_SEARCH_QUERY_LENGTH);
     const locale =
       typeof request.data?.locale === "string" && request.data.locale === "de" ? "de" : "en";
