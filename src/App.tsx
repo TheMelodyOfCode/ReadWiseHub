@@ -354,6 +354,7 @@ export function App() {
   const [readerAskSources, setReaderAskSources] = useState<LibrarySearchResult[]>([]);
   const [readerAskQuestion, setReaderAskQuestion] = useState("");
   const [readerReturnParagraphId, setReaderReturnParagraphId] = useState("");
+  const [readerBookmarkMessage, setReaderBookmarkMessage] = useState("");
   const [menuOpen, setMenuOpen] = useState(false);
   const [accountBusy, setAccountBusy] = useState(false);
   const [confirmDeleteAccount, setConfirmDeleteAccount] = useState(false);
@@ -377,7 +378,6 @@ export function App() {
     ingestionJobs.forEach((job) => jobs.set(job.bookId, job));
     return jobs;
   }, [ingestionJobs]);
-  const userLabel = user?.displayName || user?.email?.split("@")[0] || t.userFallback;
   const readerPageSize = 8;
   const readerBook = useMemo(
     () => books.find((book) => book.id === readerBookId) ?? null,
@@ -1001,6 +1001,7 @@ export function App() {
     setReaderAskSources([]);
     setReaderAskQuestion("");
     setReaderReturnParagraphId("");
+    setReaderBookmarkMessage("");
     setWorkspaceTab("read");
 
     try {
@@ -1038,6 +1039,15 @@ export function App() {
     void openBookReader(readerBook, nextPage);
   }
 
+  function bookmarkReaderPage() {
+    if (!readerProgressKey) {
+      return;
+    }
+
+    window.localStorage.setItem(readerProgressKey, String(readerPage));
+    setReaderBookmarkMessage(`${t.bookmarkSaved}: ${t.page} ${readerPage + 1}`);
+  }
+
   function goToReaderPage(page: number) {
     if (!readerBook) {
       return;
@@ -1058,6 +1068,16 @@ export function App() {
     setReaderAskSources([]);
     setReaderAskQuestion("");
     setReaderReturnParagraphId("");
+    setReaderBookmarkMessage("");
+  }
+
+  function closeMenu() {
+    setMenuOpen(false);
+  }
+
+  function openMenuTab(tab: WorkspaceTab) {
+    setWorkspaceTab(tab);
+    closeMenu();
   }
 
   function captureReaderSelection() {
@@ -1277,24 +1297,31 @@ export function App() {
               className={`workspace-menu ${menuOpen ? "open" : ""}`}
             >
               <nav className="workspace-nav" aria-label="Workspace navigation">
-                <a href="#dashboard" onClick={() => setMenuOpen(false)}>
+                <a href="#dashboard" onClick={closeMenu}>
                   {t.navDashboard}
                 </a>
-                <a href="#library" onClick={() => setMenuOpen(false)}>
+                <a href="#library" onClick={() => openMenuTab("library")}>
                   {t.navLibrary}
                 </a>
-                <a href="#account" onClick={() => setMenuOpen(false)}>
+                <a href="#library" onClick={() => openMenuTab("read")}>
+                  {t.tabRead}
+                </a>
+                <a href="#account" onClick={closeMenu}>
                   {t.navAccount}
                 </a>
               </nav>
-              <span className="welcome-user">
-                {t.welcomeBack}, <strong>{userLabel}</strong>
-              </span>
               <div className="header-preferences menu-controls">
                 {languageToggle}
                 {themeToggle}
               </div>
-              <button className="button header-button" type="button" onClick={() => signOut(auth)}>
+              <button
+                className="button header-button sign-out-button"
+                type="button"
+                onClick={() => {
+                  closeMenu();
+                  void signOut(auth);
+                }}
+              >
                 {t.signOut}
               </button>
             </div>
@@ -1657,6 +1684,14 @@ export function App() {
                         <button
                           className="button secondary compact"
                           type="button"
+                          disabled={readerBusy || readerTotalChunks === 0}
+                          onClick={bookmarkReaderPage}
+                        >
+                          {t.bookmarkPage}
+                        </button>
+                        <button
+                          className="button secondary compact"
+                          type="button"
                           disabled={
                             readerBusy ||
                             readerTotalChunks === 0 ||
@@ -1683,6 +1718,9 @@ export function App() {
                       </div>
                     ) : null}
                   </div>
+                  {readerBookmarkMessage ? (
+                    <p className="success-text reader-bookmark-note">{readerBookmarkMessage}</p>
+                  ) : null}
 
                   {!readerBook ? (
                     <div className="reader-book-picker">
@@ -1834,6 +1872,14 @@ export function App() {
                           {Math.min(readerTotalChunks, (readerPage + 1) * readerPageSize)} /
                           {readerTotalChunks} {t.chunks}
                         </span>
+                        <button
+                          className="button secondary compact"
+                          type="button"
+                          disabled={readerBusy || readerTotalChunks === 0}
+                          onClick={bookmarkReaderPage}
+                        >
+                          {t.bookmarkPage}
+                        </button>
                         <button
                           className="button secondary compact"
                           type="button"

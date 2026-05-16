@@ -136,9 +136,9 @@ select {
   right: 0;
   left: 0;
   width: auto;
-  align-items: center;
-  gap: 12px;
-  padding: 12px clamp(16px, 4vw, 48px) 16px;
+  align-items: stretch;
+  gap: 14px;
+  padding: 14px clamp(16px, 4vw, 48px) 18px;
   background: var(--surface);
   border-top: 1px solid var(--border);
   border-bottom: 1px solid var(--border);
@@ -151,25 +151,33 @@ select {
 
 .workspace-nav {
   display: grid;
-  gap: 8px;
+  gap: 10px;
 }
 
 .workspace-nav a {
   display: flex;
-  min-height: 48px;
+  min-height: 54px;
   align-items: center;
+  justify-content: flex-start;
   border: 1px solid var(--border);
   border-radius: 8px;
-  padding: 10px 12px;
+  padding: 12px 14px;
   background: var(--surface);
   color: var(--text);
   font-weight: 850;
+  transition:
+    border-color 160ms ease,
+    background-color 160ms ease,
+    box-shadow 160ms ease,
+    transform 160ms ease;
 }
 
 .workspace-nav a:hover,
 .workspace-nav a:focus-visible {
   border-color: color-mix(in srgb, var(--primary) 48%, var(--border));
   background: color-mix(in srgb, var(--primary) 12%, var(--surface));
+  box-shadow: 0 8px 18px rgba(35, 100, 90, 0.13);
+  transform: translateY(-1px);
 }
 
 .public-header-actions {
@@ -189,13 +197,19 @@ select {
 
 .header-preferences {
   display: grid;
-  grid-template-columns: minmax(112px, 1fr) minmax(112px, 1fr);
-  gap: 12px;
+  grid-template-columns: auto auto;
+  justify-content: start;
+  align-items: center;
+  gap: 10px;
 }
 
 .menu-controls {
   border-top: 1px solid var(--border);
-  padding-top: 12px;
+  padding-top: 14px;
+}
+
+.sign-out-button {
+  justify-self: start;
 }
 
 .welcome-user {
@@ -209,8 +223,8 @@ select {
 }
 
 .header-button {
-  min-height: 42px;
-  padding: 9px 12px;
+  min-height: 38px;
+  padding: 8px 12px;
   background: var(--surface);
   color: var(--text);
   border-color: var(--border);
@@ -227,13 +241,15 @@ select {
 }
 
 .theme-toggle {
-  width: 100%;
+  width: auto;
+  min-width: 92px;
 }
 
 .language-toggle {
   display: inline-grid;
   grid-template-columns: repeat(2, minmax(48px, 1fr));
-  min-height: 42px;
+  width: 112px;
+  min-height: 38px;
   overflow: hidden;
   border: 1px solid var(--border);
   border-radius: 8px;
@@ -241,13 +257,16 @@ select {
 }
 
 .language-toggle button {
-  min-height: 40px;
+  min-height: 36px;
   border: 0;
-  padding: 8px 12px;
+  padding: 7px 10px;
   background: transparent;
   color: var(--muted);
   font-weight: 900;
   cursor: pointer;
+  transition:
+    background-color 160ms ease,
+    color 160ms ease;
 }
 
 .language-toggle button + button {
@@ -326,6 +345,12 @@ p {
   font-weight: 800;
   text-decoration: none;
   cursor: pointer;
+  transition:
+    background-color 160ms ease,
+    border-color 160ms ease,
+    color 160ms ease,
+    box-shadow 160ms ease,
+    transform 160ms ease;
 }
 
 .button.primary {
@@ -335,6 +360,8 @@ p {
 
 .button.primary:hover {
   background: var(--primary-strong);
+  box-shadow: 0 10px 22px rgba(35, 100, 90, 0.2);
+  transform: translateY(-1px);
 }
 
 .button.secondary,
@@ -342,6 +369,21 @@ p {
   background: var(--surface);
   color: var(--text);
   border-color: var(--border);
+}
+
+.button.secondary:hover,
+.button.google:hover,
+.header-button:hover {
+  border-color: color-mix(in srgb, var(--primary) 44%, var(--border));
+  background: color-mix(in srgb, var(--primary) 10%, var(--surface));
+  box-shadow: 0 8px 18px rgba(35, 100, 90, 0.12);
+  transform: translateY(-1px);
+}
+
+.button:active,
+.workspace-nav a:active,
+.file-picker:active {
+  transform: translateY(0);
 }
 
 .button.danger {
@@ -441,6 +483,23 @@ input {
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: 8px;
+  transition:
+    border-color 160ms ease,
+    box-shadow 160ms ease,
+    transform 160ms ease;
+}
+
+.steps-grid article:hover,
+.plans-grid article:hover,
+.dashboard-grid article:hover,
+.book-list article:hover,
+.history-list article:hover,
+.search-results article:hover,
+.chunk-preview-list article:hover,
+.help-grid article:hover {
+  border-color: color-mix(in srgb, var(--primary) 30%, var(--border));
+  box-shadow: 0 12px 26px rgba(42, 51, 36, 0.1);
+  transform: translateY(-1px);
 }
 
 .steps-grid span {
@@ -491,12 +550,6 @@ input {
   background: var(--bg);
 }
 
-.workspace-nav {
-  display: flex;
-  gap: 12px;
-  font-size: 0.95rem;
-}
-
 .workspace-hero {
   display: grid;
   gap: 18px;
@@ -516,6 +569,23 @@ input {
   border: 1px solid var(--border);
   border-radius: 8px;
   box-shadow: var(--shadow);
+}
+
+.quick-panel,
+.empty-state,
+.book-list article,
+.upload-panel,
+.ask-panel,
+.history-panel,
+.search-panel,
+.help-panel,
+.book-detail-panel,
+.conversation-detail-panel,
+.reader-panel {
+  transition:
+    border-color 160ms ease,
+    box-shadow 160ms ease,
+    transform 160ms ease;
 }
 
 .quick-panel,
@@ -566,12 +636,28 @@ input {
   color: var(--text);
   font-weight: 900;
   cursor: pointer;
+  transition:
+    background-color 160ms ease,
+    border-color 160ms ease,
+    box-shadow 160ms ease,
+    transform 160ms ease;
 }
 
 .workspace-tabs button.active {
   background: var(--primary);
   border-color: var(--primary);
   color: #fff;
+}
+
+.workspace-tabs button:hover {
+  border-color: color-mix(in srgb, var(--primary) 44%, var(--border));
+  background: color-mix(in srgb, var(--primary) 10%, var(--surface));
+  box-shadow: 0 8px 18px rgba(35, 100, 90, 0.12);
+  transform: translateY(-1px);
+}
+
+.workspace-tabs button.active:hover {
+  background: var(--primary-strong);
 }
 
 .workspace-tab-panel {
@@ -772,6 +858,15 @@ input {
   align-items: center;
   gap: 10px;
   flex-wrap: wrap;
+}
+
+.reader-bookmark-note {
+  width: min(100%, 760px);
+  margin: -4px auto 0;
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, var(--success) 40%, var(--border));
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--success) 10%, transparent);
 }
 
 .selection-toolbar {
@@ -1170,13 +1265,15 @@ input {
   .workspace-menu {
     position: static;
     display: grid;
-    grid-template-columns: auto minmax(120px, 200px) auto auto;
+    grid-template-columns: auto auto auto;
     width: auto;
     align-items: center;
     justify-content: flex-end;
     margin-left: auto;
-    border-top: 0;
-    padding-top: 0;
+    border: 0;
+    padding: 0;
+    background: transparent;
+    box-shadow: none;
   }
 
   .menu-button {
@@ -1222,14 +1319,6 @@ input {
   .menu-controls {
     border-top: 0;
     padding-top: 0;
-  }
-
-  .welcome-user {
-    width: auto;
-    max-width: 220px;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
   }
 
   .controls-band {
