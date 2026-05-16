@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { FirebaseError } from "firebase/app";
 import {
   User,
@@ -65,6 +65,11 @@ type ReaderParagraph = {
   id: string;
   chunkIndexes: number[];
   text: string;
+};
+
+type ReaderSelection = {
+  text: string;
+  paragraphId: string;
 };
 
 type LibrarySearchResult = {
@@ -179,6 +184,48 @@ function formatReaderParagraphs(chunks: ReaderChunk[]): ReaderParagraph[] {
   }
 
   return paragraphs;
+}
+
+function getHighlightedParts(text: string, highlights: string[]) {
+  const activeHighlights = highlights
+    .map((highlight) => highlight.trim())
+    .filter((highlight) => highlight.length >= 2);
+  const matches = activeHighlights
+    .flatMap((highlight) => {
+      const positions: Array<{ start: number; end: number }> = [];
+      let start = text.toLowerCase().indexOf(highlight.toLowerCase());
+      while (start >= 0) {
+        positions.push({ start, end: start + highlight.length });
+        start = text.toLowerCase().indexOf(highlight.toLowerCase(), start + highlight.length);
+      }
+      return positions;
+    })
+    .sort((left, right) => left.start - right.start);
+  const merged = matches.reduce<Array<{ start: number; end: number }>>((result, match) => {
+    const previous = result[result.length - 1];
+    if (previous && match.start <= previous.end) {
+      previous.end = Math.max(previous.end, match.end);
+      return result;
+    }
+    result.push({ ...match });
+    return result;
+  }, []);
+  const parts: Array<{ text: string; highlighted: boolean }> = [];
+  let cursor = 0;
+
+  merged.forEach((match) => {
+    if (match.start > cursor) {
+      parts.push({ text: text.slice(cursor, match.start), highlighted: false });
+    }
+    parts.push({ text: text.slice(match.start, match.end), highlighted: true });
+    cursor = match.end;
+  });
+
+  if (cursor < text.length) {
+    parts.push({ text: text.slice(cursor), highlighted: false });
+  }
+
+  return parts.length > 0 ? parts : [{ text, highlighted: false }];
 }
 
 function getInitialTheme(): Theme {
@@ -300,6 +347,7 @@ export function App() {
   const [readerBusy, setReaderBusy] = useState(false);
   const [readerMessage, setReaderMessage] = useState("");
   const [readerHighlights, setReaderHighlights] = useState<Record<string, string>>({});
+  const [readerSelection, setReaderSelection] = useState<ReaderSelection | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
   const [accountBusy, setAccountBusy] = useState(false);
   const [confirmDeleteAccount, setConfirmDeleteAccount] = useState(false);
@@ -340,6 +388,7 @@ export function App() {
   const readerHighlightKey = user && readerBookId
     ? `readwisehub_reader_highlights_${user.uid}_${readerBookId}`
     : "";
+  const bookPageRef = useRef<HTMLDivElement | null>(null);
   const activeStorageBytes = useMemo(
     () => books.reduce((total, book) => total + book.sizeBytes, 0),
     [books]
@@ -940,6 +989,7 @@ export function App() {
     setReaderBusy(true);
     setReaderMessage("");
     setReaderChunks([]);
+    setReaderSelection(null);
     setWorkspaceTab("read");
 
     try {
@@ -991,31 +1041,67 @@ export function App() {
     setReaderBookId("");
     setReaderChunks([]);
     setReaderMessage("");
+    setReaderSelection(null);
   }
 
-  function toggleReaderHighlight(paragraph: ReaderParagraph) {
-    if (!readerHighlightKey) {
+  function captureReaderSelection() {
+    const selection = window.getSelection();
+    const text = selection?.toString().replace(/\s+/g, " ").trim() ?? "";
+
+    if (!selection || !text || text.length < 2 || !bookPageRef.current) {
+      setReaderSelection(null);
+      return;
+    }
+
+    const anchorNode = selection.anchorNode;
+    const focusNode = selection.focusNode;
+    if (
+      !anchorNode ||
+      !focusNode ||
+      !bookPageRef.current.contains(anchorNode) ||
+      !bookPageRef.current.contains(focusNode)
+    ) {
+      setReaderSelection(null);
+      return;
+    }
+
+    const paragraph = readerParagraphs.find((candidate) =>
+      candidate.text.toLowerCase().includes(text.toLowerCase())
+    );
+    if (!paragraph) {
+      setReaderSelection(null);
+      return;
+    }
+
+    setReaderSelection({
+      text,
+      paragraphId: paragraph.id,
+    });
+  }
+
+  function highlightReaderSelection() {
+    if (!readerHighlightKey || !readerSelection) {
       return;
     }
 
     const nextHighlights = { ...readerHighlights };
-    if (nextHighlights[paragraph.id]) {
-      delete nextHighlights[paragraph.id];
-    } else {
-      nextHighlights[paragraph.id] = paragraph.text;
-    }
+    nextHighlights[`${readerSelection.paragraphId}-${Date.now()}`] = readerSelection.text;
 
     setReaderHighlights(nextHighlights);
     window.localStorage.setItem(readerHighlightKey, JSON.stringify(nextHighlights));
+    setReaderSelection(null);
+    window.getSelection()?.removeAllRanges();
   }
 
-  function askAboutReaderParagraph(paragraph: ReaderParagraph) {
-    if (!readerBook) {
+  function askAboutReaderSelection() {
+    if (!readerBook || !readerSelection) {
       return;
     }
 
     setSelectedBookScope(readerBook.id);
-    setAskQuestion(`${t.askAboutPassagePrompt}\n\n"${paragraph.text}"`);
+    setAskQuestion(`${t.askAboutPassagePrompt}\n\n"${readerSelection.text}"`);
+    setReaderSelection(null);
+    window.getSelection()?.removeAllRanges();
     setWorkspaceTab("ask");
   }
 
@@ -1130,7 +1216,7 @@ export function App() {
 
             <div
               id="workspace-menu"
-              className={`user-header-actions ${menuOpen ? "open" : ""}`}
+              className={`workspace-menu ${menuOpen ? "open" : ""}`}
             >
               <nav className="workspace-nav" aria-label="Workspace navigation">
                 <a href="#dashboard" onClick={() => setMenuOpen(false)}>
@@ -1146,7 +1232,7 @@ export function App() {
               <span className="welcome-user">
                 {t.welcomeBack}, <strong>{userLabel}</strong>
               </span>
-              <div className="header-preferences">
+              <div className="header-preferences menu-controls">
                 {languageToggle}
                 {themeToggle}
               </div>
@@ -1559,7 +1645,31 @@ export function App() {
                     </div>
                   ) : (
                     <>
-                      <div className="book-page">
+                      {readerSelection ? (
+                        <div className="selection-toolbar">
+                          <span>{t.selectionActions}</span>
+                          <button
+                            className="button secondary compact"
+                            type="button"
+                            onClick={highlightReaderSelection}
+                          >
+                            {t.highlight}
+                          </button>
+                          <button
+                            className="button secondary compact"
+                            type="button"
+                            onClick={askAboutReaderSelection}
+                          >
+                            {t.askAboutSelection}
+                          </button>
+                        </div>
+                      ) : null}
+                      <div
+                        className="book-page"
+                        ref={bookPageRef}
+                        onMouseUp={captureReaderSelection}
+                        onTouchEnd={captureReaderSelection}
+                      >
                         <div className="book-page-top">
                           <span>{readerBook.title}</span>
                           <span>
@@ -1571,36 +1681,27 @@ export function App() {
                         {!readerBusy && readerParagraphs.length === 0 && !readerMessage ? (
                           <p className="small-note">{t.readerEmpty}</p>
                         ) : null}
-                        {readerParagraphs.map((paragraph) => (
-                          <article
-                            key={paragraph.id}
-                            className={
-                              readerHighlights[paragraph.id]
-                                ? "reader-paragraph highlighted"
-                                : "reader-paragraph"
-                            }
-                          >
-                            <p>{paragraph.text}</p>
-                            <div className="reader-paragraph-actions">
-                              <button
-                                className="button secondary compact"
-                                type="button"
-                                onClick={() => toggleReaderHighlight(paragraph)}
-                              >
-                                {readerHighlights[paragraph.id]
-                                  ? t.removeHighlight
-                                  : t.highlight}
-                              </button>
-                              <button
-                                className="button secondary compact"
-                                type="button"
-                                onClick={() => askAboutReaderParagraph(paragraph)}
-                              >
-                                {t.askAboutPassage}
-                              </button>
-                            </div>
-                          </article>
-                        ))}
+                        {readerParagraphs.map((paragraph) => {
+                          const paragraphHighlights = Object.values(readerHighlights).filter(
+                            (highlight) =>
+                              paragraph.text.toLowerCase().includes(highlight.toLowerCase())
+                          );
+
+                          return (
+                            <article key={paragraph.id} className="reader-paragraph">
+                              <p>
+                                {getHighlightedParts(paragraph.text, paragraphHighlights).map(
+                                  (part, index) =>
+                                    part.highlighted ? (
+                                      <mark key={index}>{part.text}</mark>
+                                    ) : (
+                                      <span key={index}>{part.text}</span>
+                                    )
+                                )}
+                              </p>
+                            </article>
+                          );
+                        })}
                       </div>
                       <div className="reader-footer">
                         <button
