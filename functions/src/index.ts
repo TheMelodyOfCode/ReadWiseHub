@@ -18,6 +18,8 @@ const FREE_LIMITS = {
   monthlyIngestions: 2,
 };
 
+type PlanLimits = typeof FREE_LIMITS;
+
 const ALLOWED_CONTENT_TYPES = new Set([
   "application/pdf",
   "text/plain",
@@ -774,6 +776,28 @@ async function ensureUserProfile(auth: AuthContext) {
   return userRef;
 }
 
+async function getUserLimits(userId: string): Promise<PlanLimits> {
+  const snapshot = await db.collection("users").doc(userId).get();
+  const limits = snapshot.get("limits") ?? {};
+
+  return {
+    maxBooks: Math.max(Number(limits.maxBooks) || 0, FREE_LIMITS.maxBooks),
+    maxStorageBytes: Math.max(
+      Number(limits.maxStorageBytes) || 0,
+      FREE_LIMITS.maxStorageBytes
+    ),
+    maxFileBytes: Math.max(Number(limits.maxFileBytes) || 0, FREE_LIMITS.maxFileBytes),
+    monthlyMessages: Math.max(
+      Number(limits.monthlyMessages) || 0,
+      FREE_LIMITS.monthlyMessages
+    ),
+    monthlyIngestions: Math.max(
+      Number(limits.monthlyIngestions) || 0,
+      FREE_LIMITS.monthlyIngestions
+    ),
+  };
+}
+
 async function getActiveBookCount(userId: string): Promise<number> {
   const snapshot = await db
     .collection("books")
@@ -797,10 +821,14 @@ async function getActiveStorageBytes(userId: string): Promise<number> {
   }, 0);
 }
 
-async function extractTextFromStorageFile(storagePath: string, contentType: string) {
+async function extractTextFromStorageFile(
+  storagePath: string,
+  contentType: string,
+  limits: PlanLimits
+) {
   const [buffer] = await getStorage().bucket().file(storagePath).download();
 
-  if (buffer.byteLength > FREE_LIMITS.maxFileBytes) {
+  if (buffer.byteLength > limits.maxFileBytes) {
     throw new HttpsError("resource-exhausted", "Uploaded file exceeds the plan limit.");
   }
 
@@ -1059,6 +1087,7 @@ async function processIngestionJobById(jobId: string) {
   const storagePath = assertString(bookSnapshot.get("storagePath"), "storagePath");
   const mimeType = assertString(bookSnapshot.get("mimeType"), "mimeType");
   assertAllowedContentType(mimeType);
+  const limits = await getUserLimits(userId);
 
   const now = FieldValue.serverTimestamp();
 
@@ -1077,7 +1106,7 @@ async function processIngestionJobById(jobId: string) {
   });
 
   try {
-    const extraction = await extractTextFromStorageFile(storagePath, mimeType);
+    const extraction = await extractTextFromStorageFile(storagePath, mimeType, limits);
     const textBytes = Buffer.byteLength(extraction.text, "utf8");
 
     if (!extraction.text) {
@@ -1417,28 +1446,29 @@ export const createUploadReservation = onCall(
       throw new HttpsError("invalid-argument", "sizeBytes must be a positive number.");
     }
 
-    if (sizeBytes > FREE_LIMITS.maxFileBytes) {
+    await ensureUserProfile(auth);
+    const limits = await getUserLimits(auth.uid);
+
+    if (sizeBytes > limits.maxFileBytes) {
       throw new HttpsError(
         "resource-exhausted",
-        "This file is larger than the current Free plan limit."
+        "This file is larger than the current plan limit."
       );
     }
 
-    await ensureUserProfile(auth);
-
     const activeBookCount = await getActiveBookCount(auth.uid);
-    if (activeBookCount >= FREE_LIMITS.maxBooks) {
+    if (activeBookCount >= limits.maxBooks) {
       throw new HttpsError(
         "resource-exhausted",
-        `The current Free plan allows ${FREE_LIMITS.maxBooks} active books.`
+        `The current plan allows ${limits.maxBooks} active books.`
       );
     }
 
     const activeStorageBytes = await getActiveStorageBytes(auth.uid);
-    if (activeStorageBytes + sizeBytes > FREE_LIMITS.maxStorageBytes) {
+    if (activeStorageBytes + sizeBytes > limits.maxStorageBytes) {
       throw new HttpsError(
         "resource-exhausted",
-        "This upload would exceed the current Free storage limit."
+        "This upload would exceed the current plan storage limit."
       );
     }
 
@@ -1463,14 +1493,14 @@ export const createUploadReservation = onCall(
       chunkCount: 0,
       createdAt: now,
       updatedAt: now,
-      planAtIngestion: "free",
+      planAtIngestion: "current",
     });
 
     return {
       ok: true,
       bookId: bookRef.id,
       storagePath,
-      maxFileBytes: FREE_LIMITS.maxFileBytes,
+      maxFileBytes: limits.maxFileBytes,
       allowedContentTypes: Array.from(ALLOWED_CONTENT_TYPES),
     };
   }
@@ -1514,7 +1544,10 @@ export const finalizeUploadReservation = onCall(
       throw new HttpsError("failed-precondition", "Uploaded file is empty.");
     }
 
-    if (sizeBytes > FREE_LIMITS.maxFileBytes) {
+    await ensureUserProfile(auth);
+    const limits = await getUserLimits(auth.uid);
+
+    if (sizeBytes > limits.maxFileBytes) {
       throw new HttpsError("resource-exhausted", "Uploaded file exceeds the plan limit.");
     }
 
@@ -1525,17 +1558,17 @@ export const finalizeUploadReservation = onCall(
     const activeStorageBytes = await getActiveStorageBytes(auth.uid);
     const currentBookSize = Number(bookSnapshot.get("sizeBytes")) || 0;
 
-    if (activeBookCount > FREE_LIMITS.maxBooks) {
+    if (activeBookCount > limits.maxBooks) {
       throw new HttpsError(
         "resource-exhausted",
-        `The current Free plan allows ${FREE_LIMITS.maxBooks} active books.`
+        `The current plan allows ${limits.maxBooks} active books.`
       );
     }
 
-    if (activeStorageBytes - currentBookSize + sizeBytes > FREE_LIMITS.maxStorageBytes) {
+    if (activeStorageBytes - currentBookSize + sizeBytes > limits.maxStorageBytes) {
       throw new HttpsError(
         "resource-exhausted",
-        "This upload would exceed the current Free storage limit."
+        "This upload would exceed the current plan storage limit."
       );
     }
 
