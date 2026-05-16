@@ -72,6 +72,13 @@ type ReaderSelection = {
   paragraphId: string;
 };
 
+type ReaderBookmark = {
+  page: number;
+  label: string;
+  snippet: string;
+  createdAt: number;
+};
+
 type LibrarySearchResult = {
   bookId: string;
   bookTitle: string;
@@ -355,7 +362,8 @@ export function App() {
   const [readerAskQuestion, setReaderAskQuestion] = useState("");
   const [readerReturnParagraphId, setReaderReturnParagraphId] = useState("");
   const [readerBookmarkMessage, setReaderBookmarkMessage] = useState("");
-  const [readerSavedBookmarkPage, setReaderSavedBookmarkPage] = useState<number | null>(null);
+  const [readerBookmarks, setReaderBookmarks] = useState<ReaderBookmark[]>([]);
+  const [readerBookmarkMenuOpen, setReaderBookmarkMenuOpen] = useState(false);
   const [readerScrollNavVisible, setReaderScrollNavVisible] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [accountBusy, setAccountBusy] = useState(false);
@@ -397,8 +405,11 @@ export function App() {
     ? `readwisehub_reader_highlights_${user.uid}_${readerBookId}`
     : "";
   const readerBookmarkKey = user && readerBookId
-    ? `readwisehub_reader_bookmark_${user.uid}_${readerBookId}`
+    ? `readwisehub_reader_bookmarks_${user.uid}_${readerBookId}`
     : "";
+  const currentPageBookmarked = readerBookmarks.some(
+    (bookmark) => bookmark.page === readerPage
+  );
   const bookPageRef = useRef<HTMLDivElement | null>(null);
   const readerScrollTimeoutRef = useRef<number | null>(null);
   const activeStorageBytes = useMemo(
@@ -1017,19 +1028,35 @@ export function App() {
       ? `readwisehub_reader_progress_${user.uid}_${book.id}`
       : "";
     const bookmarkKey = user
+      ? `readwisehub_reader_bookmarks_${user.uid}_${book.id}`
+      : "";
+    const legacyBookmarkKey = user
       ? `readwisehub_reader_bookmark_${user.uid}_${book.id}`
       : "";
     const savedPage = progressKey
       ? Number(window.localStorage.getItem(progressKey))
       : 0;
-    const savedBookmark = bookmarkKey
-      ? Number(window.localStorage.getItem(bookmarkKey))
+    const savedBookmarks = bookmarkKey
+      ? parseReaderBookmarks(window.localStorage.getItem(bookmarkKey))
+      : [];
+    const legacyBookmark = legacyBookmarkKey
+      ? Number(window.localStorage.getItem(legacyBookmarkKey))
       : Number.NaN;
+    const bookmarks =
+      savedBookmarks.length > 0 || !Number.isFinite(legacyBookmark)
+        ? savedBookmarks
+        : [{
+            page: legacyBookmark,
+            label: `${t.page} ${legacyBookmark + 1}`,
+            snippet: "",
+            createdAt: Date.now(),
+          }];
     const targetPage = page >= 0 ? page : Number.isFinite(savedPage) ? savedPage : 0;
 
     setReaderBookId(book.id);
     setReaderPage(targetPage);
-    setReaderSavedBookmarkPage(Number.isFinite(savedBookmark) ? savedBookmark : null);
+    setReaderBookmarks(bookmarks);
+    setReaderBookmarkMenuOpen(false);
     setReaderBusy(true);
     setReaderMessage("");
     setReaderChunks([]);
@@ -1082,17 +1109,81 @@ export function App() {
       return;
     }
 
-    window.localStorage.setItem(readerBookmarkKey, String(readerPage));
-    setReaderSavedBookmarkPage(readerPage);
-    setReaderBookmarkMessage(`${t.bookmarkSaved}: ${t.page} ${readerPage + 1}`);
+    const existingBookmark = readerBookmarks.find(
+      (bookmark) => bookmark.page === readerPage
+    );
+    const nextBookmarks = existingBookmark
+      ? readerBookmarks.filter((bookmark) => bookmark.page !== readerPage)
+      : [
+          ...readerBookmarks,
+          {
+            page: readerPage,
+            label: `${t.page} ${readerPage + 1}`,
+            snippet: getReaderBookmarkSnippet(),
+            createdAt: Date.now(),
+          },
+        ].sort((left, right) => left.page - right.page);
+
+    setReaderBookmarks(nextBookmarks);
+    window.localStorage.setItem(readerBookmarkKey, JSON.stringify(nextBookmarks));
+    setReaderBookmarkMessage(
+      existingBookmark
+        ? `${t.bookmarkRemoved}: ${t.page} ${readerPage + 1}`
+        : `${t.bookmarkSaved}: ${t.page} ${readerPage + 1}`
+    );
   }
 
-  function goToReaderBookmark() {
-    if (!readerBook || readerSavedBookmarkPage === null) {
+  function parseReaderBookmarks(value: string | null): ReaderBookmark[] {
+    if (!value) {
+      return [];
+    }
+
+    try {
+      const parsed = JSON.parse(value);
+      if (!Array.isArray(parsed)) {
+        return [];
+      }
+
+      return parsed
+        .filter((bookmark) => typeof bookmark?.page === "number")
+        .map((bookmark) => ({
+          page: bookmark.page,
+          label: typeof bookmark.label === "string"
+            ? bookmark.label
+            : `${t.page} ${bookmark.page + 1}`,
+          snippet: typeof bookmark.snippet === "string" ? bookmark.snippet : "",
+          createdAt:
+            typeof bookmark.createdAt === "number" ? bookmark.createdAt : Date.now(),
+        }))
+        .sort((left, right) => left.page - right.page);
+    } catch {
+      return [];
+    }
+  }
+
+  function getReaderBookmarkSnippet() {
+    const text = readerParagraphs[0]?.text ?? "";
+    return text.length > 110 ? `${text.slice(0, 107)}...` : text;
+  }
+
+  function openReaderBookmark(page: number) {
+    if (!readerBook) {
       return;
     }
 
-    void openBookReader(readerBook, readerSavedBookmarkPage);
+    setReaderBookmarkMenuOpen(false);
+    void openBookReader(readerBook, page);
+  }
+
+  function deleteReaderBookmark(page: number) {
+    if (!readerBookmarkKey) {
+      return;
+    }
+
+    const nextBookmarks = readerBookmarks.filter((bookmark) => bookmark.page !== page);
+    setReaderBookmarks(nextBookmarks);
+    window.localStorage.setItem(readerBookmarkKey, JSON.stringify(nextBookmarks));
+    setReaderBookmarkMessage(`${t.bookmarkRemoved}: ${t.page} ${page + 1}`);
   }
 
   function goToReaderPage(page: number) {
@@ -1116,7 +1207,8 @@ export function App() {
     setReaderAskQuestion("");
     setReaderReturnParagraphId("");
     setReaderBookmarkMessage("");
-    setReaderSavedBookmarkPage(null);
+    setReaderBookmarks([]);
+    setReaderBookmarkMenuOpen(false);
     setReaderScrollNavVisible(false);
   }
 
@@ -1727,11 +1819,13 @@ export function App() {
                     {readerBook ? (
                       <div className="reader-controls">
                         <button
-                          className="button secondary compact"
+                          className="reader-icon-button"
                           type="button"
                           onClick={returnToLibrary}
+                          aria-label={t.backToLibrary}
+                          title={t.backToLibrary}
                         >
-                          {t.backToLibrary}
+                          <span aria-hidden="true">←</span>
                         </button>
                         <label className="reader-jump">
                           {t.chapter}
@@ -1747,50 +1841,73 @@ export function App() {
                             ))}
                           </select>
                         </label>
-                        <button
-                          className="button secondary compact"
-                          type="button"
-                          disabled={readerBusy || readerPage === 0}
-                          onClick={() => turnReaderPage(-1)}
-                        >
-                          {t.previousPage}
-                        </button>
-                        <button
-                          className="button secondary compact"
-                          type="button"
-                          disabled={readerBusy || readerTotalChunks === 0}
-                          onClick={bookmarkReaderPage}
-                        >
-                          {t.bookmarkPage}
-                        </button>
-                        <button
-                          className="button secondary compact"
-                          type="button"
-                          disabled={readerBusy || readerSavedBookmarkPage === null}
-                          onClick={goToReaderBookmark}
-                        >
-                          {t.goToBookmark}
-                        </button>
-                        <button
-                          className="button secondary compact"
-                          type="button"
-                          disabled={readerBusy || readerSavedBookmarkPage === null}
-                          onClick={goToReaderBookmark}
-                        >
-                          {t.goToBookmark}
-                        </button>
-                        <button
-                          className="button secondary compact"
-                          type="button"
-                          disabled={
-                            readerBusy ||
-                            readerTotalChunks === 0 ||
-                            (readerPage + 1) * readerPageSize >= readerTotalChunks
-                          }
-                          onClick={() => turnReaderPage(1)}
-                        >
-                          {t.nextPage}
-                        </button>
+                        <div className="reader-bookmark-menu">
+                          <button
+                            className={`reader-icon-button reader-bookmark-button ${
+                              currentPageBookmarked ? "active" : ""
+                            }`}
+                            type="button"
+                            disabled={readerBusy || readerTotalChunks === 0}
+                            onClick={() => {
+                              bookmarkReaderPage();
+                              setReaderBookmarkMenuOpen(true);
+                            }}
+                            aria-label={currentPageBookmarked ? t.removeBookmark : t.bookmarkPage}
+                            title={currentPageBookmarked ? t.removeBookmark : t.bookmarkPage}
+                          >
+                            <span aria-hidden="true" className="bookmark-ribbon" />
+                            {readerBookmarks.length > 0 ? (
+                              <span className="bookmark-count">{readerBookmarks.length}</span>
+                            ) : null}
+                          </button>
+                          <button
+                            className="reader-icon-button"
+                            type="button"
+                            disabled={readerBookmarks.length === 0}
+                            onClick={() => setReaderBookmarkMenuOpen((open) => !open)}
+                            aria-expanded={readerBookmarkMenuOpen}
+                            aria-label={t.bookmarks}
+                            title={t.bookmarks}
+                          >
+                            <span aria-hidden="true">▾</span>
+                          </button>
+                          {readerBookmarkMenuOpen ? (
+                            <div className="bookmark-dropdown">
+                              <div className="bookmark-dropdown-title">
+                                <strong>{t.bookmarks}</strong>
+                                <button
+                                  type="button"
+                                  aria-label={t.close}
+                                  onClick={() => setReaderBookmarkMenuOpen(false)}
+                                >
+                                  ×
+                                </button>
+                              </div>
+                              {readerBookmarks.length === 0 ? (
+                                <p>{t.noBookmarks}</p>
+                              ) : (
+                                readerBookmarks.map((bookmark) => (
+                                  <article key={`${bookmark.page}-${bookmark.createdAt}`}>
+                                    <button
+                                      type="button"
+                                      onClick={() => openReaderBookmark(bookmark.page)}
+                                    >
+                                      <strong>{bookmark.label}</strong>
+                                      {bookmark.snippet ? <span>{bookmark.snippet}</span> : null}
+                                    </button>
+                                    <button
+                                      type="button"
+                                      aria-label={t.removeBookmark}
+                                      onClick={() => deleteReaderBookmark(bookmark.page)}
+                                    >
+                                      ×
+                                    </button>
+                                  </article>
+                                ))
+                              )}
+                            </div>
+                          ) : null}
+                        </div>
                       </div>
                     ) : null}
                   </div>
@@ -1948,14 +2065,6 @@ export function App() {
                           {Math.min(readerTotalChunks, (readerPage + 1) * readerPageSize)} /
                           {readerTotalChunks} {t.chunks}
                         </span>
-                        <button
-                          className="button secondary compact"
-                          type="button"
-                          disabled={readerBusy || readerTotalChunks === 0}
-                          onClick={bookmarkReaderPage}
-                        >
-                          {t.bookmarkPage}
-                        </button>
                         <button
                           className="button secondary compact"
                           type="button"
