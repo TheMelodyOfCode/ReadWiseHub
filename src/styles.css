@@ -120,19 +120,30 @@ select {
 }
 
 .user-header-actions {
-  display: flex;
+  display: grid;
   width: 100%;
   align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
+  gap: 10px;
 }
 
 .public-header-actions {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(112px, 1fr) minmax(112px, 1fr);
   width: 100%;
   align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.workspace-header-actions {
+  display: grid;
+  width: 100%;
+  gap: 10px;
+}
+
+.header-preferences {
+  display: grid;
+  grid-template-columns: minmax(112px, 1fr) minmax(112px, 1fr);
+  gap: 12px;
 }
 
 .welcome-user {
@@ -151,6 +162,10 @@ select {
   background: var(--surface);
   color: var(--text);
   border-color: var(--border);
+}
+
+.theme-toggle {
+  width: 100%;
 }
 
 .language-toggle {
@@ -923,6 +938,7 @@ input {
   }
 
   .user-header-actions {
+    grid-template-columns: minmax(140px, 220px) auto auto;
     width: auto;
     justify-content: flex-end;
     margin-left: auto;
@@ -932,6 +948,17 @@ input {
     width: auto;
     justify-content: flex-end;
     margin-left: auto;
+  }
+
+  .workspace-header-actions {
+    width: auto;
+    align-items: end;
+    justify-items: end;
+    margin-left: auto;
+  }
+
+  .header-preferences {
+    grid-template-columns: auto auto;
   }
 
   .welcome-user {

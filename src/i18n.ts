@@ -4,7 +4,7 @@ type Dictionary = Record<string, string>;
 
 export const dictionaries: Record<Locale, Dictionary> = {
   en: {
-    brandTagline: "Read with clearer answers.",
+    brandTagline: "Chat with your books.",
     navHow: "How it works",
     navPricing: "Pricing",
     navHelp: "Help",
@@ -83,7 +83,7 @@ export const dictionaries: Record<Locale, Dictionary> = {
     aiGroundedMode: "AI grounded",
     sourceDraftMode: "Source draft",
     bookScope: "Book scope",
-    allReadyBooks: "All processed books",
+    allReadyBooks: "All your books",
     historyTitle: "Recent questions",
     historyCopy: "Your latest source-based questions are saved here.",
     historyEmpty: "No saved questions yet.",
@@ -140,7 +140,7 @@ export const dictionaries: Record<Locale, Dictionary> = {
     usageTitle: "Your Free limits",
     usageBooks: "2 books",
     usageStorage: "20 MB storage",
-    usageMessages: "50 messages/month",
+    usageMessages: "20 messages/month",
     usageBooksLabel: "books",
     usageStorageLabel: "storage",
     usageMessagesLabel: "messages/month",
@@ -167,7 +167,7 @@ export const dictionaries: Record<Locale, Dictionary> = {
     userCreated: "Your ReadWiseHub account is ready.",
   },
   de: {
-    brandTagline: "Lesen mit klareren Antworten.",
+    brandTagline: "Mit deinen Büchern im Dialog.",
     navHow: "So funktioniert es",
     navPricing: "Preise",
     navHelp: "Hilfe",
@@ -246,7 +246,7 @@ export const dictionaries: Record<Locale, Dictionary> = {
     aiGroundedMode: "KI mit Quellen",
     sourceDraftMode: "Quellenentwurf",
     bookScope: "Buchauswahl",
-    allReadyBooks: "Alle verarbeiteten Bücher",
+    allReadyBooks: "Alle deine Bücher",
     historyTitle: "Letzte Fragen",
     historyCopy: "Deine letzten quellenbasierten Fragen werden hier gespeichert.",
     historyEmpty: "Noch keine gespeicherten Fragen.",
@@ -303,7 +303,7 @@ export const dictionaries: Record<Locale, Dictionary> = {
     usageTitle: "Deine Free-Grenzen",
     usageBooks: "2 Bücher",
     usageStorage: "20 MB Speicher",
-    usageMessages: "50 Nachrichten/Monat",
+    usageMessages: "20 Nachrichten/Monat",
     usageBooksLabel: "Bücher",
     usageStorageLabel: "Speicher",
     usageMessagesLabel: "Nachrichten/Monat",

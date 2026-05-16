@@ -158,7 +158,7 @@ async function ensureUserRecord(user: User, locale: Locale, theme: Theme) {
         maxBooks: 2,
         maxStorageBytes: 20 * 1024 * 1024,
         maxFileBytes: 20 * 1024 * 1024,
-        monthlyMessages: 50,
+        monthlyMessages: 20,
         monthlyIngestions: 2,
       },
       usageCurrentPeriod: {
@@ -231,7 +231,7 @@ export function App() {
   const [confirmDeleteAccount, setConfirmDeleteAccount] = useState(false);
   const [usage, setUsage] = useState<UserUsage>({
     messages: 0,
-    monthlyMessages: 50,
+    monthlyMessages: 20,
     books: 0,
     maxBooks: 2,
     storageBytes: 0,
@@ -273,6 +273,16 @@ export function App() {
         EN
       </button>
     </div>
+  );
+  const themeToggle = (
+    <button
+      className="button header-button theme-toggle"
+      type="button"
+      onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
+      aria-label={t.theme}
+    >
+      {theme === "dark" ? t.light : t.dark}
+    </button>
   );
 
   useEffect(() => {
@@ -386,7 +396,7 @@ export function App() {
         setUsage({
           messages: typeof current.messages === "number" ? current.messages : 0,
           monthlyMessages:
-            typeof limits.monthlyMessages === "number" ? limits.monthlyMessages : 50,
+            typeof limits.monthlyMessages === "number" ? limits.monthlyMessages : 20,
           books:
             typeof current.books === "number"
               ? Math.max(current.books, books.length)
@@ -905,27 +915,25 @@ export function App() {
             </span>
           </a>
 
-          <nav className="top-nav workspace-nav" aria-label="Workspace navigation">
-            <a href="#dashboard">{t.navDashboard}</a>
-            <a href="#library">{t.navLibrary}</a>
-            <a href="#account">{t.navAccount}</a>
-          </nav>
+          <div className="workspace-header-actions">
+            <nav className="top-nav workspace-nav" aria-label="Workspace navigation">
+              <a href="#dashboard">{t.navDashboard}</a>
+              <a href="#library">{t.navLibrary}</a>
+              <a href="#account">{t.navAccount}</a>
+            </nav>
 
-          <div className="user-header-actions">
-            <span className="welcome-user">
-              {t.welcomeBack}, <strong>{userLabel}</strong>
-            </span>
-            {languageToggle}
-            <button
-              className="button header-button"
-              type="button"
-              onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
-            >
-              {theme === "dark" ? t.light : t.dark}
-            </button>
-            <button className="button header-button" type="button" onClick={() => signOut(auth)}>
-              {t.signOut}
-            </button>
+            <div className="user-header-actions">
+              <span className="welcome-user">
+                {t.welcomeBack}, <strong>{userLabel}</strong>
+              </span>
+              <div className="header-preferences">
+                {languageToggle}
+                {themeToggle}
+              </div>
+              <button className="button header-button" type="button" onClick={() => signOut(auth)}>
+                {t.signOut}
+              </button>
+            </div>
           </div>
         </header>
 
@@ -1562,13 +1570,7 @@ export function App() {
 
         <div className="public-header-actions">
           {languageToggle}
-          <button
-            className="button header-button"
-            type="button"
-            onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
-          >
-            {theme === "dark" ? t.light : t.dark}
-          </button>
+          {themeToggle}
         </div>
       </header>
 
@@ -1717,7 +1719,7 @@ export function App() {
             <div className="dashboard-grid">
               <article>
                 <h3>Free</h3>
-                <p>2 books · 20 MB · 50 messages/month</p>
+                <p>2 books · 20 MB · 20 messages/month</p>
               </article>
               <article>
                 <h3>Secure foundation</h3>

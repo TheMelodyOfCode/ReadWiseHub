@@ -14,7 +14,7 @@ const FREE_LIMITS = {
   maxBooks: 2,
   maxStorageBytes: 20 * 1024 * 1024,
   maxFileBytes: 20 * 1024 * 1024,
-  monthlyMessages: 50,
+  monthlyMessages: 20,
   monthlyIngestions: 2,
 };
 
@@ -730,10 +730,7 @@ async function ensureUserProfile(auth: AuthContext) {
               FREE_LIMITS.maxStorageBytes
             ),
             maxFileBytes: Math.max(Number(currentLimits.maxFileBytes) || 0, FREE_LIMITS.maxFileBytes),
-            monthlyMessages: Math.max(
-              Number(currentLimits.monthlyMessages) || 0,
-              FREE_LIMITS.monthlyMessages
-            ),
+            monthlyMessages: FREE_LIMITS.monthlyMessages,
             monthlyIngestions: Math.max(
               Number(currentLimits.monthlyIngestions) || 0,
               FREE_LIMITS.monthlyIngestions
