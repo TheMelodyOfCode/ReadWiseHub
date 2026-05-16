@@ -6,6 +6,7 @@
   "scripts": {
     "build": "tsc",
     "smoke": "node scripts/readwisehub_smoke_check.mjs",
+    "regression": "node scripts/readwisehub_callable_regression.mjs",
     "serve": "npm run build && firebase emulators:start --only functions",
     "deploy": "firebase deploy --only functions"
   },
