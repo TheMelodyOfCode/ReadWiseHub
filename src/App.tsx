@@ -412,6 +412,7 @@ export function App() {
     (bookmark) => bookmark.page === readerPage
   );
   const bookPageRef = useRef<HTMLDivElement | null>(null);
+  const readerAnswerRef = useRef<HTMLDivElement | null>(null);
   const workspaceMenuRef = useRef<HTMLDivElement | null>(null);
   const menuButtonRef = useRef<HTMLButtonElement | null>(null);
   const bookmarkMenuRef = useRef<HTMLDivElement | null>(null);
@@ -1422,6 +1423,10 @@ export function App() {
     setReaderReturnScrollY(window.scrollY);
     setReaderMessage("");
 
+    window.requestAnimationFrame(() => {
+      readerAnswerRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+
     try {
       const askLibrary = httpsCallable<
         { query: string; locale: Locale; bookId?: string },
@@ -2109,7 +2114,7 @@ export function App() {
                         </div>
                       ) : null}
                       {readerAskAnswer || readerAskBusy ? (
-                        <div className="reader-answer-popover">
+                        <div className="reader-answer-popover" ref={readerAnswerRef}>
                           <button
                             className="reader-answer-close"
                             type="button"

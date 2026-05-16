@@ -1048,6 +1048,7 @@ input {
   border-radius: 8px;
   padding: 12px;
   background: color-mix(in srgb, var(--primary) 8%, var(--surface));
+  animation: reader-loading-pulse 1400ms ease-in-out infinite;
 }
 
 .reader-answer-loading > span {
@@ -1073,6 +1074,17 @@ input {
 @keyframes reader-spin {
   to {
     transform: rotate(360deg);
+  }
+}
+
+@keyframes reader-loading-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 rgba(35, 100, 90, 0);
+  }
+
+  50% {
+    box-shadow: 0 0 0 5px color-mix(in srgb, var(--primary) 10%, transparent);
   }
 }
 
