@@ -1440,17 +1440,33 @@ input {
     position: fixed;
     right: max(10px, env(safe-area-inset-right));
     left: max(10px, env(safe-area-inset-left));
-    top: calc(72px + env(safe-area-inset-top));
+    top: calc(92px + env(safe-area-inset-top));
     z-index: 12;
     width: auto;
     justify-content: space-between;
     gap: 8px;
+    border-color: #d7c5a6;
     padding: 8px;
+    background: #fbf3df;
+    color: #2b2117;
+    box-shadow:
+      inset 8px 0 14px rgba(112, 84, 47, 0.08),
+      0 10px 28px rgba(49, 38, 22, 0.16);
+  }
+
+  :root[data-theme="dark"] .selection-toolbar {
+    background: #e8dcc3;
+    color: #241b13;
   }
 
   .selection-toolbar span {
     flex: 0 0 auto;
+    color: #6d5231;
     font-size: 0.86rem;
+  }
+
+  :root[data-theme="dark"] .selection-toolbar span {
+    color: #60472a;
   }
 
   .selection-toolbar .button {
