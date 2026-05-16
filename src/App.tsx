@@ -361,6 +361,7 @@ export function App() {
   const [readerAskSources, setReaderAskSources] = useState<LibrarySearchResult[]>([]);
   const [readerAskQuestion, setReaderAskQuestion] = useState("");
   const [readerReturnParagraphId, setReaderReturnParagraphId] = useState("");
+  const [readerReturnScrollY, setReaderReturnScrollY] = useState<number | null>(null);
   const [readerBookmarkMessage, setReaderBookmarkMessage] = useState("");
   const [readerBookmarks, setReaderBookmarks] = useState<ReaderBookmark[]>([]);
   const [readerBookmarkMenuOpen, setReaderBookmarkMenuOpen] = useState(false);
@@ -1418,6 +1419,7 @@ export function App() {
     setReaderAskSources([]);
     setReaderAskQuestion(readerSelection.text);
     setReaderReturnParagraphId(readerSelection.paragraphId);
+    setReaderReturnScrollY(window.scrollY);
     setReaderMessage("");
 
     try {
@@ -1444,17 +1446,24 @@ export function App() {
 
   function closeReaderAnswerAndReturn() {
     const paragraphId = readerReturnParagraphId;
+    const scrollY = readerReturnScrollY;
     setReaderAskAnswer("");
     setReaderAskMode("");
     setReaderAskSources([]);
     setReaderAskQuestion("");
     setReaderReturnParagraphId("");
+    setReaderReturnScrollY(null);
 
     window.requestAnimationFrame(() => {
+      if (typeof scrollY === "number") {
+        window.scrollTo({ top: scrollY, behavior: "smooth" });
+        return;
+      }
+
       if (paragraphId) {
         document
           .getElementById(`reader-passage-${paragraphId}`)
-          ?.scrollIntoView({ behavior: "smooth", block: "center" });
+          ?.scrollIntoView({ behavior: "smooth", block: "nearest" });
       }
     });
   }
@@ -2101,6 +2110,14 @@ export function App() {
                       ) : null}
                       {readerAskAnswer || readerAskBusy ? (
                         <div className="reader-answer-popover">
+                          <button
+                            className="reader-answer-close"
+                            type="button"
+                            aria-label={t.close}
+                            onClick={closeReaderAnswerAndReturn}
+                          >
+                            ×
+                          </button>
                           <div className="answer-heading">
                             <div>
                               <h4>{t.readerAnswerTitle}</h4>
@@ -2116,22 +2133,26 @@ export function App() {
                                     : t.sourceDraftMode}
                                 </span>
                               ) : null}
-                              <button
-                                className="button secondary compact"
-                                type="button"
-                                onClick={closeReaderAnswerAndReturn}
-                              >
-                                {t.close}
-                              </button>
                             </div>
                           </div>
-                          {readerAskBusy ? <p>{t.asking}</p> : <p>{readerAskAnswer}</p>}
+                          {readerAskBusy ? (
+                            <div className="reader-answer-loading" role="status" aria-live="polite">
+                              <span aria-hidden="true" />
+                              <div>
+                                <strong>{t.readerAnswerLoadingTitle}</strong>
+                                <p>{t.readerAnswerLoadingCopy}</p>
+                              </div>
+                            </div>
+                          ) : (
+                            <p>{readerAskAnswer}</p>
+                          )}
                           {!readerAskBusy ? (
                             <button
-                              className="button primary compact reader-return-button"
+                              className="reader-return-button"
                               type="button"
                               onClick={closeReaderAnswerAndReturn}
                             >
+                              <span aria-hidden="true">←</span>
                               {t.backToPassage}
                             </button>
                           ) : null}

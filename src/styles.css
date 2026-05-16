@@ -988,13 +988,14 @@ input {
 }
 
 .reader-answer-popover {
+  position: relative;
   display: grid;
   width: min(100%, 760px);
   gap: 12px;
   margin: 0 auto;
   border: 1px solid color-mix(in srgb, var(--primary) 42%, var(--border));
   border-radius: 8px;
-  padding: 14px;
+  padding: 16px 52px 16px 16px;
   background: var(--surface);
   box-shadow: var(--shadow);
 }
@@ -1011,12 +1012,91 @@ input {
 .reader-answer-actions {
   display: flex;
   align-items: center;
+  justify-content: flex-end;
   gap: 8px;
   flex-wrap: wrap;
 }
 
+.reader-answer-close {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  display: grid;
+  width: 34px;
+  height: 34px;
+  place-items: center;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-strong);
+  color: var(--text);
+  cursor: pointer;
+  font-size: 1.05rem;
+  font-weight: 900;
+}
+
+.reader-answer-close:hover,
+.reader-answer-close:focus-visible {
+  border-color: color-mix(in srgb, var(--primary) 44%, var(--border));
+  background: color-mix(in srgb, var(--primary) 10%, var(--surface));
+}
+
+.reader-answer-loading {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  border: 1px solid color-mix(in srgb, var(--primary) 34%, var(--border));
+  border-radius: 8px;
+  padding: 12px;
+  background: color-mix(in srgb, var(--primary) 8%, var(--surface));
+}
+
+.reader-answer-loading > span {
+  width: 30px;
+  min-width: 30px;
+  height: 30px;
+  border: 3px solid color-mix(in srgb, var(--primary) 24%, transparent);
+  border-top-color: var(--primary);
+  border-radius: 999px;
+  animation: reader-spin 880ms linear infinite;
+}
+
+.reader-answer-loading strong {
+  display: block;
+  color: var(--text);
+}
+
+.reader-answer-loading p {
+  margin: 2px 0 0;
+  font-size: 0.96rem;
+}
+
+@keyframes reader-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 .reader-return-button {
+  display: inline-flex;
   width: fit-content;
+  min-height: 44px;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border: 1px solid color-mix(in srgb, var(--primary) 46%, var(--border));
+  border-radius: 999px;
+  padding: 10px 16px;
+  background: color-mix(in srgb, var(--primary) 13%, var(--surface));
+  color: var(--primary);
+  cursor: pointer;
+  font-weight: 900;
+}
+
+.reader-return-button:hover,
+.reader-return-button:focus-visible {
+  background: var(--primary);
+  color: #fff;
+  box-shadow: 0 10px 22px rgba(35, 100, 90, 0.16);
 }
 
 .reader-jump {
