@@ -83,6 +83,15 @@ select {
   backdrop-filter: blur(14px);
 }
 
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
 .brand {
   display: inline-flex;
   align-items: center;
@@ -122,11 +131,18 @@ select {
 
 .workspace-menu {
   display: none;
-  width: 100%;
+  position: absolute;
+  top: 100%;
+  right: 0;
+  left: 0;
+  width: auto;
   align-items: center;
   gap: 12px;
+  padding: 12px clamp(16px, 4vw, 48px) 16px;
+  background: var(--surface);
   border-top: 1px solid var(--border);
-  padding-top: 12px;
+  border-bottom: 1px solid var(--border);
+  box-shadow: var(--shadow);
 }
 
 .workspace-menu.open {
@@ -166,8 +182,9 @@ select {
 
 .workspace-header-actions {
   display: grid;
-  width: 100%;
+  width: auto;
   gap: 10px;
+  margin-left: auto;
 }
 
 .header-preferences {
@@ -200,9 +217,13 @@ select {
 }
 
 .menu-button {
-  width: auto;
-  min-width: 96px;
+  width: 46px;
+  min-width: 46px;
+  min-height: 46px;
   justify-self: end;
+  padding: 0;
+  font-size: 1.55rem;
+  line-height: 1;
 }
 
 .theme-toggle {
@@ -804,6 +825,10 @@ input {
   flex-wrap: wrap;
 }
 
+.reader-return-button {
+  width: fit-content;
+}
+
 .reader-jump {
   display: grid;
   min-width: min(100%, 220px);
@@ -1143,6 +1168,7 @@ input {
   }
 
   .workspace-menu {
+    position: static;
     display: grid;
     grid-template-columns: auto minmax(120px, 200px) auto auto;
     width: auto;

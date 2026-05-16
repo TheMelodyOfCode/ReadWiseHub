@@ -353,6 +353,7 @@ export function App() {
   const [readerAskMode, setReaderAskMode] = useState("");
   const [readerAskSources, setReaderAskSources] = useState<LibrarySearchResult[]>([]);
   const [readerAskQuestion, setReaderAskQuestion] = useState("");
+  const [readerReturnParagraphId, setReaderReturnParagraphId] = useState("");
   const [menuOpen, setMenuOpen] = useState(false);
   const [accountBusy, setAccountBusy] = useState(false);
   const [confirmDeleteAccount, setConfirmDeleteAccount] = useState(false);
@@ -999,6 +1000,7 @@ export function App() {
     setReaderAskMode("");
     setReaderAskSources([]);
     setReaderAskQuestion("");
+    setReaderReturnParagraphId("");
     setWorkspaceTab("read");
 
     try {
@@ -1055,6 +1057,7 @@ export function App() {
     setReaderAskMode("");
     setReaderAskSources([]);
     setReaderAskQuestion("");
+    setReaderReturnParagraphId("");
   }
 
   function captureReaderSelection() {
@@ -1117,6 +1120,7 @@ export function App() {
     setReaderAskMode("");
     setReaderAskSources([]);
     setReaderAskQuestion(readerSelection.text);
+    setReaderReturnParagraphId(readerSelection.paragraphId);
     setReaderMessage("");
 
     try {
@@ -1139,6 +1143,23 @@ export function App() {
     } finally {
       setReaderAskBusy(false);
     }
+  }
+
+  function closeReaderAnswerAndReturn() {
+    const paragraphId = readerReturnParagraphId;
+    setReaderAskAnswer("");
+    setReaderAskMode("");
+    setReaderAskSources([]);
+    setReaderAskQuestion("");
+    setReaderReturnParagraphId("");
+
+    window.requestAnimationFrame(() => {
+      if (paragraphId) {
+        document
+          .getElementById(`reader-passage-${paragraphId}`)
+          ?.scrollIntoView({ behavior: "smooth", block: "center" });
+      }
+    });
   }
 
   async function openConversationDetail(conversationId: string) {
@@ -1247,7 +1268,8 @@ export function App() {
               aria-controls="workspace-menu"
               onClick={() => setMenuOpen((open) => !open)}
             >
-              {t.menu}
+              <span aria-hidden="true">{menuOpen ? "×" : "☰"}</span>
+              <span className="visually-hidden">{t.menu}</span>
             </button>
 
             <div
@@ -1721,18 +1743,22 @@ export function App() {
                               <button
                                 className="button secondary compact"
                                 type="button"
-                                onClick={() => {
-                                  setReaderAskAnswer("");
-                                  setReaderAskMode("");
-                                  setReaderAskSources([]);
-                                  setReaderAskQuestion("");
-                                }}
+                                onClick={closeReaderAnswerAndReturn}
                               >
                                 {t.close}
                               </button>
                             </div>
                           </div>
                           {readerAskBusy ? <p>{t.asking}</p> : <p>{readerAskAnswer}</p>}
+                          {!readerAskBusy ? (
+                            <button
+                              className="button primary compact reader-return-button"
+                              type="button"
+                              onClick={closeReaderAnswerAndReturn}
+                            >
+                              {t.backToPassage}
+                            </button>
+                          ) : null}
                           {readerAskSources.length > 0 ? (
                             <div className="source-pills">
                               {readerAskSources.slice(0, 3).map((source) => (
@@ -1768,7 +1794,11 @@ export function App() {
                           );
 
                           return (
-                            <article key={paragraph.id} className="reader-paragraph">
+                            <article
+                              key={paragraph.id}
+                              id={`reader-passage-${paragraph.id}`}
+                              className="reader-paragraph"
+                            >
                               <p>
                                 {getHighlightedParts(paragraph.text, paragraphHighlights).map(
                                   (part, index) =>
