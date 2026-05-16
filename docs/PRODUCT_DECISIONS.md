@@ -60,6 +60,13 @@ Later format support:
 
 - EPUB after text extraction and chapter metadata are designed
 - DOCX after upload scanning and text extraction reliability are designed
+- Kindle formats such as MOBI/AZW/AZW3/KFX after legal, DRM, and parser support are clarified
+
+Kindle-specific caution:
+
+- Do not claim support for DRM-protected Kindle purchases unless there is an explicit legal and technical path.
+- Treat user-owned DRM-free Kindle files as a later import format candidate.
+- Prefer EPUB first because it is more open and easier to validate.
 
 Security requirements before adding more formats:
 
@@ -129,7 +136,7 @@ A reader page would let users read uploaded books inside ReadWiseHub instead of 
 Recommended MVP reader:
 
 - add a `Read` action on each text-ready book
-- show extracted text by chunk or section
+- show extracted text by chunk or section in a paper-like page view
 - keep a sticky book title and search/ask shortcut
 - allow "Ask about this passage" from a selected chunk
 - show source chunk numbers so answers and reading view connect

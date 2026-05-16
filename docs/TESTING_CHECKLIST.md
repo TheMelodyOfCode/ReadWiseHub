@@ -52,6 +52,7 @@ It covers:
 - `searchLibrary`
 - `askLibrary`
 - `getBookDetail`
+- `getBookReader`
 - `getConversationDetail`
 - `exportAccountData`
 - `deleteConversation`

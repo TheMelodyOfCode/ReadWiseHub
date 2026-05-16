@@ -1260,6 +1260,64 @@ export const getBookDetail = onCall(
   }
 );
 
+export const getBookReader = onCall(
+  { region: "us-central1", timeoutSeconds: 60, memory: "512MiB", invoker: "public" },
+  async (request) => {
+    const auth = requireAuth(request.auth?.token
+      ? {
+          uid: request.auth.uid,
+          email: request.auth.token.email,
+          name: request.auth.token.name,
+          picture: request.auth.token.picture,
+        }
+      : undefined);
+    const bookId = assertString(request.data?.bookId, "bookId");
+    const page = Math.max(0, Math.floor(Number(request.data?.page) || 0));
+    const pageSize = Math.min(12, Math.max(4, Math.floor(Number(request.data?.pageSize) || 8)));
+    const bookSnapshot = await db.collection("books").doc(bookId).get();
+
+    if (!bookSnapshot.exists || bookSnapshot.get("userId") !== auth.uid) {
+      throw new HttpsError("not-found", "Book was not found.");
+    }
+
+    if (bookSnapshot.get("status") !== "text_ready") {
+      throw new HttpsError("failed-precondition", "Book text is not ready yet.");
+    }
+
+    const chunksSnapshot = await db
+      .collection("bookChunks")
+      .where("bookId", "==", bookId)
+      .limit(900)
+      .get();
+    const allChunks = chunksSnapshot.docs
+      .filter((chunkSnapshot) => chunkSnapshot.get("userId") === auth.uid)
+      .map((chunkSnapshot) => ({
+        id: chunkSnapshot.id,
+        chunkIndex: Number(chunkSnapshot.get("chunkIndex")) || 0,
+        text:
+          typeof chunkSnapshot.get("text") === "string"
+            ? chunkSnapshot.get("text")
+            : "",
+      }))
+      .filter((chunk) => chunk.text.trim())
+      .sort((left, right) => left.chunkIndex - right.chunkIndex);
+    const start = page * pageSize;
+
+    return {
+      ok: true,
+      book: {
+        id: bookSnapshot.id,
+        title: bookSnapshot.get("title") ?? "Untitled",
+        chunkCount: Number(bookSnapshot.get("chunkCount")) || allChunks.length,
+      },
+      page,
+      pageSize,
+      totalChunks: allChunks.length,
+      chunks: allChunks.slice(start, start + pageSize),
+    };
+  }
+);
+
 export const getConversationDetail = onCall(
   { region: "us-central1", timeoutSeconds: 60, memory: "512MiB" },
   async (request) => {

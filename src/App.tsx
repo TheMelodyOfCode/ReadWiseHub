@@ -26,7 +26,7 @@ import { Locale, detectInitialLocale, dictionaries } from "./i18n";
 import readWiseHubIcon from "./assets/readwisehub-icon.png";
 
 type Theme = "light" | "dark";
-type WorkspaceTab = "ask" | "library" | "history" | "help";
+type WorkspaceTab = "ask" | "library" | "read" | "history" | "help";
 
 type BookRecord = {
   id: string;
@@ -53,6 +53,12 @@ type BookChunkPreview = {
   id: string;
   chunkIndex: number;
   textPreview: string;
+};
+
+type ReaderChunk = {
+  id: string;
+  chunkIndex: number;
+  text: string;
 };
 
 type LibrarySearchResult = {
@@ -227,6 +233,13 @@ export function App() {
   const [selectedBookDetailId, setSelectedBookDetailId] = useState("");
   const [bookChunkPreviews, setBookChunkPreviews] = useState<BookChunkPreview[]>([]);
   const [bookDetailMessage, setBookDetailMessage] = useState("");
+  const [readerBookId, setReaderBookId] = useState("");
+  const [readerChunks, setReaderChunks] = useState<ReaderChunk[]>([]);
+  const [readerPage, setReaderPage] = useState(0);
+  const [readerTotalChunks, setReaderTotalChunks] = useState(0);
+  const [readerBusy, setReaderBusy] = useState(false);
+  const [readerMessage, setReaderMessage] = useState("");
+  const [menuOpen, setMenuOpen] = useState(false);
   const [accountBusy, setAccountBusy] = useState(false);
   const [confirmDeleteAccount, setConfirmDeleteAccount] = useState(false);
   const [usage, setUsage] = useState<UserUsage>({
@@ -250,6 +263,11 @@ export function App() {
     return jobs;
   }, [ingestionJobs]);
   const userLabel = user?.displayName || user?.email?.split("@")[0] || t.userFallback;
+  const readerPageSize = 8;
+  const readerBook = useMemo(
+    () => books.find((book) => book.id === readerBookId) ?? null,
+    [books, readerBookId]
+  );
   const activeStorageBytes = useMemo(
     () => books.reduce((total, book) => total + book.sizeBytes, 0),
     [books]
@@ -817,6 +835,46 @@ export function App() {
     }
   }
 
+  async function openBookReader(book: BookRecord, page = 0) {
+    setReaderBookId(book.id);
+    setReaderPage(page);
+    setReaderBusy(true);
+    setReaderMessage("");
+    setReaderChunks([]);
+    setWorkspaceTab("read");
+
+    try {
+      const getBookReader = httpsCallable<
+        { bookId: string; page: number; pageSize: number },
+        { ok: boolean; chunks: ReaderChunk[]; totalChunks: number }
+      >(functions, "getBookReader");
+      const response = await getBookReader({
+        bookId: book.id,
+        page,
+        pageSize: readerPageSize,
+      });
+      setReaderChunks(response.data.chunks ?? []);
+      setReaderTotalChunks(response.data.totalChunks ?? 0);
+    } catch (error) {
+      setReaderMessage(getErrorMessage(error, "Reader failed"));
+    } finally {
+      setReaderBusy(false);
+    }
+  }
+
+  function turnReaderPage(direction: -1 | 1) {
+    if (!readerBook) {
+      return;
+    }
+
+    const nextPage = readerPage + direction;
+    if (nextPage < 0 || nextPage * readerPageSize >= readerTotalChunks) {
+      return;
+    }
+
+    void openBookReader(readerBook, nextPage);
+  }
+
   async function openConversationDetail(conversationId: string) {
     setConversationDetailBusyId(conversationId);
     setAskMessage("");
@@ -916,13 +974,31 @@ export function App() {
           </a>
 
           <div className="workspace-header-actions">
-            <nav className="top-nav workspace-nav" aria-label="Workspace navigation">
-              <a href="#dashboard">{t.navDashboard}</a>
-              <a href="#library">{t.navLibrary}</a>
-              <a href="#account">{t.navAccount}</a>
-            </nav>
+            <button
+              className="button header-button menu-button"
+              type="button"
+              aria-expanded={menuOpen}
+              aria-controls="workspace-menu"
+              onClick={() => setMenuOpen((open) => !open)}
+            >
+              {t.menu}
+            </button>
 
-            <div className="user-header-actions">
+            <div
+              id="workspace-menu"
+              className={`user-header-actions ${menuOpen ? "open" : ""}`}
+            >
+              <nav className="workspace-nav" aria-label="Workspace navigation">
+                <a href="#dashboard" onClick={() => setMenuOpen(false)}>
+                  {t.navDashboard}
+                </a>
+                <a href="#library" onClick={() => setMenuOpen(false)}>
+                  {t.navLibrary}
+                </a>
+                <a href="#account" onClick={() => setMenuOpen(false)}>
+                  {t.navAccount}
+                </a>
+              </nav>
               <span className="welcome-user">
                 {t.welcomeBack}, <strong>{userLabel}</strong>
               </span>
@@ -970,7 +1046,7 @@ export function App() {
             </div>
 
             <div className="workspace-tabs" aria-label={t.workspaceToolsTitle}>
-              {(["ask", "library", "history", "help"] as WorkspaceTab[]).map((tab) => (
+              {(["ask", "library", "read", "history", "help"] as WorkspaceTab[]).map((tab) => (
                 <button
                   key={tab}
                   type="button"
@@ -982,9 +1058,11 @@ export function App() {
                     ? t.tabAsk
                     : tab === "library"
                       ? t.tabLibrary
-                      : tab === "history"
-                        ? t.tabHistory
-                        : t.tabHelp}
+                      : tab === "read"
+                        ? t.tabRead
+                        : tab === "history"
+                          ? t.tabHistory
+                          : t.tabHelp}
                 </button>
               ))}
             </div>
@@ -1142,6 +1220,15 @@ export function App() {
                       >
                         {t.viewDetails}
                       </button>
+                      {book.status === "text_ready" ? (
+                        <button
+                          className="button secondary compact"
+                          type="button"
+                          onClick={() => openBookReader(book)}
+                        >
+                          {t.readBook}
+                        </button>
+                      ) : null}
                       {book.status === "text_ready" && book.embeddedChunkCount < book.chunkCount ? (
                         <button
                           className="button secondary compact"
@@ -1249,6 +1336,110 @@ export function App() {
                   ))}
               </section>
             ) : null}
+
+              </div>
+            ) : null}
+
+            {workspaceTab === "read" ? (
+              <div className="workspace-tab-panel">
+                <section className="reader-panel">
+                  <div className="section-heading">
+                    <div>
+                      <p className="eyebrow">{t.readerEyebrow}</p>
+                      <h3>{readerBook ? readerBook.title : t.readerTitle}</h3>
+                      <p>{t.readerCopy}</p>
+                    </div>
+                    {readerBook ? (
+                      <div className="reader-controls">
+                        <button
+                          className="button secondary compact"
+                          type="button"
+                          disabled={readerBusy || readerPage === 0}
+                          onClick={() => turnReaderPage(-1)}
+                        >
+                          {t.previousPage}
+                        </button>
+                        <button
+                          className="button secondary compact"
+                          type="button"
+                          disabled={
+                            readerBusy ||
+                            readerTotalChunks === 0 ||
+                            (readerPage + 1) * readerPageSize >= readerTotalChunks
+                          }
+                          onClick={() => turnReaderPage(1)}
+                        >
+                          {t.nextPage}
+                        </button>
+                      </div>
+                    ) : null}
+                  </div>
+
+                  {!readerBook ? (
+                    <div className="reader-book-picker">
+                      {textReadyBooks.length === 0 ? (
+                        <p className="small-note">{t.searchNeedsText}</p>
+                      ) : (
+                        textReadyBooks.map((book) => (
+                          <button
+                            className="button secondary"
+                            type="button"
+                            key={book.id}
+                            onClick={() => openBookReader(book)}
+                          >
+                            {book.title}
+                          </button>
+                        ))
+                      )}
+                    </div>
+                  ) : (
+                    <>
+                      <div className="book-page">
+                        <div className="book-page-top">
+                          <span>{readerBook.title}</span>
+                          <span>
+                            {t.page} {readerPage + 1}
+                          </span>
+                        </div>
+                        {readerBusy ? <p>{t.loading}</p> : null}
+                        {readerMessage ? <p className="error-text">{readerMessage}</p> : null}
+                        {!readerBusy && readerChunks.length === 0 && !readerMessage ? (
+                          <p className="small-note">{t.readerEmpty}</p>
+                        ) : null}
+                        {readerChunks.map((chunk) => (
+                          <p key={chunk.id}>{chunk.text}</p>
+                        ))}
+                      </div>
+                      <div className="reader-footer">
+                        <button
+                          className="button secondary compact"
+                          type="button"
+                          disabled={readerBusy || readerPage === 0}
+                          onClick={() => turnReaderPage(-1)}
+                        >
+                          {t.previousPage}
+                        </button>
+                        <span>
+                          {Math.min(readerTotalChunks, readerPage * readerPageSize + 1)}-
+                          {Math.min(readerTotalChunks, (readerPage + 1) * readerPageSize)} /
+                          {readerTotalChunks} {t.chunks}
+                        </span>
+                        <button
+                          className="button secondary compact"
+                          type="button"
+                          disabled={
+                            readerBusy ||
+                            readerTotalChunks === 0 ||
+                            (readerPage + 1) * readerPageSize >= readerTotalChunks
+                          }
+                          onClick={() => turnReaderPage(1)}
+                        >
+                          {t.nextPage}
+                        </button>
+                      </div>
+                    </>
+                  )}
+                </section>
               </div>
             ) : null}
 
@@ -1459,11 +1650,6 @@ export function App() {
                 </section>
               </div>
             ) : null}
-          </section>
-
-          <section className="content-section next-step-section">
-            <h2>{t.nextStepTitle}</h2>
-            <p>{t.nextStepCopy}</p>
           </section>
 
           <section id="account" className="account-section workspace-account">

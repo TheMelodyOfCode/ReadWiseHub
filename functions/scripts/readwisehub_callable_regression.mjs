@@ -262,6 +262,18 @@ async function run() {
   check(bookDetail.book?.id === primaryBookId, "getBookDetail returned the wrong book.");
   check(bookDetail.chunks?.length === 2, "getBookDetail did not return chunk previews.");
 
+  const bookReader = await callFunction(
+    "getBookReader",
+    { bookId: primaryBookId, page: 0, pageSize: 4 },
+    idToken
+  );
+  check(bookReader.ok === true, "getBookReader did not return ok.");
+  check(bookReader.totalChunks === 2, "getBookReader returned the wrong total chunk count.");
+  check(
+    bookReader.chunks?.some((chunk) => chunk.text?.includes("lighthouse archive")),
+    "getBookReader did not return readable chunk text."
+  );
+
   const conversationDetail = await callFunction(
     "getConversationDetail",
     { conversationId: ask.conversationId },
