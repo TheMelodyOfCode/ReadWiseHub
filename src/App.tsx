@@ -1439,6 +1439,25 @@ export function App() {
     setReaderScrollNavVisible(false);
   }
 
+  function chooseAnotherReaderBook() {
+    setReaderBookId("");
+    setReaderChunks([]);
+    setReaderMessage("");
+    setReaderSelection(null);
+    setReaderAskAnswer("");
+    setReaderAskMode("");
+    setReaderAskSources([]);
+    setReaderAskQuestion("");
+    setReaderReturnParagraphId("");
+    setReaderBookmarkMessage("");
+    setReaderBookmarkMenuOpen(false);
+    window.requestAnimationFrame(() => {
+      document
+        .getElementById("reader-book-picker")
+        ?.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+  }
+
   function scrollReaderPage(direction: -1 | 1) {
     window.scrollBy({
       top: direction * Math.max(320, window.innerHeight * 0.72),
@@ -2236,6 +2255,15 @@ export function App() {
                         >
                           <span aria-hidden="true">→</span>
                         </button>
+                        <button
+                          className="reader-icon-button"
+                          type="button"
+                          onClick={chooseAnotherReaderBook}
+                          aria-label={t.switchBook}
+                          title={t.switchBook}
+                        >
+                          <span aria-hidden="true">☰</span>
+                        </button>
                       </div>
                     ) : null}
                   </div>
@@ -2244,7 +2272,11 @@ export function App() {
                   ) : null}
 
                   {!readerBook ? (
-                    <div className="reader-book-picker">
+                    <div className="reader-book-picker" id="reader-book-picker">
+                      <div>
+                        <h3>{t.switchBook}</h3>
+                        <p>{t.switchBookCopy}</p>
+                      </div>
                       {textReadyBooks.length === 0 ? (
                         <p className="small-note">{t.searchNeedsText}</p>
                       ) : (
