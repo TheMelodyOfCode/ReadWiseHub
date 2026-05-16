@@ -837,6 +837,7 @@ input {
 }
 
 .reader-panel {
+  position: relative;
   display: grid;
   gap: 16px;
   padding: 14px;
@@ -848,8 +849,34 @@ input {
 }
 
 .reader-header {
+  position: relative;
   display: grid;
   gap: 12px;
+  padding-top: 30px;
+}
+
+.reader-dashboard-link {
+  position: absolute;
+  top: 0;
+  right: 0;
+  display: inline-flex;
+  min-height: 30px;
+  align-items: center;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 5px 9px;
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 0.82rem;
+  font-weight: 900;
+  text-decoration: none;
+}
+
+.reader-dashboard-link:hover,
+.reader-dashboard-link:focus-visible {
+  border-color: color-mix(in srgb, var(--primary) 44%, var(--border));
+  background: color-mix(in srgb, var(--primary) 10%, var(--surface));
+  color: var(--text);
 }
 
 .reader-title-block {
@@ -994,7 +1021,7 @@ input {
 
 .reader-jump {
   display: grid;
-  gap: 6px;
+  gap: 0;
   color: var(--muted);
   font-weight: 800;
   font-size: 0.78rem;
@@ -1170,6 +1197,11 @@ input {
   font-size: 1.2rem;
   font-weight: 900;
   backdrop-filter: blur(10px);
+}
+
+.reader-scroll-nav button:first-child,
+.reader-scroll-nav button:last-child {
+  font-size: 1rem;
 }
 
 .reader-scroll-nav button:hover,
@@ -1595,10 +1627,15 @@ input {
   .reader-header {
     grid-template-columns: minmax(0, 1fr) minmax(360px, 520px);
     align-items: start;
+    padding-top: 0;
   }
 
   .reader-controls {
     grid-template-columns: 44px minmax(0, 1fr) 44px 44px;
+  }
+
+  .reader-dashboard-link {
+    top: -4px;
   }
 
   .workspace-tabs {

@@ -411,6 +411,9 @@ export function App() {
     (bookmark) => bookmark.page === readerPage
   );
   const bookPageRef = useRef<HTMLDivElement | null>(null);
+  const workspaceMenuRef = useRef<HTMLDivElement | null>(null);
+  const menuButtonRef = useRef<HTMLButtonElement | null>(null);
+  const bookmarkMenuRef = useRef<HTMLDivElement | null>(null);
   const readerScrollTimeoutRef = useRef<number | null>(null);
   const activeStorageBytes = useMemo(
     () => books.reduce((total, book) => total + book.sizeBytes, 0),
@@ -683,6 +686,30 @@ export function App() {
       }
     };
   }, [readerBook]);
+
+  useEffect(() => {
+    function handlePointerDown(event: PointerEvent) {
+      const target = event.target;
+      if (!(target instanceof Node)) {
+        return;
+      }
+
+      if (
+        menuOpen &&
+        !workspaceMenuRef.current?.contains(target) &&
+        !menuButtonRef.current?.contains(target)
+      ) {
+        setMenuOpen(false);
+      }
+
+      if (readerBookmarkMenuOpen && !bookmarkMenuRef.current?.contains(target)) {
+        setReaderBookmarkMenuOpen(false);
+      }
+    }
+
+    document.addEventListener("pointerdown", handlePointerDown);
+    return () => document.removeEventListener("pointerdown", handlePointerDown);
+  }, [menuOpen, readerBookmarkMenuOpen]);
 
   async function handlePasswordAuth(
     event: FormEvent<HTMLFormElement>,
@@ -1304,6 +1331,18 @@ export function App() {
     });
   }
 
+  function scrollReaderBoundary(direction: -1 | 1) {
+    if (direction < 0) {
+      bookPageRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+      return;
+    }
+
+    window.scrollTo({
+      top: document.documentElement.scrollHeight,
+      behavior: "smooth",
+    });
+  }
+
   function closeMenu() {
     setMenuOpen(false);
   }
@@ -1522,6 +1561,7 @@ export function App() {
             <button
               className="button header-button menu-button"
               type="button"
+              ref={menuButtonRef}
               aria-expanded={menuOpen}
               aria-controls="workspace-menu"
               onClick={() => setMenuOpen((open) => !open)}
@@ -1532,6 +1572,7 @@ export function App() {
 
             <div
               id="workspace-menu"
+              ref={workspaceMenuRef}
               className={`workspace-menu ${menuOpen ? "open" : ""}`}
             >
               <nav className="workspace-nav" aria-label="Workspace navigation">
@@ -1897,6 +1938,11 @@ export function App() {
               <div className="workspace-tab-panel">
                 <section className="reader-panel">
                   <div className="reader-header">
+                    {readerBook ? (
+                      <a className="reader-dashboard-link" href="#dashboard">
+                        {t.readerNavigation}
+                      </a>
+                    ) : null}
                     <div className="reader-title-block">
                       <p className="eyebrow">{t.readerEyebrow}</p>
                       <h3>{readerBook ? readerBook.title : t.readerTitle}</h3>
@@ -1911,14 +1957,15 @@ export function App() {
                         <button
                           className="reader-icon-button"
                           type="button"
-                          onClick={returnToLibrary}
-                          aria-label={t.backToLibrary}
-                          title={t.backToLibrary}
+                          disabled={readerBusy || readerPage === 0}
+                          onClick={() => turnReaderPage(-1)}
+                          aria-label={t.previousPage}
+                          title={t.previousPage}
                         >
                           <span aria-hidden="true">←</span>
                         </button>
                         <label className="reader-jump">
-                          {t.chapter}
+                          <span className="visually-hidden">{t.chapter}</span>
                           <select
                             value={readerPage}
                             onChange={(event) => goToReaderPage(Number(event.target.value))}
@@ -1931,7 +1978,7 @@ export function App() {
                             ))}
                           </select>
                         </label>
-                        <div className="reader-bookmark-menu">
+                        <div className="reader-bookmark-menu" ref={bookmarkMenuRef}>
                           <button
                             className={`reader-icon-button reader-bookmark-button ${
                               currentPageBookmarked ? "active" : ""
@@ -2188,6 +2235,13 @@ export function App() {
                       >
                         <button
                           type="button"
+                          aria-label={t.scrollTop}
+                          onClick={() => scrollReaderBoundary(-1)}
+                        >
+                          ⇈
+                        </button>
+                        <button
+                          type="button"
                           aria-label={t.scrollUp}
                           onClick={() => scrollReaderPage(-1)}
                         >
@@ -2199,6 +2253,13 @@ export function App() {
                           onClick={() => scrollReaderPage(1)}
                         >
                           ↓
+                        </button>
+                        <button
+                          type="button"
+                          aria-label={t.scrollBottom}
+                          onClick={() => scrollReaderBoundary(1)}
+                        >
+                          ⇊
                         </button>
                       </div>
                     </>
