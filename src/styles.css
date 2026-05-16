@@ -1439,25 +1439,24 @@ input {
   .selection-toolbar {
     position: fixed;
     right: max(10px, env(safe-area-inset-right));
-    bottom: max(12px, env(safe-area-inset-bottom));
     left: max(10px, env(safe-area-inset-left));
-    top: auto;
-    z-index: 20;
+    top: calc(72px + env(safe-area-inset-top));
+    z-index: 12;
     width: auto;
     justify-content: space-between;
     gap: 8px;
-    padding: 10px;
+    padding: 8px;
   }
 
   .selection-toolbar span {
-    flex: 1 1 100%;
-    text-align: center;
+    flex: 0 0 auto;
+    font-size: 0.86rem;
   }
 
   .selection-toolbar .button {
     flex: 1 1 0;
     min-height: 44px;
-    padding-inline: 10px;
+    padding-inline: 8px;
   }
 }
 
