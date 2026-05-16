@@ -61,6 +61,12 @@ type ReaderChunk = {
   text: string;
 };
 
+type ReaderParagraph = {
+  id: string;
+  chunkIndexes: number[];
+  text: string;
+};
+
 type LibrarySearchResult = {
   bookId: string;
   bookTitle: string;
@@ -120,6 +126,60 @@ const ALLOWED_UPLOAD_TYPES = new Set([
   "text/plain",
   "text/markdown",
 ]);
+
+function shouldContinueParagraph(text: string) {
+  const trimmed = text.trim();
+  if (!trimmed) {
+    return false;
+  }
+
+  return !/[.!?]"?$/.test(trimmed) && !/[:;]$/.test(trimmed);
+}
+
+function formatReaderParagraphs(chunks: ReaderChunk[]): ReaderParagraph[] {
+  const paragraphs: ReaderParagraph[] = [];
+  let currentText = "";
+  let currentIndexes: number[] = [];
+
+  chunks.forEach((chunk) => {
+    const parts = chunk.text
+      .split(/\n{2,}/)
+      .map((part) => part.replace(/\s+/g, " ").trim())
+      .filter(Boolean);
+
+    parts.forEach((part) => {
+      if (!currentText) {
+        currentText = part;
+        currentIndexes = [chunk.chunkIndex];
+        return;
+      }
+
+      if (shouldContinueParagraph(currentText)) {
+        currentText = `${currentText} ${part}`;
+        currentIndexes = Array.from(new Set([...currentIndexes, chunk.chunkIndex]));
+        return;
+      }
+
+      paragraphs.push({
+        id: `${currentIndexes[0]}-${paragraphs.length}`,
+        chunkIndexes: currentIndexes,
+        text: currentText,
+      });
+      currentText = part;
+      currentIndexes = [chunk.chunkIndex];
+    });
+  });
+
+  if (currentText) {
+    paragraphs.push({
+      id: `${currentIndexes[0]}-${paragraphs.length}`,
+      chunkIndexes: currentIndexes,
+      text: currentText,
+    });
+  }
+
+  return paragraphs;
+}
 
 function getInitialTheme(): Theme {
   const stored = window.localStorage.getItem("readwisehub_theme");
@@ -239,6 +299,7 @@ export function App() {
   const [readerTotalChunks, setReaderTotalChunks] = useState(0);
   const [readerBusy, setReaderBusy] = useState(false);
   const [readerMessage, setReaderMessage] = useState("");
+  const [readerHighlights, setReaderHighlights] = useState<Record<string, string>>({});
   const [menuOpen, setMenuOpen] = useState(false);
   const [accountBusy, setAccountBusy] = useState(false);
   const [confirmDeleteAccount, setConfirmDeleteAccount] = useState(false);
@@ -268,6 +329,17 @@ export function App() {
     () => books.find((book) => book.id === readerBookId) ?? null,
     [books, readerBookId]
   );
+  const readerParagraphs = useMemo(
+    () => formatReaderParagraphs(readerChunks),
+    [readerChunks]
+  );
+  const readerPageCount = Math.max(1, Math.ceil(readerTotalChunks / readerPageSize));
+  const readerProgressKey = user && readerBookId
+    ? `readwisehub_reader_progress_${user.uid}_${readerBookId}`
+    : "";
+  const readerHighlightKey = user && readerBookId
+    ? `readwisehub_reader_highlights_${user.uid}_${readerBookId}`
+    : "";
   const activeStorageBytes = useMemo(
     () => books.reduce((total, book) => total + book.sizeBytes, 0),
     [books]
@@ -508,6 +580,25 @@ export function App() {
       setUploadMessage(`${t.uploadProcessing}: ${uploadedBook.title}`);
     }
   }, [books, lastUploadedBookId, t.uploadProcessing, t.uploadReady]);
+
+  useEffect(() => {
+    if (!readerHighlightKey) {
+      setReaderHighlights({});
+      return;
+    }
+
+    try {
+      const stored = window.localStorage.getItem(readerHighlightKey);
+      const parsed = stored ? JSON.parse(stored) : {};
+      setReaderHighlights(
+        parsed && typeof parsed === "object" && !Array.isArray(parsed)
+          ? parsed as Record<string, string>
+          : {}
+      );
+    } catch {
+      setReaderHighlights({});
+    }
+  }, [readerHighlightKey]);
 
   async function handlePasswordAuth(
     event: FormEvent<HTMLFormElement>,
@@ -835,9 +926,17 @@ export function App() {
     }
   }
 
-  async function openBookReader(book: BookRecord, page = 0) {
+  async function openBookReader(book: BookRecord, page = -1) {
+    const progressKey = user
+      ? `readwisehub_reader_progress_${user.uid}_${book.id}`
+      : "";
+    const savedPage = progressKey
+      ? Number(window.localStorage.getItem(progressKey))
+      : 0;
+    const targetPage = page >= 0 ? page : Number.isFinite(savedPage) ? savedPage : 0;
+
     setReaderBookId(book.id);
-    setReaderPage(page);
+    setReaderPage(targetPage);
     setReaderBusy(true);
     setReaderMessage("");
     setReaderChunks([]);
@@ -850,11 +949,14 @@ export function App() {
       >(functions, "getBookReader");
       const response = await getBookReader({
         bookId: book.id,
-        page,
+        page: targetPage,
         pageSize: readerPageSize,
       });
       setReaderChunks(response.data.chunks ?? []);
       setReaderTotalChunks(response.data.totalChunks ?? 0);
+      if (progressKey) {
+        window.localStorage.setItem(progressKey, String(targetPage));
+      }
     } catch (error) {
       setReaderMessage(getErrorMessage(error, "Reader failed"));
     } finally {
@@ -873,6 +975,48 @@ export function App() {
     }
 
     void openBookReader(readerBook, nextPage);
+  }
+
+  function goToReaderPage(page: number) {
+    if (!readerBook) {
+      return;
+    }
+
+    const nextPage = Math.min(Math.max(0, page), readerPageCount - 1);
+    void openBookReader(readerBook, nextPage);
+  }
+
+  function returnToLibrary() {
+    setWorkspaceTab("library");
+    setReaderBookId("");
+    setReaderChunks([]);
+    setReaderMessage("");
+  }
+
+  function toggleReaderHighlight(paragraph: ReaderParagraph) {
+    if (!readerHighlightKey) {
+      return;
+    }
+
+    const nextHighlights = { ...readerHighlights };
+    if (nextHighlights[paragraph.id]) {
+      delete nextHighlights[paragraph.id];
+    } else {
+      nextHighlights[paragraph.id] = paragraph.text;
+    }
+
+    setReaderHighlights(nextHighlights);
+    window.localStorage.setItem(readerHighlightKey, JSON.stringify(nextHighlights));
+  }
+
+  function askAboutReaderParagraph(paragraph: ReaderParagraph) {
+    if (!readerBook) {
+      return;
+    }
+
+    setSelectedBookScope(readerBook.id);
+    setAskQuestion(`${t.askAboutPassagePrompt}\n\n"${paragraph.text}"`);
+    setWorkspaceTab("ask");
   }
 
   async function openConversationDetail(conversationId: string) {
@@ -1354,6 +1498,13 @@ export function App() {
                         <button
                           className="button secondary compact"
                           type="button"
+                          onClick={returnToLibrary}
+                        >
+                          {t.backToLibrary}
+                        </button>
+                        <button
+                          className="button secondary compact"
+                          type="button"
                           disabled={readerBusy || readerPage === 0}
                           onClick={() => turnReaderPage(-1)}
                         >
@@ -1371,6 +1522,20 @@ export function App() {
                         >
                           {t.nextPage}
                         </button>
+                        <label className="reader-jump">
+                          {t.chapter}
+                          <select
+                            value={readerPage}
+                            onChange={(event) => goToReaderPage(Number(event.target.value))}
+                            disabled={readerBusy || readerTotalChunks === 0}
+                          >
+                            {Array.from({ length: readerPageCount }, (_, index) => (
+                              <option key={index} value={index}>
+                                {t.chapter} {index + 1}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
                       </div>
                     ) : null}
                   </div>
@@ -1403,14 +1568,48 @@ export function App() {
                         </div>
                         {readerBusy ? <p>{t.loading}</p> : null}
                         {readerMessage ? <p className="error-text">{readerMessage}</p> : null}
-                        {!readerBusy && readerChunks.length === 0 && !readerMessage ? (
+                        {!readerBusy && readerParagraphs.length === 0 && !readerMessage ? (
                           <p className="small-note">{t.readerEmpty}</p>
                         ) : null}
-                        {readerChunks.map((chunk) => (
-                          <p key={chunk.id}>{chunk.text}</p>
+                        {readerParagraphs.map((paragraph) => (
+                          <article
+                            key={paragraph.id}
+                            className={
+                              readerHighlights[paragraph.id]
+                                ? "reader-paragraph highlighted"
+                                : "reader-paragraph"
+                            }
+                          >
+                            <p>{paragraph.text}</p>
+                            <div className="reader-paragraph-actions">
+                              <button
+                                className="button secondary compact"
+                                type="button"
+                                onClick={() => toggleReaderHighlight(paragraph)}
+                              >
+                                {readerHighlights[paragraph.id]
+                                  ? t.removeHighlight
+                                  : t.highlight}
+                              </button>
+                              <button
+                                className="button secondary compact"
+                                type="button"
+                                onClick={() => askAboutReaderParagraph(paragraph)}
+                              >
+                                {t.askAboutPassage}
+                              </button>
+                            </div>
+                          </article>
                         ))}
                       </div>
                       <div className="reader-footer">
+                        <button
+                          className="button secondary compact"
+                          type="button"
+                          onClick={returnToLibrary}
+                        >
+                          {t.backToLibrary}
+                        </button>
                         <button
                           className="button secondary compact"
                           type="button"

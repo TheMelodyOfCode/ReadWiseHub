@@ -150,10 +150,27 @@ Why extracted-text first:
 - it connects naturally to citations
 - it avoids complex PDF page rendering and mobile zoom issues
 
+Reader formatting approach:
+
+- Fix obvious paragraph breaks at read time first, not by rewriting stored uploads.
+- Merge adjacent chunks when a chunk ends mid-sentence.
+- Preserve true blank-line paragraph breaks where extraction provides them.
+- Later, add format-specific normalization during ingestion once the rules are proven.
+
+Reader interaction path:
+
+- resume reading position per user and book
+- page up/down controls
+- back to library
+- chapter/section jump based on reader pages until real chapter metadata exists
+- local highlights for the MVP
+- ask AI about a paragraph from the reader
+
 Later reader improvements:
 
 - page-aware PDF view
 - EPUB chapter navigation
+- real chapter detection during ingestion
 - bookmarks
 - highlights
 - notes
