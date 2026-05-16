@@ -135,6 +135,19 @@ function sanitizeFileName(fileName: string): string {
   return cleaned || "document";
 }
 
+function getBookTitleFromFileName(fileName: string): string {
+  return fileName.replace(/\.[^.]+$/, "");
+}
+
+function normalizeBookTitle(title: string): string {
+  return title
+    .toLowerCase()
+    .normalize("NFKD")
+    .replace(/[^\p{Letter}\p{Number}]+/gu, " ")
+    .trim()
+    .replace(/\s+/g, " ");
+}
+
 function assertAllowedContentType(contentType: string) {
   if (!ALLOWED_CONTENT_TYPES.has(contentType)) {
     throw new HttpsError(
@@ -878,6 +891,24 @@ async function getActiveStorageBytes(userId: string): Promise<number> {
   }, 0);
 }
 
+async function assertNoDuplicateActiveBook(userId: string, title: string) {
+  const normalizedTitle = normalizeBookTitle(title);
+  const snapshot = await db
+    .collection("books")
+    .where("userId", "==", userId)
+    .where("normalizedTitle", "==", normalizedTitle)
+    .where("status", "in", ACTIVE_BOOK_STATUSES)
+    .limit(1)
+    .get();
+
+  if (!snapshot.empty) {
+    throw new HttpsError(
+      "already-exists",
+      "This book already exists in your library."
+    );
+  }
+}
+
 async function extractTextFromStorageFile(
   storagePath: string,
   contentType: string,
@@ -1081,6 +1112,7 @@ async function writeChunks(
 ) {
   let batch: WriteBatch = db.batch();
   let writes = 0;
+  const maxWritesPerBatch = embeddingsByIndex.size > 0 ? 20 : 300;
 
   for (const chunk of chunks) {
     const chunkRef = db.collection("bookChunks").doc(`${bookId}_${chunk.chunkIndex}`);
@@ -1103,7 +1135,7 @@ async function writeChunks(
     });
     writes += 1;
 
-    if (writes >= 450) {
+    if (writes >= maxWritesPerBatch) {
       await batch.commit();
       batch = db.batch();
       writes = 0;
@@ -1534,14 +1566,18 @@ export const createUploadReservation = onCall(
       );
     }
 
+    const title = getBookTitleFromFileName(fileName);
+    const normalizedTitle = normalizeBookTitle(title);
+    await assertNoDuplicateActiveBook(auth.uid, title);
+
     const bookRef = db.collection("books").doc();
     const storagePath = `userUploads/${auth.uid}/${bookRef.id}/${fileName}`;
     const now = FieldValue.serverTimestamp();
 
     await bookRef.set({
       userId: auth.uid,
-      title: fileName.replace(/\.[^.]+$/, ""),
-      normalizedTitle: fileName.replace(/\.[^.]+$/, "").toLowerCase(),
+      title,
+      normalizedTitle,
       author: "",
       language: "",
       status: "upload_reserved",

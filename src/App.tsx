@@ -81,6 +81,19 @@ type ReaderBookmark = {
   createdAt: number;
 };
 
+function getUploadTitle(fileName: string) {
+  return fileName.replace(/\.[^.]+$/, "");
+}
+
+function normalizeBookTitle(title: string) {
+  return title
+    .toLowerCase()
+    .normalize("NFKD")
+    .replace(/[^\p{Letter}\p{Number}]+/gu, " ")
+    .trim()
+    .replace(/\s+/g, " ");
+}
+
 type LibrarySearchResult = {
   bookId: string;
   bookTitle: string;
@@ -333,6 +346,7 @@ export function App() {
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [uploadMessage, setUploadMessage] = useState("");
   const [uploadBusy, setUploadBusy] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(0);
   const [processBusy, setProcessBusy] = useState(false);
   const [searchQuestion, setSearchQuestion] = useState("");
   const [searchMessage, setSearchMessage] = useState("");
@@ -816,6 +830,7 @@ export function App() {
 
   function handleFileSelection(file: File | undefined) {
     setUploadMessage("");
+    setUploadProgress(0);
 
     if (!file) {
       setSelectedFile(null);
@@ -835,6 +850,18 @@ export function App() {
       return;
     }
 
+    const uploadTitle = normalizeBookTitle(getUploadTitle(file.name));
+    const duplicateBook = books.find(
+      (book) =>
+        normalizeBookTitle(book.title) === uploadTitle &&
+        book.status !== "deleting"
+    );
+    if (duplicateBook) {
+      setSelectedFile(null);
+      setUploadMessage(`${t.duplicateBookWarning}: ${duplicateBook.title}`);
+      return;
+    }
+
     setSelectedFile(file);
     setUploadMessage("");
   }
@@ -850,6 +877,7 @@ export function App() {
 
     setUploadBusy(true);
     setUploadMessage("");
+    setUploadProgress(0);
 
     try {
       const createReservation = httpsCallable<
@@ -874,13 +902,19 @@ export function App() {
       await new Promise<void>((resolve, reject) => {
         uploadTask.on(
           "state_changed",
-          undefined,
+          (snapshot) => {
+            const progress = snapshot.totalBytes > 0
+              ? Math.round((snapshot.bytesTransferred / snapshot.totalBytes) * 100)
+              : 0;
+            setUploadProgress(progress);
+          },
           reject,
           () => resolve()
         );
       });
 
       await finalizeReservation({ bookId: reservation.data.bookId });
+      setUploadProgress(100);
       setSelectedFile(null);
       setLastUploadedBookId(reservation.data.bookId);
       setUploadMessage(t.uploadQueued);
@@ -1756,6 +1790,8 @@ export function App() {
                   {t.refreshVerification}
                 </button>
               </div>
+              {status ? <p className="success-text">{status}</p> : null}
+              {authError ? <p className="error-text">{authError}</p> : null}
             </section>
           ) : null}
 
@@ -1809,6 +1845,15 @@ export function App() {
               {selectedFile ? (
                 <div className="selected-file">
                   {t.selectedFile}: <strong>{selectedFile.name}</strong>
+                </div>
+              ) : null}
+              {uploadBusy ? (
+                <div className="upload-progress" role="status" aria-live="polite">
+                  <div>
+                    <strong>{t.uploadingFile}</strong>
+                    <span>{uploadProgress}%</span>
+                  </div>
+                  <progress value={uploadProgress} max="100" />
                 </div>
               ) : null}
               <button

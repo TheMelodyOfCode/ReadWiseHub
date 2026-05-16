@@ -1613,6 +1613,28 @@ input {
   overflow-wrap: anywhere;
 }
 
+.upload-progress {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid color-mix(in srgb, var(--primary) 38%, var(--border));
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--primary) 9%, var(--surface));
+}
+
+.upload-progress div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.upload-progress progress {
+  width: 100%;
+  height: 12px;
+  accent-color: var(--primary);
+}
+
 .backend-lock {
   padding: 14px;
   border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--border));
