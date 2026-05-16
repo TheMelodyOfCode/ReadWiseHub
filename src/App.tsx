@@ -348,6 +348,11 @@ export function App() {
   const [readerMessage, setReaderMessage] = useState("");
   const [readerHighlights, setReaderHighlights] = useState<Record<string, string>>({});
   const [readerSelection, setReaderSelection] = useState<ReaderSelection | null>(null);
+  const [readerAskBusy, setReaderAskBusy] = useState(false);
+  const [readerAskAnswer, setReaderAskAnswer] = useState("");
+  const [readerAskMode, setReaderAskMode] = useState("");
+  const [readerAskSources, setReaderAskSources] = useState<LibrarySearchResult[]>([]);
+  const [readerAskQuestion, setReaderAskQuestion] = useState("");
   const [menuOpen, setMenuOpen] = useState(false);
   const [accountBusy, setAccountBusy] = useState(false);
   const [confirmDeleteAccount, setConfirmDeleteAccount] = useState(false);
@@ -990,6 +995,10 @@ export function App() {
     setReaderMessage("");
     setReaderChunks([]);
     setReaderSelection(null);
+    setReaderAskAnswer("");
+    setReaderAskMode("");
+    setReaderAskSources([]);
+    setReaderAskQuestion("");
     setWorkspaceTab("read");
 
     try {
@@ -1042,6 +1051,10 @@ export function App() {
     setReaderChunks([]);
     setReaderMessage("");
     setReaderSelection(null);
+    setReaderAskAnswer("");
+    setReaderAskMode("");
+    setReaderAskSources([]);
+    setReaderAskQuestion("");
   }
 
   function captureReaderSelection() {
@@ -1093,16 +1106,39 @@ export function App() {
     window.getSelection()?.removeAllRanges();
   }
 
-  function askAboutReaderSelection() {
+  async function askReaderSelectionInline() {
     if (!readerBook || !readerSelection) {
       return;
     }
 
-    setSelectedBookScope(readerBook.id);
-    setAskQuestion(`${t.askAboutPassagePrompt}\n\n"${readerSelection.text}"`);
-    setReaderSelection(null);
-    window.getSelection()?.removeAllRanges();
-    setWorkspaceTab("ask");
+    const question = `${t.askAboutPassagePrompt}\n\n"${readerSelection.text}"`;
+    setReaderAskBusy(true);
+    setReaderAskAnswer("");
+    setReaderAskMode("");
+    setReaderAskSources([]);
+    setReaderAskQuestion(readerSelection.text);
+    setReaderMessage("");
+
+    try {
+      const askLibrary = httpsCallable<
+        { query: string; locale: Locale; bookId?: string },
+        AskLibraryResponse
+      >(functions, "askLibrary");
+      const response = await askLibrary({
+        query: question,
+        locale,
+        bookId: readerBook.id,
+      });
+      setReaderAskAnswer(response.data.answer);
+      setReaderAskMode(response.data.mode);
+      setReaderAskSources(response.data.results ?? []);
+      setReaderSelection(null);
+      window.getSelection()?.removeAllRanges();
+    } catch (error) {
+      setReaderMessage(getErrorMessage(error, "Ask failed"));
+    } finally {
+      setReaderAskBusy(false);
+    }
   }
 
   async function openConversationDetail(conversationId: string) {
@@ -1658,10 +1694,54 @@ export function App() {
                           <button
                             className="button secondary compact"
                             type="button"
-                            onClick={askAboutReaderSelection}
+                            disabled={readerAskBusy}
+                            onClick={askReaderSelectionInline}
                           >
-                            {t.askAboutSelection}
+                            {readerAskBusy ? t.asking : t.askAboutSelection}
                           </button>
+                        </div>
+                      ) : null}
+                      {readerAskAnswer || readerAskBusy ? (
+                        <div className="reader-answer-popover">
+                          <div className="answer-heading">
+                            <div>
+                              <h4>{t.readerAnswerTitle}</h4>
+                              {readerAskQuestion ? (
+                                <p className="small-note">"{readerAskQuestion}"</p>
+                              ) : null}
+                            </div>
+                            <div className="reader-answer-actions">
+                              {readerAskMode ? (
+                                <span className="mode-badge">
+                                  {readerAskMode === "ai_grounded"
+                                    ? t.aiGroundedMode
+                                    : t.sourceDraftMode}
+                                </span>
+                              ) : null}
+                              <button
+                                className="button secondary compact"
+                                type="button"
+                                onClick={() => {
+                                  setReaderAskAnswer("");
+                                  setReaderAskMode("");
+                                  setReaderAskSources([]);
+                                  setReaderAskQuestion("");
+                                }}
+                              >
+                                {t.close}
+                              </button>
+                            </div>
+                          </div>
+                          {readerAskBusy ? <p>{t.asking}</p> : <p>{readerAskAnswer}</p>}
+                          {readerAskSources.length > 0 ? (
+                            <div className="source-pills">
+                              {readerAskSources.slice(0, 3).map((source) => (
+                                <span key={`${source.bookId}-${source.chunkIndex}`}>
+                                  {source.bookTitle} · {t.sourceChunk} {source.chunkIndex + 1}
+                                </span>
+                              ))}
+                            </div>
+                          ) : null}
                         </div>
                       ) : null}
                       <div

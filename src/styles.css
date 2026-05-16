@@ -776,6 +776,34 @@ input {
   font-weight: 900;
 }
 
+.reader-answer-popover {
+  display: grid;
+  width: min(100%, 760px);
+  gap: 12px;
+  margin: 0 auto;
+  border: 1px solid color-mix(in srgb, var(--primary) 42%, var(--border));
+  border-radius: 8px;
+  padding: 14px;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+
+.reader-answer-popover h4,
+.reader-answer-popover p {
+  margin: 0;
+}
+
+.reader-answer-popover > p {
+  white-space: pre-line;
+}
+
+.reader-answer-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
 .reader-jump {
   display: grid;
   min-width: min(100%, 220px);
