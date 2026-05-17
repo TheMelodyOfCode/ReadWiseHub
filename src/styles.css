@@ -1988,6 +1988,32 @@ a:focus-visible {
   gap: 4px;
 }
 
+.account-security-panel {
+  display: grid;
+  gap: 14px;
+  width: 100%;
+}
+
+.session-list {
+  display: grid;
+  gap: 10px;
+}
+
+.session-list article {
+  display: grid;
+  gap: 5px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.session-list p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.92rem;
+}
+
 @media (min-width: 720px) {
   .hero {
     grid-template-columns: minmax(0, 1fr) minmax(320px, 440px);

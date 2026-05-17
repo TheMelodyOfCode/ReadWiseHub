@@ -26,9 +26,11 @@ import { ref, uploadBytesResumable } from "firebase/storage";
 import { auth, db, functions, googleProvider, storage } from "./firebase";
 import { Locale, detectInitialLocale, dictionaries } from "./i18n";
 import readWiseHubIcon from "./assets/readwisehub-icon.png";
+import { UAParser } from "ua-parser-js";
 
 type Theme = "light" | "dark";
 type WorkspaceTab = "ask" | "library" | "read" | "history" | "help";
+const DELETE_CONFIRMATION_PHRASE = "ReadWiseHub 2026";
 
 type BookRecord = {
   id: string;
@@ -137,6 +139,17 @@ type ConversationDetail = {
   messages: ConversationMessage[];
 };
 
+type AccountSession = {
+  id: string;
+  browser: string;
+  os: string;
+  device: string;
+  locationLabel: string;
+  status: string;
+  lastSeenAtMs: number;
+  createdAtMs: number;
+};
+
 type UserUsage = {
   messages: number;
   monthlyMessages: number;
@@ -152,6 +165,8 @@ const ALLOWED_UPLOAD_TYPES = new Set([
   "application/pdf",
   "text/plain",
   "text/markdown",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  "application/epub+zip",
 ]);
 
 function shouldContinueParagraph(text: string) {
@@ -259,6 +274,52 @@ function getInitialTheme(): Theme {
   return window.matchMedia("(prefers-color-scheme: dark)").matches
     ? "dark"
     : "light";
+}
+
+function getSessionId() {
+  const key = "readwisehub_session_id";
+  const existing = window.localStorage.getItem(key);
+  if (existing && existing.length >= 16) {
+    return existing;
+  }
+
+  const next =
+    typeof crypto.randomUUID === "function"
+      ? crypto.randomUUID()
+      : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  window.localStorage.setItem(key, next);
+  return next;
+}
+
+function getSourceLabel(source: LibrarySearchResult, t: Record<string, string>) {
+  return source.chunkIndex < 0
+    ? t.sourceOutline
+    : `${t.sourceChunk} ${source.chunkIndex + 1}`;
+}
+
+function formatDateTime(value: number, locale: Locale) {
+  if (!value) {
+    return "";
+  }
+
+  return new Intl.DateTimeFormat(locale === "de" ? "de-DE" : "en-US", {
+    dateStyle: "medium",
+    timeStyle: "short",
+  }).format(new Date(value));
+}
+
+function getDeviceInfo() {
+  const parser = new UAParser(navigator.userAgent);
+  const browser = parser.getBrowser();
+  const os = parser.getOS();
+  const device = parser.getDevice();
+
+  return {
+    browser: [browser.name, browser.version].filter(Boolean).join(" ") || "Unknown browser",
+    os: [os.name, os.version].filter(Boolean).join(" ") || "Unknown OS",
+    device: device.model || device.type || "This device",
+    userAgent: navigator.userAgent,
+  };
 }
 
 async function ensureUserRecord(user: User, locale: Locale, theme: Theme) {
@@ -394,6 +455,9 @@ export function App() {
   const [menuOpen, setMenuOpen] = useState(false);
   const [accountBusy, setAccountBusy] = useState(false);
   const [confirmDeleteAccount, setConfirmDeleteAccount] = useState(false);
+  const [deleteConfirmationText, setDeleteConfirmationText] = useState("");
+  const [accountSessions, setAccountSessions] = useState<AccountSession[]>([]);
+  const [securityMessage, setSecurityMessage] = useState("");
   const [usage, setUsage] = useState<UserUsage>({
     messages: 0,
     monthlyMessages: 20,
@@ -442,6 +506,7 @@ export function App() {
   const menuButtonRef = useRef<HTMLButtonElement | null>(null);
   const bookmarkMenuRef = useRef<HTMLDivElement | null>(null);
   const readerScrollTimeoutRef = useRef<number | null>(null);
+  const signingOutRef = useRef(false);
   const activeStorageBytes = useMemo(
     () => books.reduce((total, book) => total + book.sizeBytes, 0),
     [books]
@@ -490,14 +555,21 @@ export function App() {
 
   useEffect(() => {
     return onAuthStateChanged(auth, async (currentUser) => {
+      if (currentUser) {
+        signingOutRef.current = false;
+      }
       setUser(currentUser);
       setAuthReady(true);
       if (currentUser) {
         try {
           await ensureUserRecord(currentUser, locale, theme);
+          await registerCurrentSession();
+          await loadAccountSecurity();
         } catch (error) {
           setAuthError(getErrorMessage(error, "Account sync failed"));
         }
+      } else {
+        setAccountSessions([]);
       }
     });
   }, [locale, theme]);
@@ -537,6 +609,9 @@ export function App() {
         setBooksReady(true);
       },
       (error) => {
+        if (signingOutRef.current || !auth.currentUser) {
+          return;
+        }
         setAuthError(getErrorMessage(error, "Library sync failed"));
         setBooksReady(true);
       }
@@ -569,6 +644,9 @@ export function App() {
         );
       },
       (error) => {
+        if (signingOutRef.current || !auth.currentUser) {
+          return;
+        }
         setAuthError(getErrorMessage(error, "Ingestion status sync failed"));
       }
     );
@@ -606,6 +684,9 @@ export function App() {
         });
       },
       (error) => {
+        if (signingOutRef.current || !auth.currentUser) {
+          return;
+        }
         setAuthError(getErrorMessage(error, "Usage sync failed"));
       }
     );
@@ -657,6 +738,9 @@ export function App() {
         setConversationsReady(true);
       },
       (error) => {
+        if (signingOutRef.current || !auth.currentUser) {
+          return;
+        }
         setAuthError(getErrorMessage(error, "Conversation sync failed"));
         setConversationsReady(true);
       }
@@ -865,7 +949,7 @@ export function App() {
       return;
     }
 
-    const extensionAllowed = /\.(pdf|txt|md|markdown)$/i.test(file.name);
+    const extensionAllowed = /\.(pdf|txt|md|markdown|docx|epub)$/i.test(file.name);
     if (!ALLOWED_UPLOAD_TYPES.has(file.type) && !extensionAllowed) {
       setSelectedFile(null);
       setUploadMessage(t.fileTypeBlocked);
@@ -1503,6 +1587,59 @@ export function App() {
     setMenuOpen(false);
   }
 
+  async function handleSignOut() {
+    signingOutRef.current = true;
+    setAuthError("");
+    setStatus("");
+    closeMenu();
+    await signOut(auth);
+  }
+
+  async function registerCurrentSession() {
+    if (!auth.currentUser) {
+      return;
+    }
+
+    const registerLoginSession = httpsCallable<
+      {
+        sessionId: string;
+        browser: string;
+        os: string;
+        device: string;
+        userAgent: string;
+      },
+      { ok: boolean; status: string; activeSessionLimit: number }
+    >(functions, "registerLoginSession");
+    const response = await registerLoginSession({
+      sessionId: getSessionId(),
+      ...getDeviceInfo(),
+    });
+
+    if (!response.data.ok) {
+      setAuthError(t.sessionLimitReached);
+      await handleSignOut();
+    }
+  }
+
+  async function loadAccountSecurity() {
+    if (!auth.currentUser) {
+      setAccountSessions([]);
+      return;
+    }
+
+    try {
+      const getAccountSecurity = httpsCallable<
+        unknown,
+        { ok: boolean; activeSessionLimit: number; sessions: AccountSession[] }
+      >(functions, "getAccountSecurity");
+      const response = await getAccountSecurity({});
+      setAccountSessions(response.data.sessions ?? []);
+      setSecurityMessage("");
+    } catch (error) {
+      setSecurityMessage(getErrorMessage(error, "Security data failed"));
+    }
+  }
+
   function openMenuTab(tab: WorkspaceTab) {
     setWorkspaceTab(tab);
     closeMenu();
@@ -1657,27 +1794,6 @@ export function App() {
     }
   }
 
-  async function backfillEmbeddings(book: BookRecord) {
-    if (!requireVerifiedUi(setUploadMessage)) {
-      return;
-    }
-    setProcessingBookId(book.id);
-    setUploadMessage("");
-
-    try {
-      const backfillBookEmbeddings = httpsCallable<
-        { bookId: string },
-        { ok: boolean; embeddedChunkCount: number }
-      >(functions, "backfillBookEmbeddings");
-      const response = await backfillBookEmbeddings({ bookId: book.id });
-      setUploadMessage(`${t.embeddingsReady}: ${response.data.embeddedChunkCount}`);
-    } catch (error) {
-      setUploadMessage(getErrorMessage(error, "Embedding failed"));
-    } finally {
-      setProcessingBookId("");
-    }
-  }
-
   async function exportMyData() {
     setAccountBusy(true);
     setAuthError("");
@@ -1713,13 +1829,15 @@ export function App() {
         functions,
         "deleteAccountData"
       );
-      await deleteAccountData({});
-      await signOut(auth);
+      await deleteAccountData({ confirmationPhrase: deleteConfirmationText });
+      signingOutRef.current = true;
+      await signOut(auth).catch(() => undefined);
     } catch (error) {
       setAuthError(getErrorMessage(error, "Account delete failed"));
     } finally {
       setAccountBusy(false);
       setConfirmDeleteAccount(false);
+      setDeleteConfirmationText("");
     }
   }
 
@@ -1774,10 +1892,7 @@ export function App() {
               <button
                 className="button header-button sign-out-button"
                 type="button"
-                onClick={() => {
-                  closeMenu();
-                  void signOut(auth);
-                }}
+                onClick={() => void handleSignOut()}
               >
                 {t.signOut}
               </button>
@@ -1882,7 +1997,7 @@ export function App() {
                 {t.chooseFile}
                 <input
                   type="file"
-                  accept=".pdf,.txt,.md,application/pdf,text/plain,text/markdown"
+                  accept=".pdf,.txt,.md,.markdown,.docx,.epub,application/pdf,text/plain,text/markdown,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/epub+zip"
                   disabled={!emailVerified}
                   onChange={(event) => handleFileSelection(event.target.files?.[0])}
                 />
@@ -1983,7 +2098,7 @@ export function App() {
                       <h4>{result.bookTitle}</h4>
                       <p>{result.excerpt}</p>
                       <span>
-                        {t.sourceChunk} {result.chunkIndex + 1}
+                        {getSourceLabel(result, t)}
                       </span>
                     </article>
                   ))}
@@ -2049,16 +2164,6 @@ export function App() {
                           onClick={() => openBookReader(book)}
                         >
                           {t.readBook}
-                        </button>
-                      ) : null}
-                      {book.status === "text_ready" && book.embeddedChunkCount < book.chunkCount ? (
-                        <button
-                          className="button secondary compact"
-                          type="button"
-                          disabled={!emailVerified || processingBookId === book.id}
-                          onClick={() => backfillEmbeddings(book)}
-                        >
-                          {processingBookId === book.id ? t.processingQueued : t.prepareVectorSearch}
                         </button>
                       ) : null}
                     </div>
@@ -2392,7 +2497,7 @@ export function App() {
                             <div className="source-pills">
                               {readerAskSources.slice(0, 3).map((source) => (
                                 <span key={`${source.bookId}-${source.chunkIndex}`}>
-                                  {source.bookTitle} · {t.sourceChunk} {source.chunkIndex + 1}
+                                  {source.bookTitle} · {getSourceLabel(source, t)}
                                 </span>
                               ))}
                             </div>
@@ -2584,7 +2689,7 @@ export function App() {
                     <div className="source-pills">
                       {askSources.slice(0, 3).map((source) => (
                         <span key={`${source.bookId}-${source.chunkIndex}`}>
-                          {source.bookTitle} · {t.sourceChunk} {source.chunkIndex + 1}
+                          {source.bookTitle} · {getSourceLabel(source, t)}
                         </span>
                       ))}
                     </div>
@@ -2692,7 +2797,7 @@ export function App() {
                             <div className="source-pills">
                               {message.sources.slice(0, 3).map((source) => (
                                 <span key={`${source.bookId}-${source.chunkIndex}`}>
-                                  {source.bookTitle} · {t.sourceChunk} {source.chunkIndex + 1}
+                                  {source.bookTitle} · {getSourceLabel(source, t)}
                                 </span>
                               ))}
                             </div>
@@ -2768,9 +2873,46 @@ export function App() {
               </label>
             </div>
 
-            <button className="button secondary" type="button" onClick={() => signOut(auth)}>
+            <button className="button secondary" type="button" onClick={() => void handleSignOut()}>
               {t.signOut}
             </button>
+            <section className="account-security-panel">
+              <div className="section-heading">
+                <div>
+                  <h3>{t.securityTitle}</h3>
+                  <p>{t.securityCopy}</p>
+                </div>
+                <button
+                  className="button secondary compact"
+                  type="button"
+                  disabled={accountBusy}
+                  onClick={() => void loadAccountSecurity()}
+                >
+                  {t.refreshSecurity}
+                </button>
+              </div>
+              {securityMessage ? <p className="error-text">{securityMessage}</p> : null}
+              {accountSessions.length === 0 ? (
+                <p className="small-note">{t.noLoginSessions}</p>
+              ) : (
+                <div className="session-list">
+                  {accountSessions.map((session) => (
+                    <article key={session.id}>
+                      <strong>{session.device}</strong>
+                      <p>
+                        {session.browser} · {session.os}
+                      </p>
+                      <p>
+                        {session.locationLabel} · {formatDateTime(session.lastSeenAtMs, locale)}
+                      </p>
+                      <span className={`status-pill status-${session.status}`}>
+                        {session.status}
+                      </span>
+                    </article>
+                  ))}
+                </div>
+              )}
+            </section>
             <div className="privacy-actions">
               <button
                 className="button secondary"
@@ -2783,11 +2925,23 @@ export function App() {
               {confirmDeleteAccount ? (
                 <div className="inline-confirm">
                   <p>{t.deleteAccountConfirm}</p>
+                  <label>
+                    {t.deleteAccountPhraseLabel}
+                    <input
+                      type="text"
+                      value={deleteConfirmationText}
+                      onChange={(event) => setDeleteConfirmationText(event.target.value)}
+                      placeholder={DELETE_CONFIRMATION_PHRASE}
+                    />
+                  </label>
                   <div className="book-actions">
                     <button
                       className="button danger"
                       type="button"
-                      disabled={accountBusy}
+                      disabled={
+                        accountBusy ||
+                        deleteConfirmationText.trim() !== DELETE_CONFIRMATION_PHRASE
+                      }
                       onClick={deleteMyAccountData}
                     >
                       {accountBusy ? t.deletingAccount : t.deleteAccountData}
@@ -2796,7 +2950,10 @@ export function App() {
                       className="button secondary"
                       type="button"
                       disabled={accountBusy}
-                      onClick={() => setConfirmDeleteAccount(false)}
+                      onClick={() => {
+                        setConfirmDeleteAccount(false);
+                        setDeleteConfirmationText("");
+                      }}
                     >
                       {t.cancel}
                     </button>

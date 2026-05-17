@@ -6,6 +6,8 @@ import { onDocumentCreated } from "firebase-functions/v2/firestore";
 import { HttpsError, onCall } from "firebase-functions/v2/https";
 import { defineSecret } from "firebase-functions/params";
 import { PDFParse } from "pdf-parse";
+import AdmZip from "adm-zip";
+import mammoth from "mammoth";
 
 initializeApp();
 
@@ -49,13 +51,18 @@ const ALLOWED_CONTENT_TYPES = new Set([
   "application/pdf",
   "text/plain",
   "text/markdown",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  "application/epub+zip",
 ]);
 
 const CHUNK_SIZE = 1200;
 const CHUNK_OVERLAP = 160;
+const SECTION_SIZE = 1800;
 const MAX_EXTRACTED_TEXT_BYTES = 2_500_000;
 const MAX_SEARCH_QUERY_LENGTH = 240;
 const MAX_SEARCH_RESULTS = 5;
+const MAX_ACTIVE_SESSIONS = 3;
+const DELETE_CONFIRMATION_PHRASE = "ReadWiseHub 2026";
 const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-4.1-mini";
 const OPENAI_EMBEDDING_MODEL = process.env.OPENAI_EMBEDDING_MODEL || "text-embedding-3-small";
 const openAiApiKey = defineSecret("OPENAI_API_KEY");
@@ -92,6 +99,7 @@ type SourceBookSummary = {
 };
 
 type TextChunk = ReturnType<typeof chunkText>[number];
+type BookSection = ReturnType<typeof createBookSections>[number];
 
 function requireAuth(auth: AuthContext | undefined): AuthContext {
   if (!auth?.uid) {
@@ -152,7 +160,7 @@ function assertAllowedContentType(contentType: string) {
   if (!ALLOWED_CONTENT_TYPES.has(contentType)) {
     throw new HttpsError(
       "invalid-argument",
-      "Only PDF, TXT, and Markdown files are supported in this early version."
+      "Only PDF, TXT, Markdown, DOCX, and EPUB files are supported right now."
     );
   }
 }
@@ -172,8 +180,62 @@ function resolveContentType(contentType: string, fileName: string): string {
   if (lowerName.endsWith(".pdf")) {
     return "application/pdf";
   }
+  if (lowerName.endsWith(".docx")) {
+    return "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+  }
+  if (lowerName.endsWith(".epub")) {
+    return "application/epub+zip";
+  }
 
   return contentType;
+}
+
+function detectContentTypeFromBuffer(buffer: Buffer, fallback: string): string {
+  const header = buffer.subarray(0, 8);
+  const asciiHeader = header.toString("ascii");
+
+  if (asciiHeader.startsWith("%PDF")) {
+    return "application/pdf";
+  }
+
+  if (header[0] === 0x50 && header[1] === 0x4b) {
+    try {
+      const zip = new AdmZip(buffer);
+      const names = new Set(zip.getEntries().map((entry) => entry.entryName));
+      if (names.has("mimetype")) {
+        const mimetype = zip.readAsText("mimetype").trim();
+        if (mimetype === "application/epub+zip") {
+          return "application/epub+zip";
+        }
+      }
+      if (Array.from(names).some((name) => name.startsWith("word/"))) {
+        return "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+      }
+    } catch {
+      return fallback;
+    }
+  }
+
+  if (fallback === "text/plain" || fallback === "text/markdown") {
+    return fallback;
+  }
+
+  return fallback;
+}
+
+function assertContentMatches(buffer: Buffer, expectedType: string) {
+  const detectedType = detectContentTypeFromBuffer(buffer, expectedType);
+  const compatible =
+    detectedType === expectedType ||
+    ((expectedType === "text/plain" || expectedType === "text/markdown") &&
+      (detectedType === "text/plain" || detectedType === "text/markdown"));
+
+  if (!compatible) {
+    throw new HttpsError(
+      "invalid-argument",
+      "The uploaded file type does not match the selected document format."
+    );
+  }
 }
 
 function normalizeText(text: string): string {
@@ -183,6 +245,38 @@ function normalizeText(text: string): string {
     .replace(/[ \t]+/g, " ")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
+}
+
+function decodeXmlEntities(value: string): string {
+  return value
+    .replace(/&nbsp;/g, " ")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, "\"")
+    .replace(/&#39;/g, "'")
+    .replace(/&#(\d+);/g, (_match, code) => String.fromCodePoint(Number(code)))
+    .replace(/&#x([0-9a-f]+);/gi, (_match, code) => String.fromCodePoint(parseInt(code, 16)));
+}
+
+function stripHtmlToText(html: string): string {
+  return normalizeText(
+    decodeXmlEntities(
+      html
+        .replace(/<script[\s\S]*?<\/script>/gi, " ")
+        .replace(/<style[\s\S]*?<\/style>/gi, " ")
+        .replace(/<\/(p|div|section|article|h[1-6]|li|tr|blockquote)>/gi, "\n\n")
+        .replace(/<br\s*\/?>/gi, "\n")
+        .replace(/<[^>]+>/g, " ")
+    )
+  );
+}
+
+function splitIntoParagraphs(text: string): string[] {
+  return normalizeText(text)
+    .split(/\n{2,}/)
+    .map((part) => part.replace(/\s+/g, " ").trim())
+    .filter(Boolean);
 }
 
 function detectLanguage(text: string): "de" | "en" | "unknown" {
@@ -246,6 +340,93 @@ function chunkText(text: string) {
   }
 
   return chunks;
+}
+
+function isLikelyHeading(text: string): boolean {
+  const trimmed = text.trim();
+  if (trimmed.length < 3 || trimmed.length > 120) {
+    return false;
+  }
+
+  return /^(chapter|section|part|book|kapitel|teil)\b/i.test(trimmed) ||
+    /^#{1,6}\s+\S/.test(trimmed) ||
+    /^[0-9ivxlcdm]+[.)]\s+\S/i.test(trimmed);
+}
+
+function createBookSections(text: string) {
+  const paragraphs = splitIntoParagraphs(text);
+  const sections: Array<{
+    sectionIndex: number;
+    title: string;
+    text: string;
+    textPreview: string;
+    paragraphStart: number;
+    paragraphEnd: number;
+  }> = [];
+  let currentTitle = "";
+  let currentParagraphs: string[] = [];
+  let paragraphStart = 0;
+
+  function flush(nextParagraphIndex: number) {
+    const sectionText = currentParagraphs.join("\n\n").trim();
+    if (!sectionText) {
+      return;
+    }
+
+    sections.push({
+      sectionIndex: sections.length,
+      title: currentTitle,
+      text: sectionText,
+      textPreview: sectionText.slice(0, 300),
+      paragraphStart,
+      paragraphEnd: Math.max(paragraphStart, nextParagraphIndex - 1),
+    });
+  }
+
+  paragraphs.forEach((paragraph, paragraphIndex) => {
+    const heading = isLikelyHeading(paragraph) ? paragraph.replace(/^#{1,6}\s+/, "") : "";
+    const currentLength = currentParagraphs.join("\n\n").length;
+
+    if (
+      currentParagraphs.length > 0 &&
+      (heading || currentLength + paragraph.length > SECTION_SIZE)
+    ) {
+      flush(paragraphIndex);
+      currentParagraphs = [];
+      currentTitle = heading;
+      paragraphStart = paragraphIndex;
+    } else if (!currentTitle && heading) {
+      currentTitle = heading;
+    }
+
+    currentParagraphs.push(paragraph);
+  });
+
+  flush(paragraphs.length);
+
+  if (sections.length === 0 && text.trim()) {
+    const cleanText = normalizeText(text);
+    sections.push({
+      sectionIndex: 0,
+      title: "",
+      text: cleanText,
+      textPreview: cleanText.slice(0, 300),
+      paragraphStart: 0,
+      paragraphEnd: 0,
+    });
+  }
+
+  return sections;
+}
+
+function buildBookOutline(sections: BookSection[]) {
+  return sections
+    .filter((section) => section.title)
+    .slice(0, 80)
+    .map((section) => ({
+      sectionIndex: section.sectionIndex,
+      title: section.title,
+    }));
 }
 
 function createSafeError(error: unknown) {
@@ -599,6 +780,7 @@ async function runLibrarySearch(userId: string, queryText: string, bookId = "") 
     )
   );
   const scoredResults: LibrarySearchResult[] = [];
+  const wantsStructure = /\b(chapter|chapters|section|sections|toc|contents|outline|kapitel|inhaltsverzeichnis|abschnitt)\b/i.test(queryText);
 
   chunkSnapshots.forEach((snapshot) => {
     snapshot.docs.forEach((chunkSnapshot) => {
@@ -634,6 +816,38 @@ async function runLibrarySearch(userId: string, queryText: string, bookId = "") 
       });
     });
   });
+
+  if (wantsStructure) {
+    const bookSnapshots = await Promise.all(
+      Array.from(books.keys()).map((currentBookId) => db.collection("books").doc(currentBookId).get())
+    );
+    bookSnapshots.forEach((bookSnapshot) => {
+      const book = books.get(bookSnapshot.id);
+      if (!book || bookSnapshot.get("userId") !== userId) {
+        return;
+      }
+      const outline = Array.isArray(bookSnapshot.get("outline")) ? bookSnapshot.get("outline") : [];
+      const outlineText = outline
+        .filter((entry: unknown) => entry && typeof entry === "object")
+        .map((entry: { sectionIndex?: unknown; title?: unknown }) => {
+          const sectionNumber = Number(entry.sectionIndex);
+          const title = typeof entry.title === "string" ? entry.title : "";
+          return title ? `${Number.isFinite(sectionNumber) ? sectionNumber + 1 : "-"}: ${title}` : "";
+        })
+        .filter(Boolean)
+        .join("\n");
+
+      if (outlineText) {
+        scoredResults.push({
+          bookId: bookSnapshot.id,
+          bookTitle: book.title,
+          chunkIndex: -1,
+          score: 50,
+          excerpt: `Book outline:\n${outlineText.slice(0, 1200)}`,
+        });
+      }
+    });
+  }
 
   scoredResults.sort((left, right) => right.score - left.score);
 
@@ -919,6 +1133,7 @@ async function extractTextFromStorageFile(
   if (buffer.byteLength > limits.maxFileBytes) {
     throw new HttpsError("resource-exhausted", "Uploaded file exceeds the plan limit.");
   }
+  assertContentMatches(buffer, contentType);
 
   if (contentType === "application/pdf") {
     const parser = new PDFParse({ data: buffer });
@@ -931,6 +1146,29 @@ async function extractTextFromStorageFile(
     } finally {
       await parser.destroy();
     }
+  }
+
+  if (contentType === "application/vnd.openxmlformats-officedocument.wordprocessingml.document") {
+    const result = await mammoth.extractRawText({ buffer });
+    return {
+      text: normalizeText(result.value || ""),
+      pageCount: 0,
+    };
+  }
+
+  if (contentType === "application/epub+zip") {
+    const zip = new AdmZip(buffer);
+    const textParts = zip
+      .getEntries()
+      .filter((entry) => /\.(xhtml|html|htm)$/i.test(entry.entryName) && !entry.isDirectory)
+      .sort((left, right) => left.entryName.localeCompare(right.entryName))
+      .map((entry) => stripHtmlToText(entry.getData().toString("utf8")))
+      .filter(Boolean);
+
+    return {
+      text: normalizeText(textParts.join("\n\n")),
+      pageCount: 0,
+    };
   }
 
   return {
@@ -956,6 +1194,26 @@ async function clearExistingChunks(bookId: string) {
 
   if (snapshot.size === 300) {
     await clearExistingChunks(bookId);
+  }
+}
+
+async function clearExistingSections(bookId: string) {
+  const snapshot = await db
+    .collection("bookSections")
+    .where("bookId", "==", bookId)
+    .limit(300)
+    .get();
+
+  if (snapshot.empty) {
+    return;
+  }
+
+  const batch = db.batch();
+  snapshot.docs.forEach((docSnapshot) => batch.delete(docSnapshot.ref));
+  await batch.commit();
+
+  if (snapshot.size === 300) {
+    await clearExistingSections(bookId);
   }
 }
 
@@ -1039,6 +1297,7 @@ async function clearUserBooks(userId: string) {
       await getStorage().bucket().file(storagePath).delete({ ignoreNotFound: true });
     }
     await clearExistingChunks(bookSnapshot.id);
+    await clearExistingSections(bookSnapshot.id);
     await clearIngestionJobs(bookSnapshot.id);
     await bookSnapshot.ref.delete();
   }
@@ -1069,6 +1328,49 @@ async function clearUserReaderSettings(userId: string) {
   if (snapshot.size === 100) {
     await clearUserReaderSettings(userId);
   }
+}
+
+async function clearUserSessions(userId: string) {
+  const snapshot = await db
+    .collection("userSessions")
+    .where("userId", "==", userId)
+    .limit(100)
+    .get();
+
+  if (snapshot.empty) {
+    return;
+  }
+
+  const batch = db.batch();
+  snapshot.docs.forEach((sessionSnapshot) => {
+    batch.delete(sessionSnapshot.ref);
+  });
+  await batch.commit();
+
+  if (snapshot.size === 100) {
+    await clearUserSessions(userId);
+  }
+}
+
+function requireRecentAuth(authTime: unknown) {
+  const authTimeSeconds =
+    typeof authTime === "number"
+      ? authTime
+      : typeof authTime === "string"
+        ? Number(authTime)
+        : 0;
+  const ageSeconds = Math.floor(Date.now() / 1000) - authTimeSeconds;
+
+  if (!Number.isFinite(ageSeconds) || ageSeconds > 15 * 60) {
+    throw new HttpsError(
+      "failed-precondition",
+      "Please sign in again before deleting your account."
+    );
+  }
+}
+
+function sanitizeClientLabel(value: unknown, fallback = "") {
+  return typeof value === "string" ? value.trim().slice(0, 160) : fallback;
 }
 
 function summarizeSourceBooks(results: LibrarySearchResult[]): SourceBookSummary[] {
@@ -1136,6 +1438,37 @@ async function writeChunks(
     writes += 1;
 
     if (writes >= maxWritesPerBatch) {
+      await batch.commit();
+      batch = db.batch();
+      writes = 0;
+    }
+  }
+
+  if (writes > 0) {
+    await batch.commit();
+  }
+}
+
+async function writeSections(sections: BookSection[], userId: string, bookId: string) {
+  let batch: WriteBatch = db.batch();
+  let writes = 0;
+
+  for (const section of sections) {
+    const sectionRef = db.collection("bookSections").doc(`${bookId}_${section.sectionIndex}`);
+    batch.set(sectionRef, {
+      userId,
+      bookId,
+      sectionIndex: section.sectionIndex,
+      title: section.title,
+      text: section.text,
+      textPreview: section.textPreview,
+      paragraphStart: section.paragraphStart,
+      paragraphEnd: section.paragraphEnd,
+      createdAt: FieldValue.serverTimestamp(),
+    });
+    writes += 1;
+
+    if (writes >= 300) {
       await batch.commit();
       batch = db.batch();
       writes = 0;
@@ -1219,6 +1552,8 @@ async function processIngestionJobById(jobId: string) {
     if (chunks.length === 0) {
       throw new HttpsError("failed-precondition", "No text chunks could be created.");
     }
+    const sections = createBookSections(extraction.text);
+    const outline = buildBookOutline(sections);
 
     await jobRef.update({
       stage: "embedding_chunks",
@@ -1229,7 +1564,9 @@ async function processIngestionJobById(jobId: string) {
     const embeddingsByIndex = await createChunkEmbeddingMap(chunks);
 
     await clearExistingChunks(bookId);
+    await clearExistingSections(bookId);
     await writeChunks(chunks, userId, bookId, embeddingsByIndex);
+    await writeSections(sections, userId, bookId);
 
     const language = detectLanguage(extraction.text);
     await db.runTransaction(async (transaction) => {
@@ -1240,6 +1577,10 @@ async function processIngestionJobById(jobId: string) {
         textLength: extraction.text.length,
         textBytes,
         chunkCount: chunks.length,
+        sectionCount: sections.length,
+        embeddedChunkCount: embeddingsByIndex.size,
+        embeddingModel: embeddingsByIndex.size > 0 ? OPENAI_EMBEDDING_MODEL : "",
+        outline,
         updatedAt: FieldValue.serverTimestamp(),
         textReadyAt: FieldValue.serverTimestamp(),
       });
@@ -1248,6 +1589,8 @@ async function processIngestionJobById(jobId: string) {
         stage: "text_ready",
         progress: 100,
         chunkCount: chunks.length,
+        sectionCount: sections.length,
+        embeddedChunkCount: embeddingsByIndex.size,
         textLength: extraction.text.length,
         textBytes,
         completedAt: FieldValue.serverTimestamp(),
@@ -1260,6 +1603,7 @@ async function processIngestionJobById(jobId: string) {
       bookId,
       jobId,
       chunkCount: chunks.length,
+      sectionCount: sections.length,
       status: "text_ready",
     };
   } catch (error) {
@@ -1303,6 +1647,137 @@ export const syncUserProfile = onCall({ region: "us-central1" }, async (request)
     onboardingStatus: userSnapshot.get("onboardingStatus") ?? "",
   };
 });
+
+export const registerLoginSession = onCall(
+  { region: "us-central1", timeoutSeconds: 60, memory: "256MiB" },
+  async (request) => {
+    const auth = requireAuth(request.auth?.token
+      ? {
+          uid: request.auth.uid,
+          email: request.auth.token.email,
+          name: request.auth.token.name,
+          picture: request.auth.token.picture,
+        }
+      : undefined);
+    await ensureUserProfile(auth);
+
+    const sessionId = sanitizeClientLabel(request.data?.sessionId);
+    if (!sessionId || sessionId.length < 16) {
+      throw new HttpsError("invalid-argument", "sessionId is required.");
+    }
+
+    const sessionRef = db.collection("userSessions").doc(`${auth.uid}_${sessionId}`);
+    const now = FieldValue.serverTimestamp();
+    await sessionRef.set(
+      {
+        userId: auth.uid,
+        sessionId,
+        browser: sanitizeClientLabel(request.data?.browser, "Unknown browser"),
+        os: sanitizeClientLabel(request.data?.os, "Unknown OS"),
+        device: sanitizeClientLabel(request.data?.device, "This device"),
+        userAgent: sanitizeClientLabel(request.data?.userAgent),
+        locationLabel: "Approximate location unavailable",
+        status: "active",
+        createdAt: now,
+        lastSeenAt: now,
+        updatedAt: now,
+      },
+      { merge: true }
+    );
+
+    const activeSessions = await db
+      .collection("userSessions")
+      .where("userId", "==", auth.uid)
+      .where("status", "==", "active")
+      .get();
+    const sortedSessions = activeSessions.docs
+      .map((sessionSnapshot) => ({
+        ref: sessionSnapshot.ref,
+        id: sessionSnapshot.id,
+        lastSeenAtMs:
+          typeof sessionSnapshot.get("lastSeenAt")?.toMillis === "function"
+            ? sessionSnapshot.get("lastSeenAt").toMillis()
+            : 0,
+      }))
+      .sort((left, right) => right.lastSeenAtMs - left.lastSeenAtMs);
+    const overflow = sortedSessions
+      .filter((session) => session.id !== sessionRef.id)
+      .slice(Math.max(0, MAX_ACTIVE_SESSIONS - 1));
+
+    if (overflow.length > 0) {
+      const batch = db.batch();
+      overflow.forEach((session) => {
+        batch.update(session.ref, {
+          status: "revoked",
+          revokedAt: now,
+          updatedAt: now,
+        });
+      });
+      await batch.commit();
+    }
+
+    const currentSession = await sessionRef.get();
+    const currentStatus = currentSession.get("status") ?? "active";
+
+    if (currentStatus !== "active") {
+      await getAuth().revokeRefreshTokens(auth.uid);
+    }
+
+    return {
+      ok: currentStatus === "active",
+      sessionId,
+      status: currentStatus,
+      activeSessionLimit: MAX_ACTIVE_SESSIONS,
+    };
+  }
+);
+
+export const getAccountSecurity = onCall(
+  { region: "us-central1", timeoutSeconds: 60, memory: "256MiB" },
+  async (request) => {
+    const auth = requireAuth(request.auth?.token
+      ? {
+          uid: request.auth.uid,
+          email: request.auth.token.email,
+          name: request.auth.token.name,
+          picture: request.auth.token.picture,
+        }
+      : undefined);
+    await ensureUserProfile(auth);
+
+    const sessionsSnapshot = await db
+      .collection("userSessions")
+      .where("userId", "==", auth.uid)
+      .limit(20)
+      .get();
+    const sessions = sessionsSnapshot.docs
+      .map((sessionSnapshot) => ({
+        id: sessionSnapshot.id,
+        sessionId: sessionSnapshot.get("sessionId") ?? "",
+        browser: sessionSnapshot.get("browser") ?? "Unknown browser",
+        os: sessionSnapshot.get("os") ?? "Unknown OS",
+        device: sessionSnapshot.get("device") ?? "This device",
+        locationLabel: sessionSnapshot.get("locationLabel") ?? "Approximate location unavailable",
+        status: sessionSnapshot.get("status") ?? "unknown",
+        lastSeenAtMs:
+          typeof sessionSnapshot.get("lastSeenAt")?.toMillis === "function"
+            ? sessionSnapshot.get("lastSeenAt").toMillis()
+            : 0,
+        createdAtMs:
+          typeof sessionSnapshot.get("createdAt")?.toMillis === "function"
+            ? sessionSnapshot.get("createdAt").toMillis()
+            : 0,
+      }))
+      .sort((left, right) => right.lastSeenAtMs - left.lastSeenAtMs)
+      .slice(0, 10);
+
+    return {
+      ok: true,
+      activeSessionLimit: MAX_ACTIVE_SESSIONS,
+      sessions,
+    };
+  }
+);
 
 export const exportAccountData = onCall(
   { region: "us-central1", timeoutSeconds: 60, memory: "512MiB" },
@@ -1429,23 +1904,51 @@ export const getBookReader = onCall(
       throw new HttpsError("failed-precondition", "Book text is not ready yet.");
     }
 
-    const chunksSnapshot = await db
-      .collection("bookChunks")
+    const sectionsSnapshot = await db
+      .collection("bookSections")
       .where("bookId", "==", bookId)
       .limit(900)
       .get();
-    const allChunks = chunksSnapshot.docs
-      .filter((chunkSnapshot) => chunkSnapshot.get("userId") === auth.uid)
-      .map((chunkSnapshot) => ({
-        id: chunkSnapshot.id,
-        chunkIndex: Number(chunkSnapshot.get("chunkIndex")) || 0,
+    const allSections = sectionsSnapshot.docs
+      .filter((sectionSnapshot) => sectionSnapshot.get("userId") === auth.uid)
+      .map((sectionSnapshot) => ({
+        id: sectionSnapshot.id,
+        chunkIndex: Number(sectionSnapshot.get("sectionIndex")) || 0,
+        title:
+          typeof sectionSnapshot.get("title") === "string"
+            ? sectionSnapshot.get("title")
+            : "",
         text:
-          typeof chunkSnapshot.get("text") === "string"
-            ? chunkSnapshot.get("text")
+          typeof sectionSnapshot.get("text") === "string"
+            ? sectionSnapshot.get("text")
             : "",
       }))
-      .filter((chunk) => chunk.text.trim())
+      .filter((section) => section.text.trim())
       .sort((left, right) => left.chunkIndex - right.chunkIndex);
+    const fallbackChunksSnapshot =
+      allSections.length === 0
+        ? await db
+            .collection("bookChunks")
+            .where("bookId", "==", bookId)
+            .limit(900)
+            .get()
+        : null;
+    const fallbackChunks = fallbackChunksSnapshot
+      ? fallbackChunksSnapshot.docs
+          .filter((chunkSnapshot) => chunkSnapshot.get("userId") === auth.uid)
+          .map((chunkSnapshot) => ({
+            id: chunkSnapshot.id,
+            chunkIndex: Number(chunkSnapshot.get("chunkIndex")) || 0,
+            title: "",
+            text:
+              typeof chunkSnapshot.get("text") === "string"
+                ? chunkSnapshot.get("text")
+                : "",
+          }))
+          .filter((chunk) => chunk.text.trim())
+          .sort((left, right) => left.chunkIndex - right.chunkIndex)
+      : [];
+    const readerItems = allSections.length > 0 ? allSections : fallbackChunks;
     const start = page * pageSize;
 
     return {
@@ -1453,12 +1956,12 @@ export const getBookReader = onCall(
       book: {
         id: bookSnapshot.id,
         title: bookSnapshot.get("title") ?? "Untitled",
-        chunkCount: Number(bookSnapshot.get("chunkCount")) || allChunks.length,
+        chunkCount: Number(bookSnapshot.get("sectionCount")) || readerItems.length,
       },
       page,
       pageSize,
-      totalChunks: allChunks.length,
-      chunks: allChunks.slice(start, start + pageSize),
+      totalChunks: readerItems.length,
+      chunks: readerItems.slice(start, start + pageSize),
     };
   }
 );
@@ -1589,6 +2092,9 @@ export const createUploadReservation = onCall(
       pageCount: 0,
       textLength: 0,
       chunkCount: 0,
+      sectionCount: 0,
+      embeddedChunkCount: 0,
+      scanStatus: "pending_basic_check",
       createdAt: now,
       updatedAt: now,
       planAtIngestion: "current",
@@ -1676,6 +2182,8 @@ export const finalizeUploadReservation = onCall(
         status: "queued",
         sizeBytes,
         mimeType: contentType,
+        scanStatus: "basic_check_passed",
+        scannedAt: now,
         updatedAt: now,
       });
 
@@ -1774,6 +2282,7 @@ export const deleteBook = onCall(
     }
 
     await clearExistingChunks(bookId);
+    await clearExistingSections(bookId);
     await clearIngestionJobs(bookId);
     await db
       .collection("users")
@@ -2016,11 +2525,21 @@ export const deleteAccountData = onCall(
           picture: request.auth.token.picture,
         }
       : undefined);
+    const confirmationPhrase = sanitizeClientLabel(request.data?.confirmationPhrase);
+    if (confirmationPhrase !== DELETE_CONFIRMATION_PHRASE) {
+      throw new HttpsError(
+        "failed-precondition",
+        `Type ${DELETE_CONFIRMATION_PHRASE} to delete your account.`
+      );
+    }
+    requireRecentAuth(request.auth?.token?.auth_time);
 
     await clearUserBooks(auth.uid);
     await clearUserConversations(auth.uid);
     await clearUserReaderSettings(auth.uid);
+    await clearUserSessions(auth.uid);
     await db.collection("users").doc(auth.uid).delete();
+    await getAuth().deleteUser(auth.uid);
 
     return {
       ok: true,

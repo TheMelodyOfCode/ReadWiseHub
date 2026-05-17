@@ -16,7 +16,9 @@ service firebase.storage {
         && request.resource.contentType in [
           'application/pdf',
           'text/plain',
-          'text/markdown'
+          'text/markdown',
+          'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+          'application/epub+zip'
         ];
     }
 

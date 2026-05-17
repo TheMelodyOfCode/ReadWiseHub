@@ -119,6 +119,15 @@ service cloud.firestore {
       allow write: if false;
     }
 
+    match /bookSections/{sectionId} {
+      allow read: if signedIn() && resource.data.userId == request.auth.uid;
+      allow write: if false;
+    }
+
+    match /userSessions/{sessionId} {
+      allow read, write: if false;
+    }
+
     match /conversations/{conversationId} {
       allow read: if signedIn() && resource.data.userId == request.auth.uid;
       allow write: if false;

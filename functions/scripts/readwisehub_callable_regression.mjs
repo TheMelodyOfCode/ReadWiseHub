@@ -101,9 +101,11 @@ async function callFunctionExpectFailure(name, data, idToken) {
 
 async function clearBook(bookId) {
   const chunks = await db.collection("bookChunks").where("bookId", "==", bookId).get();
+  const sections = await db.collection("bookSections").where("bookId", "==", bookId).get();
   const jobs = await db.collection("ingestionJobs").where("bookId", "==", bookId).get();
   const batch = db.batch();
   chunks.docs.forEach((doc) => batch.delete(doc.ref));
+  sections.docs.forEach((doc) => batch.delete(doc.ref));
   jobs.docs.forEach((doc) => batch.delete(doc.ref));
   batch.delete(db.collection("books").doc(bookId));
   await batch.commit();
@@ -195,6 +197,11 @@ async function cleanup() {
     await setting.ref.delete();
   }
 
+  const sessions = await db.collection("userSessions").where("userId", "==", uid).get();
+  for (const session of sessions.docs) {
+    await session.ref.delete();
+  }
+
   await db.collection("users").doc(uid).delete().catch(() => undefined);
   await auth.deleteUser(uid).catch(async () => {
     if (!idToken) {
@@ -258,6 +265,7 @@ async function seedBook(bookId, title) {
     pageCount: 0,
     textLength: 1500,
     chunkCount: 2,
+    sectionCount: 2,
     embeddedChunkCount: 0,
     createdAt: admin.firestore.FieldValue.serverTimestamp(),
     updatedAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -280,6 +288,17 @@ async function seedBook(bookId, title) {
       textPreview: text.slice(0, 240),
       charStart: index * 1000,
       charEnd: index * 1000 + text.length,
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+    batch.set(db.collection("bookSections").doc(`${bookId}_${index}`), {
+      userId: uid,
+      bookId,
+      sectionIndex: index,
+      title: index === 0 ? "Regression Section" : "",
+      text,
+      textPreview: text.slice(0, 300),
+      paragraphStart: index,
+      paragraphEnd: index,
       createdAt: admin.firestore.FieldValue.serverTimestamp(),
     });
   });
@@ -378,7 +397,7 @@ async function run() {
     idToken
   );
   check(bookReader.ok === true, "getBookReader did not return ok.");
-  check(bookReader.totalChunks === 2, "getBookReader returned the wrong total chunk count.");
+  check(bookReader.totalChunks === 2, "getBookReader returned the wrong total section count.");
   check(
     bookReader.chunks?.some((chunk) => chunk.text?.includes("lighthouse archive")),
     "getBookReader did not return readable chunk text."
@@ -426,6 +445,7 @@ async function run() {
   check(deleteBook.ok === true, "deleteBook did not return ok.");
   const deletedBook = await db.collection("books").doc(primaryBookId).get();
   const deletedChunks = await db.collection("bookChunks").where("bookId", "==", primaryBookId).get();
+  const deletedSections = await db.collection("bookSections").where("bookId", "==", primaryBookId).get();
   const deletedReaderSettings = await db
     .collection("users")
     .doc(uid)
@@ -434,17 +454,30 @@ async function run() {
     .get();
   check(!deletedBook.exists, "deleteBook left book document behind.");
   check(deletedChunks.empty, "deleteBook left chunk documents behind.");
+  check(deletedSections.empty, "deleteBook left section documents behind.");
   check(!deletedReaderSettings.exists, "deleteBook left reader settings behind.");
 
   await seedAccountDeleteData();
   await writeReaderSettingsViaClient(accountDeleteBookId);
-  const deleteAccountData = await callFunction("deleteAccountData", {}, idToken);
+  const deleteWithoutPhrase = await callFunctionExpectFailure("deleteAccountData", {}, idToken);
+  check(
+    deleteWithoutPhrase.status === "FAILED_PRECONDITION" ||
+      deleteWithoutPhrase.code === "failed-precondition",
+    "deleteAccountData did not require the confirmation phrase."
+  );
+  const deleteAccountData = await callFunction(
+    "deleteAccountData",
+    { confirmationPhrase: "ReadWiseHub 2026" },
+    idToken
+  );
   check(deleteAccountData.ok === true, "deleteAccountData did not return ok.");
 
   const remainingUser = await db.collection("users").doc(uid).get();
   const remainingBooks = await db.collection("books").where("userId", "==", uid).get();
   const remainingConversations = await db.collection("conversations").where("userId", "==", uid).get();
   const remainingChunks = await db.collection("bookChunks").where("userId", "==", uid).get();
+  const remainingSections = await db.collection("bookSections").where("userId", "==", uid).get();
+  const remainingSessions = await db.collection("userSessions").where("userId", "==", uid).get();
   const remainingReaderSettings = await db
     .collection("users")
     .doc(uid)
@@ -454,6 +487,8 @@ async function run() {
   check(remainingBooks.empty, "deleteAccountData left books behind.");
   check(remainingConversations.empty, "deleteAccountData left conversations behind.");
   check(remainingChunks.empty, "deleteAccountData left chunks behind.");
+  check(remainingSections.empty, "deleteAccountData left sections behind.");
+  check(remainingSessions.empty, "deleteAccountData left sessions behind.");
   check(remainingReaderSettings.empty, "deleteAccountData left reader settings behind.");
 
   if (failures.length > 0) {
