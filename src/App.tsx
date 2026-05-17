@@ -9,6 +9,7 @@ import {
   signInWithEmailAndPassword,
   signInWithPopup,
   signOut,
+  updateProfile,
 } from "firebase/auth";
 import {
   collection,
@@ -44,6 +45,8 @@ type BookRecord = {
   textLength: number;
   language: string;
   embeddedChunkCount: number;
+  structureQuality: string;
+  formatWarning: string;
   createdAtMs: number;
   updatedAtMs: number;
 };
@@ -447,6 +450,7 @@ export function App() {
   const [askQuestion, setAskQuestion] = useState("");
   const [askMessage, setAskMessage] = useState("");
   const [askBusy, setAskBusy] = useState(false);
+  const [askProgress, setAskProgress] = useState(0);
   const [askAnswer, setAskAnswer] = useState("");
   const [askMode, setAskMode] = useState("");
   const [askSources, setAskSources] = useState<LibrarySearchResult[]>([]);
@@ -456,6 +460,8 @@ export function App() {
   const [conversationDetailBusyId, setConversationDetailBusyId] = useState("");
   const [selectedBookScope, setSelectedBookScope] = useState("");
   const [deleteBusyId, setDeleteBusyId] = useState("");
+  const [deleteProgress, setDeleteProgress] = useState(0);
+  const [deleteProgressLabel, setDeleteProgressLabel] = useState("");
   const [confirmDeleteBookId, setConfirmDeleteBookId] = useState("");
   const [deleteConversationBusyId, setDeleteConversationBusyId] = useState("");
   const [lastUploadedBookId, setLastUploadedBookId] = useState("");
@@ -474,6 +480,7 @@ export function App() {
   const [readerHighlights, setReaderHighlights] = useState<Record<string, string>>({});
   const [readerSelection, setReaderSelection] = useState<ReaderSelection | null>(null);
   const [readerAskBusy, setReaderAskBusy] = useState(false);
+  const [readerAskProgress, setReaderAskProgress] = useState(0);
   const [readerAskAnswer, setReaderAskAnswer] = useState("");
   const [readerAskMode, setReaderAskMode] = useState("");
   const [readerAskSources, setReaderAskSources] = useState<LibrarySearchResult[]>([]);
@@ -486,6 +493,8 @@ export function App() {
   const [readerScrollNavVisible, setReaderScrollNavVisible] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [accountBusy, setAccountBusy] = useState(false);
+  const [profileDisplayName, setProfileDisplayName] = useState("");
+  const [profileMessage, setProfileMessage] = useState("");
   const [confirmDeleteAccount, setConfirmDeleteAccount] = useState(false);
   const [deleteConfirmationText, setDeleteConfirmationText] = useState("");
   const [accountSessions, setAccountSessions] = useState<AccountSession[]>([]);
@@ -624,6 +633,11 @@ export function App() {
   }, [locale, theme]);
 
   useEffect(() => {
+    setProfileDisplayName(user?.displayName ?? "");
+    setProfileMessage("");
+  }, [user]);
+
+  useEffect(() => {
     if (!user) {
       setBooks([]);
       setBooksReady(false);
@@ -657,6 +671,10 @@ export function App() {
                 language: typeof data.language === "string" ? data.language : "",
                 embeddedChunkCount:
                   typeof data.embeddedChunkCount === "number" ? data.embeddedChunkCount : 0,
+                structureQuality:
+                  typeof data.structureQuality === "string" ? data.structureQuality : "",
+                formatWarning:
+                  typeof data.formatWarning === "string" ? data.formatWarning : "",
                 createdAtMs:
                   typeof data.createdAt?.toMillis === "function"
                     ? data.createdAt.toMillis()
@@ -1265,6 +1283,10 @@ export function App() {
     setAskAnswer("");
     setAskMode("");
     setAskSources([]);
+    setAskProgress(10);
+    const progressTimer = window.setInterval(() => {
+      setAskProgress((progress) => Math.min(90, progress + (progress < 45 ? 12 : 7)));
+    }, 700);
 
     try {
       const askLibrary = httpsCallable<
@@ -1280,17 +1302,24 @@ export function App() {
       setAskMode(response.data.mode);
       setAskSources(response.data.results ?? []);
       setAskMessage(response.data.results.length === 0 ? t.noSearchResults : "");
+      setAskProgress(100);
     } catch (error) {
       setAskMessage(getErrorMessage(error, "Ask failed"));
     } finally {
+      window.clearInterval(progressTimer);
       setAskBusy(false);
     }
   }
 
   async function deleteLibraryBook(book: BookRecord) {
     setDeleteBusyId(book.id);
+    setDeleteProgress(8);
+    setDeleteProgressLabel(book.displayTitle);
     setConfirmDeleteBookId("");
     setUploadMessage("");
+    const progressTimer = window.setInterval(() => {
+      setDeleteProgress((progress) => Math.min(92, progress + (progress < 50 ? 14 : 6)));
+    }, 650);
 
     try {
       const deleteBook = httpsCallable<{ bookId: string }, { ok: boolean }>(
@@ -1301,11 +1330,17 @@ export function App() {
       if (selectedBookScope === book.id) {
         setSelectedBookScope("");
       }
+      setDeleteProgress(100);
       setUploadMessage(t.deleteDone);
     } catch (error) {
       setUploadMessage(getErrorMessage(error, "Delete failed"));
     } finally {
+      window.clearInterval(progressTimer);
       setDeleteBusyId("");
+      window.setTimeout(() => {
+        setDeleteProgress(0);
+        setDeleteProgressLabel("");
+      }, 1400);
     }
   }
 
@@ -1741,6 +1776,40 @@ export function App() {
     }
   }
 
+  async function saveDisplayName(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!auth.currentUser) {
+      return;
+    }
+
+    const nextName = profileDisplayName.replace(/\s+/g, " ").trim();
+    if (nextName.length < 2 || nextName.length > 40 || !/^[\p{Letter}\p{Number} _-]+$/u.test(nextName)) {
+      setProfileMessage(t.profileNameInvalid);
+      return;
+    }
+
+    setAccountBusy(true);
+    setProfileMessage("");
+
+    try {
+      await updateProfile(auth.currentUser, { displayName: nextName });
+      await setDoc(
+        doc(db, "users", auth.currentUser.uid),
+        {
+          displayName: nextName,
+          updatedAt: serverTimestamp(),
+        },
+        { merge: true }
+      );
+      setUser(auth.currentUser);
+      setProfileMessage(t.profileSaved);
+    } catch (error) {
+      setProfileMessage(getErrorMessage(error, "Profile update failed"));
+    } finally {
+      setAccountBusy(false);
+    }
+  }
+
   function openMenuTab(tab: WorkspaceTab) {
     setWorkspaceTab(tab);
     closeMenu();
@@ -1817,6 +1886,7 @@ export function App() {
     setReaderAskAnswer("");
     setReaderAskMode("");
     setReaderAskSources([]);
+    setReaderAskProgress(10);
     setReaderAskQuestion(readerSelection.text);
     setReaderReturnParagraphId(readerSelection.paragraphId);
     setReaderReturnScrollY(window.scrollY);
@@ -1825,6 +1895,9 @@ export function App() {
     window.requestAnimationFrame(() => {
       readerAnswerRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
     });
+    const progressTimer = window.setInterval(() => {
+      setReaderAskProgress((progress) => Math.min(90, progress + (progress < 45 ? 12 : 7)));
+    }, 700);
 
     try {
       const askLibrary = httpsCallable<
@@ -1839,11 +1912,13 @@ export function App() {
       setReaderAskAnswer(response.data.answer);
       setReaderAskMode(response.data.mode);
       setReaderAskSources(response.data.results ?? []);
+      setReaderAskProgress(100);
       setReaderSelection(null);
       window.getSelection()?.removeAllRanges();
     } catch (error) {
       setReaderMessage(getErrorMessage(error, "Ask failed"));
     } finally {
+      window.clearInterval(progressTimer);
       setReaderAskBusy(false);
     }
   }
@@ -2249,9 +2324,15 @@ export function App() {
                     </p>
                     {job ? (
                       <div className="job-progress">
-                        <span>{job.stage || job.status}</span>
+                        <div>
+                          <span>{job.stage || job.status}</span>
+                          <strong>{Math.max(0, Math.min(100, job.progress))}%</strong>
+                        </div>
                         <progress value={job.progress} max="100" />
                       </div>
+                    ) : null}
+                    {book.formatWarning ? (
+                      <p className="format-warning">{book.formatWarning}</p>
                     ) : null}
                     {job?.errorMessageSafe ? (
                       <p className="error-text">{job.errorMessageSafe}</p>
@@ -2324,6 +2405,15 @@ export function App() {
                         </button>
                       </div>
                     )}
+                    {deleteBusyId === book.id ? (
+                      <div className="task-progress danger-progress" role="status" aria-live="polite">
+                        <div>
+                          <strong>{`${t.deletingBookTitle}: ${deleteProgressLabel || book.displayTitle}`}</strong>
+                          <span>{deleteProgress}%</span>
+                        </div>
+                        <progress value={deleteProgress} max="100" />
+                      </div>
+                    ) : null}
                   </article>
                   );
                 })}
@@ -2366,6 +2456,18 @@ export function App() {
                           <dd>{book.language || "unknown"}</dd>
                         </div>
                         <div>
+                          <dt>{t.documentStructure}</dt>
+                          <dd>
+                            {book.structureQuality === "layout"
+                              ? t.structureGood
+                              : book.structureQuality === "limited"
+                                ? t.structureLimited
+                                : book.structureQuality === "poor"
+                                  ? t.structurePoor
+                                  : book.structureQuality || "-"}
+                          </dd>
+                        </div>
+                        <div>
                           <dt>{t.vectorReady}</dt>
                           <dd>
                             {book.embeddedChunkCount > 0
@@ -2374,6 +2476,9 @@ export function App() {
                           </dd>
                         </div>
                       </dl>
+                      {book.formatWarning ? (
+                        <p className="format-warning">{book.formatWarning}</p>
+                      ) : null}
                       <div className="book-actions">
                         {book.status === "text_ready" ? (
                           <>
@@ -2631,6 +2736,15 @@ export function App() {
                           ) : (
                             <p>{readerAskAnswer}</p>
                           )}
+                          {readerAskBusy || readerAskProgress === 100 ? (
+                            <div className="task-progress" role="status" aria-live="polite">
+                              <div>
+                                <strong>{readerAskProgress === 100 ? t.answerReady : t.asking}</strong>
+                                <span>{readerAskProgress}%</span>
+                              </div>
+                              <progress value={readerAskProgress} max="100" />
+                            </div>
+                          ) : null}
                           {!readerAskBusy ? (
                             <button
                               className="reader-return-button"
@@ -2818,6 +2932,15 @@ export function App() {
               >
                 {askBusy ? t.asking : t.askButton}
               </button>
+              {askBusy || askProgress === 100 ? (
+                <div className="task-progress" role="status" aria-live="polite">
+                  <div>
+                    <strong>{askProgress === 100 ? t.answerReady : t.asking}</strong>
+                    <span>{askProgress}%</span>
+                  </div>
+                  <progress value={askProgress} max="100" />
+                </div>
+              ) : null}
               {textReadyBooks.length === 0 ? (
                 <p className="small-note">{t.searchNeedsText}</p>
               ) : null}
@@ -2997,29 +3120,30 @@ export function App() {
               </p>
             </div>
 
-            <div className="controls-band inline-controls" aria-label="Preferences">
+            <form className="profile-panel" onSubmit={saveDisplayName}>
+              <div>
+                <h3>{t.profileTitle}</h3>
+                <p>{t.profileCopy}</p>
+              </div>
               <label>
-                {t.language}
-                <select
-                  value={locale}
-                  onChange={(event) => setLocale(event.target.value as Locale)}
-                >
-                  <option value="de">{t.german}</option>
-                  <option value="en">{t.english}</option>
-                </select>
+                {t.displayName}
+                <input
+                  type="text"
+                  value={profileDisplayName}
+                  onChange={(event) => setProfileDisplayName(event.target.value)}
+                  placeholder={t.displayNamePlaceholder}
+                  maxLength={40}
+                />
               </label>
-
-              <label>
-                {t.theme}
-                <select
-                  value={theme}
-                  onChange={(event) => setTheme(event.target.value as Theme)}
-                >
-                  <option value="light">{t.light}</option>
-                  <option value="dark">{t.dark}</option>
-                </select>
-              </label>
-            </div>
+              <button
+                className="button primary compact"
+                type="submit"
+                disabled={accountBusy}
+              >
+                {accountBusy ? t.loading : t.saveProfile}
+              </button>
+              {profileMessage ? <p className="small-note">{profileMessage}</p> : null}
+            </form>
 
             <button className="button secondary" type="button" onClick={() => void handleSignOut()}>
               {t.signOut}

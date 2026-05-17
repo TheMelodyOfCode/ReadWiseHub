@@ -892,19 +892,15 @@ select {
 }
 
 .reader-header {
-  position: relative;
   display: grid;
   gap: 12px;
-  padding-top: 30px;
 }
 
 .reader-dashboard-link {
-  position: absolute;
-  top: 0;
-  right: 0;
   display: inline-flex;
   min-height: 30px;
   align-items: center;
+  justify-self: start;
   border: 1px solid var(--border);
   border-radius: 8px;
   padding: 5px 9px;
@@ -1640,15 +1636,58 @@ select {
   margin: 10px 0;
 }
 
-.job-progress span {
+.job-progress div,
+.task-progress div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.job-progress span,
+.task-progress span {
   color: var(--muted);
   font-weight: 800;
 }
 
-.job-progress progress {
+.job-progress progress,
+.task-progress progress {
   width: 100%;
   height: 12px;
   accent-color: var(--primary);
+}
+
+.job-progress strong,
+.task-progress strong {
+  overflow-wrap: anywhere;
+}
+
+.task-progress {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid color-mix(in srgb, var(--primary) 38%, var(--border));
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--primary) 9%, var(--surface));
+}
+
+.danger-progress {
+  border-color: color-mix(in srgb, var(--danger) 40%, var(--border));
+  background: color-mix(in srgb, var(--danger) 8%, var(--surface));
+}
+
+.danger-progress progress {
+  accent-color: var(--danger);
+}
+
+.format-warning {
+  margin: 10px 0 0;
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--border));
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  color: var(--text);
+  font-weight: 800;
 }
 
 .history-warning {
@@ -1784,6 +1823,20 @@ select {
   padding: 18px;
 }
 
+.profile-panel {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.profile-panel h3,
+.profile-panel p {
+  margin: 0;
+}
+
 .inline-controls {
   padding: 0;
   background: transparent;
@@ -1884,17 +1937,12 @@ select {
   }
 
   .reader-header {
-    grid-template-columns: minmax(0, 1fr) minmax(360px, 520px);
+    grid-template-columns: auto minmax(0, 1fr) minmax(360px, 520px);
     align-items: start;
-    padding-top: 0;
   }
 
   .reader-controls {
     grid-template-columns: 44px minmax(0, 1fr) 44px 44px 44px;
-  }
-
-  .reader-dashboard-link {
-    top: -4px;
   }
 
   .workspace-tabs {

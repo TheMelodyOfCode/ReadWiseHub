@@ -121,6 +121,10 @@ type TextExtractionResult = {
   outline?: Array<{ sectionIndex: number; title: string }>;
   quality?: string;
 };
+type StructureAssessment = {
+  structureQuality: string;
+  formatWarning: string;
+};
 
 function requireAuth(auth: AuthContext | undefined): AuthContext {
   if (!auth?.uid) {
@@ -1444,6 +1448,23 @@ async function clearExistingSections(bookId: string) {
   }
 }
 
+async function clearNestedBookSections(bookId: string) {
+  const bookRef = db.collection("books").doc(bookId);
+  const snapshot = await bookRef.collection("sections").limit(100).get();
+
+  if (snapshot.empty) {
+    return;
+  }
+
+  const batch = db.batch();
+  snapshot.docs.forEach((docSnapshot) => batch.delete(docSnapshot.ref));
+  await batch.commit();
+
+  if (snapshot.size === 100) {
+    await clearNestedBookSections(bookId);
+  }
+}
+
 async function clearIngestionJobs(bookId: string) {
   const snapshot = await db
     .collection("ingestionJobs")
@@ -1709,6 +1730,44 @@ async function writeSections(sections: BookSection[], userId: string, bookId: st
   }
 }
 
+function assessDocumentStructure(
+  mimeType: string,
+  extraction: TextExtractionResult,
+  sections: BookSection[]
+): StructureAssessment {
+  if (mimeType !== "application/pdf") {
+    return {
+      structureQuality: extraction.quality ?? "text",
+      formatWarning: "",
+    };
+  }
+
+  const pageCount = extraction.pageCount || 0;
+  const sectionsPerPage = pageCount > 0 ? sections.length / pageCount : sections.length;
+  const textPerPage = pageCount > 0 ? extraction.text.length / pageCount : extraction.text.length;
+
+  if (extraction.quality !== "layout") {
+    return {
+      structureQuality: "poor",
+      formatWarning:
+        "This PDF has limited layout data. Reading may be less comfortable, but search and AI questions can still work.",
+    };
+  }
+
+  if (sections.length < 4 || sectionsPerPage < 0.18 || textPerPage < 280) {
+    return {
+      structureQuality: "limited",
+      formatWarning:
+        "This PDF appears to have sparse or irregular text structure. Reading may be less comfortable, but search and AI questions can still work.",
+    };
+  }
+
+  return {
+    structureQuality: "layout",
+    formatWarning: "",
+  };
+}
+
 async function processIngestionJobById(jobId: string) {
   const jobRef = db.collection("ingestionJobs").doc(jobId);
   const jobSnapshot = await jobRef.get();
@@ -1789,6 +1848,7 @@ async function processIngestionJobById(jobId: string) {
       extraction.outline && extraction.outline.length > 0
         ? extraction.outline
         : buildBookOutline(sections);
+    const structureAssessment = assessDocumentStructure(mimeType, extraction, sections);
 
     await jobRef.update({
       stage: "embedding_chunks",
@@ -1813,7 +1873,8 @@ async function processIngestionJobById(jobId: string) {
         textBytes,
         chunkCount: chunks.length,
         sectionCount: sections.length,
-        structureQuality: extraction.quality ?? "text",
+        structureQuality: structureAssessment.structureQuality,
+        formatWarning: structureAssessment.formatWarning,
         embeddedChunkCount: embeddingsByIndex.size,
         embeddingModel: embeddingsByIndex.size > 0 ? OPENAI_EMBEDDING_MODEL : "",
         outline,
@@ -2456,7 +2517,7 @@ export const finalizeUploadReservation = onCall(
 );
 
 export const deleteBook = onCall(
-  { region: "us-central1", timeoutSeconds: 120, memory: "512MiB" },
+  { region: "us-central1", timeoutSeconds: 540, memory: "1GiB" },
   async (request) => {
     const auth = requireAuth(request.auth?.token
       ? {
@@ -2521,6 +2582,7 @@ export const deleteBook = onCall(
 
     await clearExistingChunks(bookId);
     await clearExistingSections(bookId);
+    await clearNestedBookSections(bookId);
     await clearIngestionJobs(bookId);
     await db
       .collection("users")
@@ -2528,7 +2590,7 @@ export const deleteBook = onCall(
       .collection("readerSettings")
       .doc(bookId)
       .delete();
-    await bookRef.delete();
+    await db.recursiveDelete(bookRef);
     const usage = await refreshUserBookUsage(auth.uid);
 
     return {
