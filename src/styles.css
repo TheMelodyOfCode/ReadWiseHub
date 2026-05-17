@@ -892,11 +892,16 @@ select {
 }
 
 .reader-header {
+  position: relative;
   display: grid;
   gap: 12px;
+  padding-top: 38px;
 }
 
 .reader-dashboard-link {
+  position: absolute;
+  top: 0;
+  right: 0;
   display: inline-flex;
   min-height: 30px;
   align-items: center;
@@ -1937,8 +1942,13 @@ select {
   }
 
   .reader-header {
-    grid-template-columns: auto minmax(0, 1fr) minmax(360px, 520px);
+    grid-template-columns: minmax(0, 1fr) minmax(360px, 520px);
     align-items: start;
+    padding-top: 0;
+  }
+
+  .reader-dashboard-link {
+    display: none;
   }
 
   .reader-controls {

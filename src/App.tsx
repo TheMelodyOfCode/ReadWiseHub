@@ -460,8 +460,7 @@ export function App() {
   const [conversationDetailBusyId, setConversationDetailBusyId] = useState("");
   const [selectedBookScope, setSelectedBookScope] = useState("");
   const [deleteBusyId, setDeleteBusyId] = useState("");
-  const [deleteProgress, setDeleteProgress] = useState(0);
-  const [deleteProgressLabel, setDeleteProgressLabel] = useState("");
+  const [bookDeleteProgress, setBookDeleteProgress] = useState<Record<string, { label: string; progress: number }>>({});
   const [confirmDeleteBookId, setConfirmDeleteBookId] = useState("");
   const [deleteConversationBusyId, setDeleteConversationBusyId] = useState("");
   const [lastUploadedBookId, setLastUploadedBookId] = useState("");
@@ -490,6 +489,7 @@ export function App() {
   const [readerBookmarkMessage, setReaderBookmarkMessage] = useState("");
   const [readerBookmarks, setReaderBookmarks] = useState<ReaderBookmark[]>([]);
   const [readerBookmarkMenuOpen, setReaderBookmarkMenuOpen] = useState(false);
+  const [readerPickerScrollPending, setReaderPickerScrollPending] = useState(false);
   const [readerScrollNavVisible, setReaderScrollNavVisible] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [accountBusy, setAccountBusy] = useState(false);
@@ -558,6 +558,7 @@ export function App() {
     : 0;
   const bookPageRef = useRef<HTMLDivElement | null>(null);
   const readerAnswerRef = useRef<HTMLDivElement | null>(null);
+  const conversationDetailRef = useRef<HTMLElement | null>(null);
   const workspaceMenuRef = useRef<HTMLDivElement | null>(null);
   const menuButtonRef = useRef<HTMLButtonElement | null>(null);
   const bookmarkMenuRef = useRef<HTMLDivElement | null>(null);
@@ -880,6 +881,21 @@ export function App() {
       setReaderHighlights({});
     }
   }, [readerBookId]);
+
+  useEffect(() => {
+    if (!readerPickerScrollPending || readerBookId || workspaceTab !== "read") {
+      return;
+    }
+
+    const timer = window.setTimeout(() => {
+      document
+        .getElementById("reader-book-picker")
+        ?.scrollIntoView({ behavior: "smooth", block: "start" });
+      setReaderPickerScrollPending(false);
+    }, 0);
+
+    return () => window.clearTimeout(timer);
+  }, [readerBookId, readerPickerScrollPending, workspaceTab]);
 
   useEffect(() => {
     if (!readerBook) {
@@ -1313,12 +1329,30 @@ export function App() {
 
   async function deleteLibraryBook(book: BookRecord) {
     setDeleteBusyId(book.id);
-    setDeleteProgress(8);
-    setDeleteProgressLabel(book.displayTitle);
+    setBookDeleteProgress((current) => ({
+      ...current,
+      [book.id]: {
+        label: book.displayTitle,
+        progress: 8,
+      },
+    }));
     setConfirmDeleteBookId("");
     setUploadMessage("");
     const progressTimer = window.setInterval(() => {
-      setDeleteProgress((progress) => Math.min(92, progress + (progress < 50 ? 14 : 6)));
+      setBookDeleteProgress((current) => {
+        const entry = current[book.id];
+        if (!entry) {
+          return current;
+        }
+
+        return {
+          ...current,
+          [book.id]: {
+            ...entry,
+            progress: Math.min(92, entry.progress + (entry.progress < 50 ? 14 : 6)),
+          },
+        };
+      });
     }, 650);
 
     try {
@@ -1330,7 +1364,13 @@ export function App() {
       if (selectedBookScope === book.id) {
         setSelectedBookScope("");
       }
-      setDeleteProgress(100);
+      setBookDeleteProgress((current) => ({
+        ...current,
+        [book.id]: {
+          label: current[book.id]?.label || book.displayTitle,
+          progress: 100,
+        },
+      }));
       setUploadMessage(t.deleteDone);
     } catch (error) {
       setUploadMessage(getErrorMessage(error, "Delete failed"));
@@ -1338,8 +1378,11 @@ export function App() {
       window.clearInterval(progressTimer);
       setDeleteBusyId("");
       window.setTimeout(() => {
-        setDeleteProgress(0);
-        setDeleteProgressLabel("");
+        setBookDeleteProgress((current) => {
+          const next = { ...current };
+          delete next[book.id];
+          return next;
+        });
       }, 1400);
     }
   }
@@ -1693,11 +1736,7 @@ export function App() {
     setReaderReturnParagraphId("");
     setReaderBookmarkMessage("");
     setReaderBookmarkMenuOpen(false);
-    window.requestAnimationFrame(() => {
-      document
-        .getElementById("reader-book-picker")
-        ?.scrollIntoView({ behavior: "smooth", block: "start" });
-    });
+    setReaderPickerScrollPending(true);
   }
 
   function scrollReaderPage(direction: -1 | 1) {
@@ -1963,6 +2002,9 @@ export function App() {
         mode: response.data.conversation.mode,
         messages: response.data.messages ?? [],
       });
+      window.requestAnimationFrame(() => {
+        conversationDetailRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+      });
     } catch (error) {
       setAskMessage(getErrorMessage(error, "Question detail failed"));
     } finally {
@@ -2048,9 +2090,6 @@ export function App() {
               className={`workspace-menu ${menuOpen ? "open" : ""}`}
             >
               <nav className="workspace-nav" aria-label="Workspace navigation">
-                <a href="#dashboard" onClick={closeMenu}>
-                  {t.navDashboard}
-                </a>
                 <a href="#library" onClick={() => openMenuTab("library")}>
                   {t.navLibrary}
                 </a>
@@ -2379,10 +2418,10 @@ export function App() {
                           <button
                             className="button danger"
                             type="button"
-                            disabled={deleteBusyId === book.id}
+                            disabled={Boolean(bookDeleteProgress[book.id])}
                             onClick={() => deleteLibraryBook(book)}
                           >
-                            {deleteBusyId === book.id ? t.deletingBook : t.deleteBook}
+                            {bookDeleteProgress[book.id] ? t.deletingBook : t.deleteBook}
                           </button>
                           <button
                             className="button secondary"
@@ -2398,20 +2437,22 @@ export function App() {
                         <button
                           className="button danger"
                           type="button"
-                          disabled={deleteBusyId === book.id || book.status === "processing"}
+                          disabled={Boolean(bookDeleteProgress[book.id]) || book.status === "processing"}
                           onClick={() => setConfirmDeleteBookId(book.id)}
                         >
-                          {deleteBusyId === book.id ? t.deletingBook : t.deleteBook}
+                          {bookDeleteProgress[book.id] ? t.deletingBook : t.deleteBook}
                         </button>
                       </div>
                     )}
-                    {deleteBusyId === book.id ? (
+                    {bookDeleteProgress[book.id] ? (
                       <div className="task-progress danger-progress" role="status" aria-live="polite">
                         <div>
-                          <strong>{`${t.deletingBookTitle}: ${deleteProgressLabel || book.displayTitle}`}</strong>
-                          <span>{deleteProgress}%</span>
+                          <strong>
+                            {`${t.deletingBookTitle}: ${bookDeleteProgress[book.id].label || book.displayTitle}`}
+                          </strong>
+                          <span>{bookDeleteProgress[book.id].progress}%</span>
                         </div>
-                        <progress value={deleteProgress} max="100" />
+                        <progress value={bookDeleteProgress[book.id].progress} max="100" />
                       </div>
                     ) : null}
                   </article>
@@ -2525,9 +2566,13 @@ export function App() {
                 <section className="reader-panel">
                   <div className="reader-header">
                     {readerBook ? (
-                      <a className="reader-dashboard-link" href="#dashboard">
+                      <button
+                        className="reader-dashboard-link"
+                        type="button"
+                        onClick={returnToLibrary}
+                      >
                         {t.readerNavigation}
-                      </a>
+                      </button>
                     ) : null}
                     <div className="reader-title-block">
                       <p className="eyebrow">{t.readerEyebrow}</p>
@@ -3039,7 +3084,7 @@ export function App() {
               )}
             </section>
                 {conversationDetail ? (
-                  <section className="conversation-detail-panel">
+                  <section className="conversation-detail-panel" ref={conversationDetailRef}>
                     <div className="section-heading">
                       <div>
                         <p className="eyebrow">{t.questionDetail}</p>
