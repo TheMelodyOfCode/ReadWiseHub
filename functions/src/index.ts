@@ -63,6 +63,9 @@ const MAX_SEARCH_QUERY_LENGTH = 240;
 const MAX_SEARCH_RESULTS = 5;
 const MAX_ACTIVE_SESSIONS = 3;
 const DELETE_CONFIRMATION_PHRASE = "ReadWiseHub 2026";
+const PDF_EXTRACTOR_URL =
+  process.env.PDF_EXTRACTOR_URL ||
+  "https://readwisehub-pdf-extractor-ydgljnpaua-uc.a.run.app";
 const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-4.1-mini";
 const OPENAI_EMBEDDING_MODEL = process.env.OPENAI_EMBEDDING_MODEL || "text-embedding-3-small";
 const openAiApiKey = defineSecret("OPENAI_API_KEY");
@@ -89,6 +92,8 @@ type LibrarySearchResult = {
   bookId: string;
   bookTitle: string;
   chunkIndex: number;
+  charStart?: number;
+  charEnd?: number;
   score: number;
   excerpt: string;
 };
@@ -99,7 +104,23 @@ type SourceBookSummary = {
 };
 
 type TextChunk = ReturnType<typeof chunkText>[number];
-type BookSection = ReturnType<typeof createBookSections>[number];
+type BookSection = {
+  sectionIndex: number;
+  title: string;
+  text: string;
+  textPreview: string;
+  paragraphStart?: number;
+  paragraphEnd?: number;
+  pageStart?: number;
+  pageEnd?: number;
+};
+type TextExtractionResult = {
+  text: string;
+  pageCount: number;
+  sections?: BookSection[];
+  outline?: Array<{ sectionIndex: number; title: string }>;
+  quality?: string;
+};
 
 function requireAuth(auth: AuthContext | undefined): AuthContext {
   if (!auth?.uid) {
@@ -145,6 +166,34 @@ function sanitizeFileName(fileName: string): string {
 
 function getBookTitleFromFileName(fileName: string): string {
   return fileName.replace(/\.[^.]+$/, "");
+}
+
+function createDisplayTitle(title: string): string {
+  const withoutExtension = title.replace(/\.[^.]+$/, "");
+  const spaced = withoutExtension
+    .replace(/[_-]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  const stopWords = new Set(["a", "an", "and", "as", "at", "by", "for", "in", "of", "on", "or", "the", "to", "v", "v2"]);
+  const words = spaced.split(" ").filter(Boolean);
+  const titleCase = words
+    .map((word, index) => {
+      const lower = word.toLowerCase();
+      if (index > 0 && stopWords.has(lower)) {
+        return lower;
+      }
+      if (/^[A-Z]{2,}$/.test(word)) {
+        return word;
+      }
+      if (/^[0-9]+$/.test(word)) {
+        return word;
+      }
+      return `${lower.charAt(0).toUpperCase()}${lower.slice(1)}`;
+    })
+    .join(" ");
+
+  const colonMatch = titleCase.match(/^(.+?)\s+(a|an|the|eine?|der|die|das)\s+/i);
+  return (colonMatch ? colonMatch[1] : titleCase).slice(0, 90) || "Untitled";
 }
 
 function normalizeBookTitle(title: string): string {
@@ -450,6 +499,127 @@ function createSafeError(error: unknown) {
   };
 }
 
+async function getIdentityToken(audience: string): Promise<string> {
+  const metadataUrl =
+    "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/identity";
+  const response = await fetch(`${metadataUrl}?audience=${encodeURIComponent(audience)}`, {
+    headers: {
+      "Metadata-Flavor": "Google",
+    },
+  });
+
+  if (!response.ok) {
+    throw new Error(`Identity token request failed: ${response.status}`);
+  }
+
+  return response.text();
+}
+
+function normalizeLayoutSections(value: unknown): BookSection[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value
+    .filter((section) => section && typeof section === "object")
+    .map((section, index) => {
+      const record = section as Record<string, unknown>;
+      const text = typeof record.text === "string" ? normalizeText(record.text) : "";
+      return {
+        sectionIndex:
+          typeof record.sectionIndex === "number" && Number.isFinite(record.sectionIndex)
+            ? Math.max(0, Math.floor(record.sectionIndex))
+            : index,
+        title: typeof record.title === "string" ? record.title.slice(0, 160) : "",
+        text,
+        textPreview:
+          typeof record.textPreview === "string" ? record.textPreview.slice(0, 300) : text.slice(0, 300),
+        paragraphStart:
+          typeof record.paragraphStart === "number" ? Math.max(0, Math.floor(record.paragraphStart)) : index,
+        paragraphEnd:
+          typeof record.paragraphEnd === "number" ? Math.max(0, Math.floor(record.paragraphEnd)) : index,
+        pageStart:
+          typeof record.pageStart === "number" ? Math.max(0, Math.floor(record.pageStart)) : undefined,
+        pageEnd:
+          typeof record.pageEnd === "number" ? Math.max(0, Math.floor(record.pageEnd)) : undefined,
+      };
+    })
+    .filter((section) => section.text)
+    .sort((left, right) => left.sectionIndex - right.sectionIndex);
+}
+
+function normalizeOutline(value: unknown): Array<{ sectionIndex: number; title: string }> {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value
+    .filter((entry) => entry && typeof entry === "object")
+    .map((entry) => {
+      const record = entry as Record<string, unknown>;
+      return {
+        sectionIndex:
+          typeof record.sectionIndex === "number" && Number.isFinite(record.sectionIndex)
+            ? Math.max(0, Math.floor(record.sectionIndex))
+            : 0,
+        title: typeof record.title === "string" ? record.title.slice(0, 160) : "",
+      };
+    })
+    .filter((entry) => entry.title)
+    .slice(0, 80);
+}
+
+async function extractPdfWithLayoutService(
+  bucket: string,
+  storagePath: string,
+  maxBytes: number
+): Promise<TextExtractionResult | null> {
+  if (!PDF_EXTRACTOR_URL) {
+    return null;
+  }
+
+  try {
+    const token = await getIdentityToken(PDF_EXTRACTOR_URL);
+    const response = await fetch(`${PDF_EXTRACTOR_URL}/extract`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        bucket,
+        storagePath,
+        maxBytes,
+      }),
+    });
+
+    if (!response.ok) {
+      console.error("PDF layout extraction failed", {
+        status: response.status,
+        statusText: response.statusText,
+      });
+      return null;
+    }
+
+    const payload = await response.json() as Record<string, unknown>;
+    const text = typeof payload.text === "string" ? normalizeText(payload.text) : "";
+    if (!text) {
+      return null;
+    }
+
+    return {
+      text,
+      pageCount: typeof payload.pageCount === "number" ? payload.pageCount : 0,
+      sections: normalizeLayoutSections(payload.sections),
+      outline: normalizeOutline(payload.outline),
+      quality: typeof payload.quality === "string" ? payload.quality : "layout",
+    };
+  } catch (error) {
+    console.error("PDF layout extraction unavailable", createSafeError(error));
+    return null;
+  }
+}
+
 function tokenizeSearchQuery(query: string): string[] {
   const stopWords = new Set([
     "a",
@@ -512,6 +682,43 @@ function scorePhrase(text: string, query: string): number {
   }
 
   return normalizedText.includes(normalizedQuery) ? 20 : 0;
+}
+
+function hasHeavyChunkOverlap(left: LibrarySearchResult, right: LibrarySearchResult): boolean {
+  if (
+    left.bookId !== right.bookId ||
+    typeof left.charStart !== "number" ||
+    typeof left.charEnd !== "number" ||
+    typeof right.charStart !== "number" ||
+    typeof right.charEnd !== "number"
+  ) {
+    return false;
+  }
+
+  const overlap = Math.min(left.charEnd, right.charEnd) - Math.max(left.charStart, right.charStart);
+  if (overlap <= 0) {
+    return false;
+  }
+
+  const leftLength = Math.max(1, left.charEnd - left.charStart);
+  const rightLength = Math.max(1, right.charEnd - right.charStart);
+  return overlap > 80 || overlap / Math.min(leftLength, rightLength) > 0.25;
+}
+
+function selectDistinctResults(results: LibrarySearchResult[]): LibrarySearchResult[] {
+  const selected: LibrarySearchResult[] = [];
+
+  for (const result of results) {
+    if (!selected.some((existing) => hasHeavyChunkOverlap(existing, result))) {
+      selected.push(result);
+    }
+
+    if (selected.length >= MAX_SEARCH_RESULTS) {
+      break;
+    }
+  }
+
+  return selected;
 }
 
 function getOpenAiApiKey(): string {
@@ -734,7 +941,10 @@ async function collectSearchableBooks(userId: string, bookId: string) {
       bookSnapshot.get("status") === "text_ready"
     ) {
       books.set(bookSnapshot.id, {
-        title: assertString(bookSnapshot.get("title"), "title"),
+        title:
+          typeof bookSnapshot.get("displayTitle") === "string" && bookSnapshot.get("displayTitle")
+            ? String(bookSnapshot.get("displayTitle"))
+            : createDisplayTitle(assertString(bookSnapshot.get("title"), "title")),
       });
     }
     return books;
@@ -748,7 +958,10 @@ async function collectSearchableBooks(userId: string, bookId: string) {
 
   booksSnapshot.docs.forEach((bookSnapshot) => {
     books.set(bookSnapshot.id, {
-      title: assertString(bookSnapshot.get("title"), "title"),
+      title:
+        typeof bookSnapshot.get("displayTitle") === "string" && bookSnapshot.get("displayTitle")
+          ? String(bookSnapshot.get("displayTitle"))
+          : createDisplayTitle(assertString(bookSnapshot.get("title"), "title")),
     });
   });
 
@@ -811,6 +1024,8 @@ async function runLibrarySearch(userId: string, queryText: string, bookId = "") 
         bookId: currentBookId,
         bookTitle: book.title,
         chunkIndex: Number(chunkSnapshot.get("chunkIndex")) || 0,
+        charStart: Number(chunkSnapshot.get("charStart")) || 0,
+        charEnd: Number(chunkSnapshot.get("charEnd")) || 0,
         score,
         excerpt: createExcerpt(text, terms),
       });
@@ -851,7 +1066,7 @@ async function runLibrarySearch(userId: string, queryText: string, bookId = "") 
 
   scoredResults.sort((left, right) => right.score - left.score);
 
-  return scoredResults.slice(0, MAX_SEARCH_RESULTS);
+  return selectDistinctResults(scoredResults);
 }
 
 function createGroundedDraft(queryText: string, results: LibrarySearchResult[], locale: string) {
@@ -863,7 +1078,9 @@ function createGroundedDraft(queryText: string, results: LibrarySearchResult[], 
 
   const topResults = results.slice(0, 3);
   const sourceList = topResults
-    .map((result, index) => `${index + 1}. ${result.bookTitle}, chunk ${result.chunkIndex + 1}`)
+    .map((result, index) =>
+      `${index + 1}. ${result.bookTitle}, ${result.chunkIndex >= 0 ? `chunk ${result.chunkIndex + 1}` : "outline"}`
+    )
     .join("\n");
 
   if (locale === "de") {
@@ -896,7 +1113,7 @@ function buildGroundingContext(results: LibrarySearchResult[]) {
     .slice(0, 5)
     .map(
       (result, index) =>
-        `[${index + 1}] ${result.bookTitle}, chunk ${result.chunkIndex + 1}\n${result.excerpt}`
+        `[${index + 1}] ${result.bookTitle}, ${result.chunkIndex >= 0 ? `chunk ${result.chunkIndex + 1}` : "outline"}\n${result.excerpt}`
     )
     .join("\n\n");
 }
@@ -1127,8 +1344,9 @@ async function extractTextFromStorageFile(
   storagePath: string,
   contentType: string,
   limits: PlanLimits
-) {
-  const [buffer] = await getStorage().bucket().file(storagePath).download();
+): Promise<TextExtractionResult> {
+  const bucket = getStorage().bucket();
+  const [buffer] = await bucket.file(storagePath).download();
 
   if (buffer.byteLength > limits.maxFileBytes) {
     throw new HttpsError("resource-exhausted", "Uploaded file exceeds the plan limit.");
@@ -1136,6 +1354,15 @@ async function extractTextFromStorageFile(
   assertContentMatches(buffer, contentType);
 
   if (contentType === "application/pdf") {
+    const layoutExtraction = await extractPdfWithLayoutService(
+      bucket.name,
+      storagePath,
+      limits.maxFileBytes
+    );
+    if (layoutExtraction?.text) {
+      return layoutExtraction;
+    }
+
     const parser = new PDFParse({ data: buffer });
     try {
       const parsed = await parser.getText();
@@ -1181,7 +1408,7 @@ async function clearExistingChunks(bookId: string) {
   const snapshot = await db
     .collection("bookChunks")
     .where("bookId", "==", bookId)
-    .limit(300)
+    .limit(20)
     .get();
 
   if (snapshot.empty) {
@@ -1192,7 +1419,7 @@ async function clearExistingChunks(bookId: string) {
   snapshot.docs.forEach((docSnapshot) => batch.delete(docSnapshot.ref));
   await batch.commit();
 
-  if (snapshot.size === 300) {
+  if (snapshot.size === 20) {
     await clearExistingChunks(bookId);
   }
 }
@@ -1462,8 +1689,10 @@ async function writeSections(sections: BookSection[], userId: string, bookId: st
       title: section.title,
       text: section.text,
       textPreview: section.textPreview,
-      paragraphStart: section.paragraphStart,
-      paragraphEnd: section.paragraphEnd,
+      paragraphStart: section.paragraphStart ?? section.sectionIndex,
+      paragraphEnd: section.paragraphEnd ?? section.sectionIndex,
+      ...(typeof section.pageStart === "number" ? { pageStart: section.pageStart } : {}),
+      ...(typeof section.pageEnd === "number" ? { pageEnd: section.pageEnd } : {}),
       createdAt: FieldValue.serverTimestamp(),
     });
     writes += 1;
@@ -1552,8 +1781,14 @@ async function processIngestionJobById(jobId: string) {
     if (chunks.length === 0) {
       throw new HttpsError("failed-precondition", "No text chunks could be created.");
     }
-    const sections = createBookSections(extraction.text);
-    const outline = buildBookOutline(sections);
+    const sections =
+      extraction.sections && extraction.sections.length > 0
+        ? extraction.sections
+        : createBookSections(extraction.text);
+    const outline =
+      extraction.outline && extraction.outline.length > 0
+        ? extraction.outline
+        : buildBookOutline(sections);
 
     await jobRef.update({
       stage: "embedding_chunks",
@@ -1578,6 +1813,7 @@ async function processIngestionJobById(jobId: string) {
         textBytes,
         chunkCount: chunks.length,
         sectionCount: sections.length,
+        structureQuality: extraction.quality ?? "text",
         embeddedChunkCount: embeddingsByIndex.size,
         embeddingModel: embeddingsByIndex.size > 0 ? OPENAI_EMBEDDING_MODEL : "",
         outline,
@@ -1867,6 +2103,7 @@ export const getBookDetail = onCall(
       book: {
         id: bookSnapshot.id,
         title: bookSnapshot.get("title") ?? "Untitled",
+        displayTitle: bookSnapshot.get("displayTitle") ?? createDisplayTitle(String(bookSnapshot.get("title") ?? "Untitled")),
         status: bookSnapshot.get("status") ?? "unknown",
         language: bookSnapshot.get("language") ?? "",
         chunkCount: Number(bookSnapshot.get("chunkCount")) || 0,
@@ -2080,6 +2317,7 @@ export const createUploadReservation = onCall(
     await bookRef.set({
       userId: auth.uid,
       title,
+      displayTitle: createDisplayTitle(title),
       normalizedTitle,
       author: "",
       language: "",

@@ -35,13 +35,17 @@ const DELETE_CONFIRMATION_PHRASE = "ReadWiseHub 2026";
 type BookRecord = {
   id: string;
   title: string;
+  displayTitle: string;
   status: string;
   sizeBytes: number;
   chunkCount: number;
+  sectionCount: number;
   pageCount: number;
   textLength: number;
   language: string;
   embeddedChunkCount: number;
+  createdAtMs: number;
+  updatedAtMs: number;
 };
 
 type IngestionJobRecord = {
@@ -85,6 +89,33 @@ type ReaderBookmark = {
 
 function getUploadTitle(fileName: string) {
   return fileName.replace(/\.[^.]+$/, "");
+}
+
+function createDisplayTitle(title: string) {
+  const spaced = title
+    .replace(/\.[^.]+$/, "")
+    .replace(/[_-]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  const stopWords = new Set(["a", "an", "and", "as", "at", "by", "for", "in", "of", "on", "or", "the", "to", "v", "v2"]);
+  const words = spaced.split(" ").filter(Boolean);
+  const titleCase = words
+    .map((word, index) => {
+      const lower = word.toLowerCase();
+      if (index > 0 && stopWords.has(lower)) {
+        return lower;
+      }
+      if (/^[A-Z]{2,}$/.test(word)) {
+        return word;
+      }
+      if (/^[0-9]+$/.test(word)) {
+        return word;
+      }
+      return `${lower.charAt(0).toUpperCase()}${lower.slice(1)}`;
+    })
+    .join(" ");
+  const colonMatch = titleCase.match(/^(.+?)\s+(a|an|the|eine?|der|die|das)\s+/i);
+  return (colonMatch ? colonMatch[1] : titleCase).slice(0, 90) || "Untitled";
 }
 
 function normalizeBookTitle(title: string) {
@@ -428,6 +459,7 @@ export function App() {
   const [confirmDeleteBookId, setConfirmDeleteBookId] = useState("");
   const [deleteConversationBusyId, setDeleteConversationBusyId] = useState("");
   const [lastUploadedBookId, setLastUploadedBookId] = useState("");
+  const [uploadTrackingBookId, setUploadTrackingBookId] = useState("");
   const [workspaceTab, setWorkspaceTab] = useState<WorkspaceTab>("ask");
   const [processingBookId, setProcessingBookId] = useState("");
   const [selectedBookDetailId, setSelectedBookDetailId] = useState("");
@@ -500,13 +532,30 @@ export function App() {
   const currentPageBookmarked = readerBookmarks.some(
     (bookmark) => bookmark.page === readerPage
   );
+  const uploadTrackingBook = uploadTrackingBookId
+    ? books.find((book) => book.id === uploadTrackingBookId) ?? null
+    : null;
+  const uploadTrackingJob = uploadTrackingBook
+    ? jobsByBookId.get(uploadTrackingBook.id) ?? null
+    : null;
+  const processingProgress = uploadTrackingBook
+    ? uploadTrackingBook.status === "text_ready"
+      ? 100
+      : uploadTrackingJob
+        ? Math.max(0, Math.min(100, uploadTrackingJob.progress))
+        : uploadTrackingBook.status === "queued"
+          ? 5
+          : 0
+    : 0;
   const bookPageRef = useRef<HTMLDivElement | null>(null);
   const readerAnswerRef = useRef<HTMLDivElement | null>(null);
   const workspaceMenuRef = useRef<HTMLDivElement | null>(null);
   const menuButtonRef = useRef<HTMLButtonElement | null>(null);
   const bookmarkMenuRef = useRef<HTMLDivElement | null>(null);
+  const bookDetailRef = useRef<HTMLElement | null>(null);
   const readerScrollTimeoutRef = useRef<number | null>(null);
   const signingOutRef = useRef(false);
+  const bookCardRefs = useRef(new Map<string, HTMLElement>());
   const activeStorageBytes = useMemo(
     () => books.reduce((total, book) => total + book.sizeBytes, 0),
     [books]
@@ -592,19 +641,45 @@ export function App() {
               return {
                 id: bookDoc.id,
                 title: typeof data.title === "string" ? data.title : "Untitled",
+                displayTitle:
+                  typeof data.displayTitle === "string" && data.displayTitle.trim()
+                    ? data.displayTitle
+                    : createDisplayTitle(typeof data.title === "string" ? data.title : "Untitled"),
                 status: typeof data.status === "string" ? data.status : "unknown",
                 sizeBytes:
                   typeof data.sizeBytes === "number" ? data.sizeBytes : 0,
                 chunkCount:
                   typeof data.chunkCount === "number" ? data.chunkCount : 0,
+                sectionCount:
+                  typeof data.sectionCount === "number" ? data.sectionCount : 0,
                 pageCount: typeof data.pageCount === "number" ? data.pageCount : 0,
                 textLength: typeof data.textLength === "number" ? data.textLength : 0,
                 language: typeof data.language === "string" ? data.language : "",
                 embeddedChunkCount:
                   typeof data.embeddedChunkCount === "number" ? data.embeddedChunkCount : 0,
+                createdAtMs:
+                  typeof data.createdAt?.toMillis === "function"
+                    ? data.createdAt.toMillis()
+                    : 0,
+                updatedAtMs:
+                  typeof data.updatedAt?.toMillis === "function"
+                    ? data.updatedAt.toMillis()
+                    : 0,
               };
             })
-            .sort((left, right) => left.title.localeCompare(right.title))
+            .sort((left, right) => {
+              const leftActive = ["upload_reserved", "queued", "processing"].includes(left.status);
+              const rightActive = ["upload_reserved", "queued", "processing"].includes(right.status);
+              if (leftActive !== rightActive) {
+                return leftActive ? -1 : 1;
+              }
+              const leftRecent = Math.max(left.createdAtMs, left.updatedAtMs);
+              const rightRecent = Math.max(right.createdAtMs, right.updatedAtMs);
+              if (leftRecent !== rightRecent) {
+                return rightRecent - leftRecent;
+              }
+              return left.displayTitle.localeCompare(right.displayTitle);
+            })
         );
         setBooksReady(true);
       },
@@ -758,15 +833,29 @@ export function App() {
     }
 
     if (uploadedBook.status === "text_ready") {
-      setUploadMessage(`${t.uploadReady}: ${uploadedBook.title}`);
-      setLastUploadedBookId("");
+      setUploadMessage(`${t.uploadReady}: ${uploadedBook.displayTitle}`);
       return;
     }
 
-    if (uploadedBook.status === "processing") {
-      setUploadMessage(`${t.uploadProcessing}: ${uploadedBook.title}`);
+    if (uploadedBook.status === "processing" || uploadedBook.status === "queued") {
+      setUploadMessage(`${t.uploadProcessing}: ${uploadedBook.displayTitle}`);
     }
   }, [books, lastUploadedBookId, t.uploadProcessing, t.uploadReady]);
+
+  useEffect(() => {
+    if (!lastUploadedBookId) {
+      return;
+    }
+
+    const target = bookCardRefs.current.get(lastUploadedBookId);
+    if (!target) {
+      return;
+    }
+
+    target.scrollIntoView({ behavior: "smooth", block: "center" });
+    target.classList.add("recent-upload");
+    window.setTimeout(() => target.classList.remove("recent-upload"), 2400);
+  }, [books, lastUploadedBookId]);
 
   useEffect(() => {
     if (!readerBookId) {
@@ -1023,6 +1112,7 @@ export function App() {
       setUploadProgress(100);
       setSelectedFile(null);
       setLastUploadedBookId(reservation.data.bookId);
+      setUploadTrackingBookId(reservation.data.bookId);
       setUploadMessage(t.uploadQueued);
     } catch (error) {
       setUploadMessage(getErrorMessage(error, "Upload failed"));
@@ -1088,7 +1178,7 @@ export function App() {
     }
 
     setProcessingBookId(book.id);
-    setUploadMessage(`${t.uploadProcessing}: ${book.title}`);
+    setUploadMessage(`${t.uploadProcessing}: ${book.displayTitle}`);
 
     try {
       const processJob = httpsCallable<{ jobId: string }, { ok: boolean }>(
@@ -1253,9 +1343,20 @@ export function App() {
           .sort((left, right) => left.chunkIndex - right.chunkIndex)
           .slice(0, 12)
       );
+      window.requestAnimationFrame(() => {
+        bookDetailRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+      });
     } catch (error) {
       setBookDetailMessage(getErrorMessage(error, "Book detail failed"));
     }
+  }
+
+  function askThisBook(book: BookRecord) {
+    setSelectedBookScope(book.id);
+    setWorkspaceTab("ask");
+    window.requestAnimationFrame(() => {
+      document.getElementById("library")?.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
   }
 
   async function openBookReader(book: BookRecord, page = -1) {
@@ -2016,6 +2117,19 @@ export function App() {
                   <progress value={uploadProgress} max="100" />
                 </div>
               ) : null}
+              {uploadTrackingBook ? (
+                <div className="upload-progress processing-progress" role="status" aria-live="polite">
+                  <div>
+                    <strong>
+                      {uploadTrackingBook.status === "text_ready"
+                        ? `${t.uploadReady}: ${uploadTrackingBook.displayTitle}`
+                        : `${t.uploadProcessing}: ${uploadTrackingBook.displayTitle}`}
+                    </strong>
+                    <span>{processingProgress}%</span>
+                  </div>
+                  <progress value={processingProgress} max="100" />
+                </div>
+              ) : null}
               <button
                 className="button primary"
                 type="button"
@@ -2060,7 +2174,7 @@ export function App() {
                   <option value="">{t.allReadyBooks}</option>
                   {textReadyBooks.map((book) => (
                     <option key={book.id} value={book.id}>
-                      {book.title}
+                      {book.displayTitle}
                     </option>
                   ))}
                 </select>
@@ -2118,8 +2232,18 @@ export function App() {
                 {books.map((book) => {
                   const job = jobsByBookId.get(book.id);
                   return (
-                  <article key={book.id}>
-                    <h3>{book.title}</h3>
+                  <article
+                    key={book.id}
+                    ref={(element) => {
+                      if (element) {
+                        bookCardRefs.current.set(book.id, element);
+                      } else {
+                        bookCardRefs.current.delete(book.id);
+                      }
+                    }}
+                    className={book.id === lastUploadedBookId ? "uploaded-book-card" : ""}
+                  >
+                    <h3 title={book.title}>{book.displayTitle}</h3>
                     <p className={`status-pill status-${book.status.replace(/_/g, "-")}`}>
                       {getBookStatusLabel(book)}
                     </p>
@@ -2206,7 +2330,7 @@ export function App() {
               </div>
             )}
             {selectedBookDetailId ? (
-              <section className="book-detail-panel">
+              <section className="book-detail-panel" ref={bookDetailRef}>
                 {books
                   .filter((book) => book.id === selectedBookDetailId)
                   .map((book) => (
@@ -2214,7 +2338,7 @@ export function App() {
                       <div className="section-heading">
                         <div>
                           <p className="eyebrow">{t.bookDetails}</p>
-                          <h3>{book.title}</h3>
+                          <h3 title={book.title}>{book.displayTitle}</h3>
                         </div>
                         <button
                           className="button secondary compact"
@@ -2234,6 +2358,10 @@ export function App() {
                           <dd>{book.chunkCount}</dd>
                         </div>
                         <div>
+                          <dt>{t.sections}</dt>
+                          <dd>{book.sectionCount || "-"}</dd>
+                        </div>
+                        <div>
                           <dt>{t.language}</dt>
                           <dd>{book.language || "unknown"}</dd>
                         </div>
@@ -2246,6 +2374,26 @@ export function App() {
                           </dd>
                         </div>
                       </dl>
+                      <div className="book-actions">
+                        {book.status === "text_ready" ? (
+                          <>
+                            <button
+                              className="button primary compact"
+                              type="button"
+                              onClick={() => openBookReader(book)}
+                            >
+                              {t.readBook}
+                            </button>
+                            <button
+                              className="button secondary compact"
+                              type="button"
+                              onClick={() => askThisBook(book)}
+                            >
+                              {t.askThisBook}
+                            </button>
+                          </>
+                        ) : null}
+                      </div>
                       {bookDetailMessage ? <p className="error-text">{bookDetailMessage}</p> : null}
                       {bookChunkPreviews.length > 0 ? (
                         <div className="chunk-preview-list">
@@ -2278,7 +2426,7 @@ export function App() {
                     ) : null}
                     <div className="reader-title-block">
                       <p className="eyebrow">{t.readerEyebrow}</p>
-                      <h3>{readerBook ? readerBook.title : t.readerTitle}</h3>
+                      <h3>{readerBook ? readerBook.displayTitle : t.readerTitle}</h3>
                       <p>
                         {readerBook
                           ? `${t.page} ${readerPage + 1} / ${readerPageCount}`
@@ -2418,7 +2566,7 @@ export function App() {
                             key={book.id}
                             onClick={() => openBookReader(book)}
                           >
-                            {book.title}
+                            {book.displayTitle}
                           </button>
                         ))
                       )}
@@ -2511,7 +2659,7 @@ export function App() {
                         onTouchEnd={captureReaderSelectionSoon}
                       >
                         <div className="book-page-top">
-                          <span>{readerBook.title}</span>
+                          <span>{readerBook.displayTitle}</span>
                           <span>
                             {t.page} {readerPage + 1}
                           </span>
@@ -2643,7 +2791,7 @@ export function App() {
                   <option value="">{t.allReadyBooks}</option>
                   {textReadyBooks.map((book) => (
                     <option key={book.id} value={book.id}>
-                      {book.title}
+                      {book.displayTitle}
                     </option>
                   ))}
                 </select>

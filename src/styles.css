@@ -685,6 +685,32 @@ input {
 .book-list {
   display: grid;
   gap: 12px;
+  min-width: 0;
+}
+
+.book-list article,
+.book-detail-panel,
+.upload-panel,
+.ask-panel,
+.search-panel,
+.history-panel,
+.reader-panel {
+  min-width: 0;
+}
+
+.book-list h3,
+.reader-title-block h3,
+.history-list h4,
+.book-detail-panel h3 {
+  overflow-wrap: anywhere;
+}
+
+.book-list .small-note,
+.source-pills span,
+select {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .book-actions {
@@ -1727,6 +1753,16 @@ input {
   accent-color: var(--primary);
 }
 
+.processing-progress strong {
+  overflow-wrap: anywhere;
+}
+
+.uploaded-book-card,
+.recent-upload {
+  border-color: color-mix(in srgb, var(--primary) 62%, var(--border));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary) 18%, transparent), var(--shadow);
+}
+
 .backend-lock {
   padding: 14px;
   border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--border));
@@ -1865,10 +1901,6 @@ input {
     grid-template-columns: repeat(5, minmax(0, 1fr));
   }
 
-  .book-list {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
   .upload-panel {
     grid-template-columns: minmax(0, 1fr) minmax(220px, 300px);
     align-items: start;
@@ -1897,6 +1929,33 @@ input {
 
   .help-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (min-width: 960px) {
+  .upload-panel {
+    grid-template-columns: minmax(0, 1fr) minmax(220px, 300px);
+    align-items: start;
+  }
+
+  .ask-panel,
+  .history-panel,
+  .search-panel {
+    grid-template-columns: minmax(0, 1fr) minmax(260px, 360px);
+    align-items: start;
+  }
+
+  .book-list {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 959px) {
+  .upload-panel,
+  .ask-panel,
+  .history-panel,
+  .search-panel {
+    grid-template-columns: minmax(0, 1fr);
   }
 }
 
@@ -1969,10 +2028,6 @@ select {
   border: 1px solid var(--border);
   border-radius: 8px;
   box-shadow: var(--shadow);
-}
-
-.account-section:not(.compact-account) {
-  display: none;
 }
 
 input:focus,
