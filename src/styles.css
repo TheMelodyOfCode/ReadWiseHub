@@ -944,6 +944,19 @@ select {
   gap: 10px;
 }
 
+.reader-book-switch-panel {
+  margin-top: 12px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.reader-book-switch-panel h3,
+.reader-book-switch-panel p {
+  margin: 0;
+}
+
 .reader-controls {
   display: grid;
   grid-template-columns: 44px minmax(0, 1fr) 44px 44px 44px;

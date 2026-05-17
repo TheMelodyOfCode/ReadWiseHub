@@ -489,6 +489,7 @@ export function App() {
   const [readerBookmarkMessage, setReaderBookmarkMessage] = useState("");
   const [readerBookmarks, setReaderBookmarks] = useState<ReaderBookmark[]>([]);
   const [readerBookmarkMenuOpen, setReaderBookmarkMenuOpen] = useState(false);
+  const [readerBookPickerOpen, setReaderBookPickerOpen] = useState(false);
   const [readerPickerScrollPending, setReaderPickerScrollPending] = useState(false);
   const [readerScrollNavVisible, setReaderScrollNavVisible] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -1496,6 +1497,7 @@ export function App() {
     setReaderBookmarks(bookmarks);
     setReaderHighlights(highlights);
     setReaderBookmarkMenuOpen(false);
+    setReaderBookPickerOpen(false);
     setReaderBusy(true);
     setReaderMessage("");
     setReaderChunks([]);
@@ -1721,22 +1723,16 @@ export function App() {
     setReaderBookmarkMessage("");
     setReaderBookmarks([]);
     setReaderBookmarkMenuOpen(false);
+    setReaderBookPickerOpen(false);
     setReaderScrollNavVisible(false);
   }
 
   function chooseAnotherReaderBook() {
-    setReaderBookId("");
-    setReaderChunks([]);
     setReaderMessage("");
     setReaderSelection(null);
-    setReaderAskAnswer("");
-    setReaderAskMode("");
-    setReaderAskSources([]);
-    setReaderAskQuestion("");
-    setReaderReturnParagraphId("");
     setReaderBookmarkMessage("");
     setReaderBookmarkMenuOpen(false);
-    setReaderPickerScrollPending(true);
+    setReaderBookPickerOpen((open) => !open);
   }
 
   function scrollReaderPage(direction: -1 | 1) {
@@ -2696,6 +2692,29 @@ export function App() {
                       </div>
                     ) : null}
                   </div>
+                  {readerBook && readerBookPickerOpen ? (
+                    <div className="reader-book-picker reader-book-switch-panel" id="reader-book-switch-panel">
+                      <div>
+                        <h3>{t.switchBook}</h3>
+                        <p>{t.switchBookCopy}</p>
+                      </div>
+                      {textReadyBooks.length === 0 ? (
+                        <p className="small-note">{t.searchNeedsText}</p>
+                      ) : (
+                        textReadyBooks.map((book) => (
+                          <button
+                            className="button secondary"
+                            type="button"
+                            key={book.id}
+                            disabled={readerBusy}
+                            onClick={() => openBookReader(book)}
+                          >
+                            {book.displayTitle}
+                          </button>
+                        ))
+                      )}
+                    </div>
+                  ) : null}
                   {readerBookmarkMessage ? (
                     <p className="success-text reader-bookmark-note">{readerBookmarkMessage}</p>
                   ) : null}
