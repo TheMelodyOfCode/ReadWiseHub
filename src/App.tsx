@@ -113,6 +113,14 @@ type ReaderSelection = {
   paragraphId: string;
 };
 
+type ReaderHighlight = {
+  id: string;
+  text: string;
+  page: number;
+  paragraphId: string;
+  createdAt: number;
+};
+
 type ReaderBookmark = {
   page: number;
   label: string;
@@ -642,7 +650,7 @@ export function App() {
   const [readerTotalChunks, setReaderTotalChunks] = useState(0);
   const [readerBusy, setReaderBusy] = useState(false);
   const [readerMessage, setReaderMessage] = useState("");
-  const [readerHighlights, setReaderHighlights] = useState<Record<string, string>>({});
+  const [readerHighlights, setReaderHighlights] = useState<Record<string, ReaderHighlight>>({});
   const [readerSelection, setReaderSelection] = useState<ReaderSelection | null>(null);
   const [readerAskBusy, setReaderAskBusy] = useState(false);
   const [readerAskProgress, setReaderAskProgress] = useState(0);
@@ -655,6 +663,7 @@ export function App() {
   const [readerBookmarkMessage, setReaderBookmarkMessage] = useState("");
   const [readerBookmarks, setReaderBookmarks] = useState<ReaderBookmark[]>([]);
   const [readerBookmarkMenuOpen, setReaderBookmarkMenuOpen] = useState(false);
+  const [readerHighlightMenuOpen, setReaderHighlightMenuOpen] = useState(false);
   const [readerBookPickerOpen, setReaderBookPickerOpen] = useState(false);
   const [readerPickerScrollPending, setReaderPickerScrollPending] = useState(false);
   const [readerScrollNavVisible, setReaderScrollNavVisible] = useState(false);
@@ -721,6 +730,10 @@ export function App() {
   const currentPageBookmarked = readerBookmarks.some(
     (bookmark) => bookmark.page === readerPage
   );
+  const readerHighlightList = useMemo(
+    () => Object.values(readerHighlights).sort((left, right) => left.page - right.page || left.createdAt - right.createdAt),
+    [readerHighlights]
+  );
   const uploadTrackingBook = uploadTrackingBookId
     ? books.find((book) => book.id === uploadTrackingBookId) ?? null
     : null;
@@ -742,6 +755,7 @@ export function App() {
   const workspaceMenuRef = useRef<HTMLDivElement | null>(null);
   const menuButtonRef = useRef<HTMLButtonElement | null>(null);
   const bookmarkMenuRef = useRef<HTMLDivElement | null>(null);
+  const highlightMenuRef = useRef<HTMLDivElement | null>(null);
   const bookDetailRef = useRef<HTMLElement | null>(null);
   const readerScrollTimeoutRef = useRef<number | null>(null);
   const signingOutRef = useRef(false);
@@ -1162,11 +1176,14 @@ export function App() {
       if (readerBookmarkMenuOpen && !bookmarkMenuRef.current?.contains(target)) {
         setReaderBookmarkMenuOpen(false);
       }
+      if (readerHighlightMenuOpen && !highlightMenuRef.current?.contains(target)) {
+        setReaderHighlightMenuOpen(false);
+      }
     }
 
     document.addEventListener("pointerdown", handlePointerDown);
     return () => document.removeEventListener("pointerdown", handlePointerDown);
-  }, [menuOpen, readerBookmarkMenuOpen]);
+  }, [menuOpen, readerBookmarkMenuOpen, readerHighlightMenuOpen]);
 
   async function loadAdminDashboard() {
     const getDashboard = httpsCallable<unknown, AdminDashboardPayload>(
@@ -1848,6 +1865,25 @@ export function App() {
     }
   }
 
+  async function deleteSectionMap(artifact: BookArtifact) {
+    if (!requireVerifiedUi(setBookDetailMessage)) {
+      return;
+    }
+
+    setBookDetailMessage("");
+    try {
+      const deleteBookArtifact = httpsCallable<
+        { artifactId: string; sessionId: string },
+        { ok: boolean; artifactId: string }
+      >(functions, "deleteBookArtifact");
+      await deleteBookArtifact(withSession({ artifactId: artifact.id }));
+      await loadBookArtifacts(artifact.bookId);
+      setBookDetailMessage("Section map deleted.");
+    } catch (error) {
+      setBookDetailMessage(getErrorMessage(error, "Delete map failed"));
+    }
+  }
+
   function askThisBook(book: BookRecord) {
     setSelectedBookScope(book.id);
     setWorkspaceTab("ask");
@@ -2045,15 +2081,47 @@ export function App() {
     }
   }
 
-  function parseReaderHighlightsValue(value: unknown): Record<string, string> {
+  function parseReaderHighlightsValue(value: unknown): Record<string, ReaderHighlight> {
     if (!value || typeof value !== "object" || Array.isArray(value)) {
       return {};
     }
 
     return Object.fromEntries(
       Object.entries(value)
-        .filter(([key, highlight]) => key.length <= 120 && typeof highlight === "string")
-        .map(([key, highlight]) => [key, highlight.slice(0, 2000)])
+        .filter(([key]) => key.length <= 120)
+        .map(([key, highlight]) => {
+          if (typeof highlight === "string") {
+            return [
+              key,
+              {
+                id: key,
+                text: highlight.slice(0, 2000),
+                page: 0,
+                paragraphId: key.split("-").slice(0, 2).join("-"),
+                createdAt: Date.now(),
+              },
+            ] as const;
+          }
+          if (!highlight || typeof highlight !== "object") {
+            return null;
+          }
+          const record = highlight as Record<string, unknown>;
+          const text = typeof record.text === "string" ? record.text.slice(0, 2000) : "";
+          if (!text) {
+            return null;
+          }
+          return [
+            key,
+            {
+              id: typeof record.id === "string" ? record.id : key,
+              text,
+              page: Math.max(0, Math.floor(Number(record.page) || 0)),
+              paragraphId: typeof record.paragraphId === "string" ? record.paragraphId.slice(0, 120) : "",
+              createdAt: typeof record.createdAt === "number" ? record.createdAt : Date.now(),
+            },
+          ] as const;
+        })
+        .filter((entry): entry is readonly [string, ReaderHighlight] => entry !== null)
         .slice(0, 200)
     );
   }
@@ -2063,7 +2131,7 @@ export function App() {
     settings: {
       lastPage?: number;
       bookmarks?: ReaderBookmark[];
-      highlights?: Record<string, string>;
+      highlights?: Record<string, ReaderHighlight>;
     }
   ) {
     if (!user || !bookId) {
@@ -2116,6 +2184,33 @@ export function App() {
       highlights: readerHighlights,
     });
     setReaderBookmarkMessage(`${t.bookmarkRemoved}: ${t.page} ${page + 1}`);
+  }
+
+  function openReaderHighlight(highlight: ReaderHighlight) {
+    if (!readerBook) {
+      return;
+    }
+
+    setReaderHighlightMenuOpen(false);
+    setReaderReturnParagraphId(highlight.paragraphId);
+    void openBookReader(readerBook, highlight.page);
+  }
+
+  function deleteReaderHighlight(highlightId: string) {
+    if (!readerHighlightKey) {
+      return;
+    }
+
+    const nextHighlights = { ...readerHighlights };
+    delete nextHighlights[highlightId];
+    setReaderHighlights(nextHighlights);
+    window.localStorage.setItem(readerHighlightKey, JSON.stringify(nextHighlights));
+    void saveReaderSettings(readerBookId, {
+      lastPage: readerPage,
+      bookmarks: readerBookmarks,
+      highlights: nextHighlights,
+    });
+    setReaderBookmarkMessage(t.highlightRemoved);
   }
 
   function goToReaderPage(page: number) {
@@ -2313,7 +2408,14 @@ export function App() {
     }
 
     const nextHighlights = { ...readerHighlights };
-    nextHighlights[`${readerSelection.paragraphId}-${Date.now()}`] = readerSelection.text;
+    const id = `${readerSelection.paragraphId}-${Date.now()}`;
+    nextHighlights[id] = {
+      id,
+      text: readerSelection.text,
+      page: readerPage,
+      paragraphId: readerSelection.paragraphId,
+      createdAt: Date.now(),
+    };
 
     setReaderHighlights(nextHighlights);
     window.localStorage.setItem(readerHighlightKey, JSON.stringify(nextHighlights));
@@ -3619,6 +3721,13 @@ export function App() {
                                       : "Grouped"}
                                 </span>
                               </div>
+                              <button
+                                className="button compact danger"
+                                type="button"
+                                onClick={() => void deleteSectionMap(artifact)}
+                              >
+                                Delete map
+                              </button>
                               <ol>
                                 {artifact.sections.map((section) => (
                                   <li key={section.sectionNumber}>
@@ -3765,6 +3874,60 @@ export function App() {
                                       type="button"
                                       aria-label={t.removeBookmark}
                                       onClick={() => deleteReaderBookmark(bookmark.page)}
+                                    >
+                                      ×
+                                    </button>
+                                  </article>
+                                ))
+                              )}
+                            </div>
+                          ) : null}
+                        </div>
+                        <div className="reader-bookmark-menu" ref={highlightMenuRef}>
+                          <button
+                            className={`reader-icon-button reader-highlight-button ${
+                              readerHighlightList.length > 0 ? "active" : ""
+                            }`}
+                            type="button"
+                            disabled={readerBusy || readerTotalChunks === 0}
+                            onClick={() => setReaderHighlightMenuOpen((open) => !open)}
+                            aria-expanded={readerHighlightMenuOpen}
+                            aria-label={t.highlights}
+                            title={t.highlights}
+                          >
+                            <span aria-hidden="true">H</span>
+                            {readerHighlightList.length > 0 ? (
+                              <span className="bookmark-count">{readerHighlightList.length}</span>
+                            ) : null}
+                          </button>
+                          {readerHighlightMenuOpen ? (
+                            <div className="bookmark-dropdown highlight-dropdown">
+                              <div className="bookmark-dropdown-title">
+                                <strong>{t.highlights}</strong>
+                                <button
+                                  type="button"
+                                  aria-label={t.close}
+                                  onClick={() => setReaderHighlightMenuOpen(false)}
+                                >
+                                  ×
+                                </button>
+                              </div>
+                              {readerHighlightList.length === 0 ? (
+                                <p>{t.noHighlights}</p>
+                              ) : (
+                                readerHighlightList.map((highlight) => (
+                                  <article key={highlight.id}>
+                                    <button
+                                      type="button"
+                                      onClick={() => openReaderHighlight(highlight)}
+                                    >
+                                      <strong>{t.page} {highlight.page + 1}</strong>
+                                      <span>{highlight.text}</span>
+                                    </button>
+                                    <button
+                                      type="button"
+                                      aria-label={t.removeHighlight}
+                                      onClick={() => deleteReaderHighlight(highlight.id)}
                                     >
                                       ×
                                     </button>
@@ -3958,7 +4121,7 @@ export function App() {
                         {readerParagraphs.map((paragraph) => {
                           const paragraphHighlights = Object.values(readerHighlights).filter(
                             (highlight) =>
-                              paragraph.text.toLowerCase().includes(highlight.toLowerCase())
+                              paragraph.text.toLowerCase().includes(highlight.text.toLowerCase())
                           );
 
                           return (
@@ -3968,7 +4131,7 @@ export function App() {
                               className="reader-paragraph"
                             >
                               <p>
-                                {getHighlightedParts(paragraph.text, paragraphHighlights).map(
+                                {getHighlightedParts(paragraph.text, paragraphHighlights.map((highlight) => highlight.text)).map(
                                   (part, index) =>
                                     part.highlighted ? (
                                       <mark key={index}>{part.text}</mark>

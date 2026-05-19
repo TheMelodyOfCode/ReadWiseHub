@@ -665,6 +665,22 @@ async function run() {
     !listedArtifactIdsAfterReplacement.includes(sectionMap.artifact.id),
     "listBookArtifacts included superseded section map."
   );
+  const deleteBookArtifact = await callFunction(
+    "deleteBookArtifact",
+    { artifactId: replacementSectionMap.artifact.id },
+    idToken
+  );
+  check(deleteBookArtifact.ok === true, "deleteBookArtifact did not return ok.");
+  const listedArtifactsAfterDelete = await callFunction(
+    "listBookArtifacts",
+    { bookId: primaryBookId },
+    idToken
+  );
+  const listedArtifactIdsAfterDelete = listedArtifactsAfterDelete.artifacts?.map((artifact) => artifact.id) || [];
+  check(
+    !listedArtifactIdsAfterDelete.includes(replacementSectionMap.artifact.id),
+    "listBookArtifacts included deleted section map."
+  );
 
   const naturalSectionMapAsk = await callFunction(
     "askLibrary",

@@ -3910,6 +3910,40 @@ export const generateBookSectionMap = onCall(
   }
 );
 
+export const deleteBookArtifact = onCall(
+  { region: "us-central1", timeoutSeconds: 60, memory: "256MiB", invoker: "public" },
+  async (request) => {
+    const auth = requireAuth(request.auth?.token
+      ? {
+          uid: request.auth.uid,
+          email: request.auth.token.email,
+          name: request.auth.token.name,
+          picture: request.auth.token.picture,
+        }
+      : undefined);
+    const artifactId = assertString(request.data?.artifactId, "artifactId");
+    await requireActiveSession(auth, request.data?.sessionId);
+    await requireVerifiedEmail(auth);
+
+    const artifactRef = db.collection("bookArtifacts").doc(artifactId);
+    const artifactSnapshot = await artifactRef.get();
+    if (!artifactSnapshot.exists || artifactSnapshot.get("userId") !== auth.uid) {
+      throw new HttpsError("not-found", "Book map was not found.");
+    }
+
+    await artifactRef.update({
+      status: "deleted",
+      deletedAt: FieldValue.serverTimestamp(),
+      updatedAt: FieldValue.serverTimestamp(),
+    });
+
+    return {
+      ok: true,
+      artifactId,
+    };
+  }
+);
+
 export const getConversationDetail = onCall(
   { region: "us-central1", timeoutSeconds: 60, memory: "512MiB" },
   async (request) => {
