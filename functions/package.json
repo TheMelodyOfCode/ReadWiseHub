@@ -10,6 +10,7 @@
     "pinecone:backfill": "node scripts/backfill_pinecone_book.mjs",
     "pinecone:audit": "node scripts/backfill_pinecone_book.mjs --audit",
     "pinecone:delete": "node scripts/backfill_pinecone_book.mjs --delete",
+    "pinecone:compare": "node scripts/compare_pinecone_retrieval.mjs",
     "serve": "npm run build && firebase emulators:start --only functions",
     "deploy": "firebase deploy --only functions"
   },

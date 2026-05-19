@@ -89,6 +89,15 @@ function getNumberMetadata(
   return typeof value === "number" ? value : 0;
 }
 
+function getSnapshotStringOrFallback(
+  snapshot: FirebaseFirestore.DocumentSnapshot,
+  field: string,
+  fallback: string
+): string {
+  const value = snapshot.get(field);
+  return typeof value === "string" && value.trim() ? value : fallback;
+}
+
 export class PineconeBookRetrievalBackend implements BookRetrievalBackend {
   private readonly firestore: FirebaseFirestore.Firestore;
   private readonly indexName: string;
@@ -276,9 +285,9 @@ export class PineconeBookRetrievalBackend implements BookRetrievalBackend {
     if (
       !snapshot?.exists ||
       snapshot.get("userId") !== input.scope.userId ||
-      snapshot.get("tenantId") !== input.scope.tenantId ||
-      snapshot.get("workspaceId") !== input.scope.workspaceId ||
-      snapshot.get("libraryId") !== input.scope.libraryId
+      getSnapshotStringOrFallback(snapshot, "tenantId", input.scope.tenantId) !== input.scope.tenantId ||
+      getSnapshotStringOrFallback(snapshot, "workspaceId", input.scope.workspaceId) !== input.scope.workspaceId ||
+      getSnapshotStringOrFallback(snapshot, "libraryId", input.scope.libraryId) !== input.scope.libraryId
     ) {
       return null;
     }

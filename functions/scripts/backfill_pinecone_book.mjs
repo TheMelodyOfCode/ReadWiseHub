@@ -134,6 +134,7 @@ async function loadChunks(db, bookId, scope) {
       }
 
       return {
+        ref: doc.ref,
         chunkId: doc.id,
         fileId: typeof doc.get("fileId") === "string" ? doc.get("fileId") : bookId,
         chunkIndex,
@@ -200,12 +201,35 @@ if (mode === "backfill") {
 
   const batchSize = 100;
   for (let start = 0; start < chunks.length; start += batchSize) {
-    const records = chunks.slice(start, start + batchSize).map((chunk) => ({
+    const chunkBatch = chunks.slice(start, start + batchSize);
+    const records = chunkBatch.map((chunk) => ({
       id: buildVectorId(bookId, chunk.chunkIndex),
       values: chunk.embedding,
       metadata: buildMetadata(scope, bookId, chunk),
     }));
     await index.upsert({ namespace: scope.namespace, records });
+
+    const firestoreBatch = db.batch();
+    for (const chunk of chunkBatch) {
+      const vectorRecordId = buildVectorId(bookId, chunk.chunkIndex);
+      const vectorMetadata = buildMetadata(scope, bookId, chunk);
+      firestoreBatch.update(chunk.ref, {
+        tenantId: scope.tenantId,
+        workspaceId: scope.workspaceId,
+        libraryId: scope.libraryId,
+        vectorBackend: "pinecone",
+        vectorIndexName: DEFAULT_INDEX_NAME,
+        vectorNamespace: scope.namespace,
+        vectorRecordId,
+        vectorMetadata,
+        embeddingModel: EMBEDDING_MODEL,
+        embeddingDimensions: EMBEDDING_DIMENSIONS,
+        chunkerVersion: CHUNKER_VERSION,
+        extractorVersion: EXTRACTOR_VERSION,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+    }
+    await firestoreBatch.commit();
   }
 }
 
