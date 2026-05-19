@@ -1798,6 +1798,48 @@ select {
   color: var(--accent);
 }
 
+.vector-coverage-pill {
+  display: inline-grid;
+  gap: 2px;
+  width: fit-content;
+  max-width: 100%;
+  padding: 6px 9px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-strong);
+  color: var(--muted);
+  font-size: 0.82rem;
+  font-weight: 900;
+  line-height: 1.15;
+}
+
+.vector-coverage-pill span {
+  color: var(--muted);
+  font-size: 0.74rem;
+  font-weight: 750;
+}
+
+.vector-pinecone-ready {
+  border-color: color-mix(in srgb, var(--success) 48%, var(--border));
+  color: var(--success);
+}
+
+.vector-pinecone-incomplete {
+  border-color: color-mix(in srgb, var(--accent) 48%, var(--border));
+  color: var(--accent);
+}
+
+.vector-firestore-vectors {
+  border-color: color-mix(in srgb, var(--primary) 42%, var(--border));
+  color: var(--primary);
+}
+
+.vector-text-only,
+.vector-not-ready {
+  border-color: var(--border);
+  color: var(--muted);
+}
+
 .job-progress {
   display: grid;
   gap: 6px;

@@ -45,6 +45,9 @@ type BookRecord = {
   textLength: number;
   language: string;
   embeddedChunkCount: number;
+  pineconeIndexedChunkCount: number;
+  pineconeMissingChunkCount: number;
+  vectorBackendCandidate: string;
   structureQuality: string;
   formatWarning: string;
   createdAtMs: number;
@@ -845,6 +848,18 @@ export function App() {
                 language: typeof data.language === "string" ? data.language : "",
                 embeddedChunkCount:
                   typeof data.embeddedChunkCount === "number" ? data.embeddedChunkCount : 0,
+                pineconeIndexedChunkCount:
+                  typeof data.pineconeIndexedChunkCount === "number"
+                    ? data.pineconeIndexedChunkCount
+                    : 0,
+                pineconeMissingChunkCount:
+                  typeof data.pineconeMissingChunkCount === "number"
+                    ? data.pineconeMissingChunkCount
+                    : 0,
+                vectorBackendCandidate:
+                  typeof data.vectorBackendCandidate === "string"
+                    ? data.vectorBackendCandidate
+                    : "",
                 structureQuality:
                   typeof data.structureQuality === "string" ? data.structureQuality : "",
                 formatWarning:
@@ -1538,6 +1553,58 @@ export function App() {
     }
 
     return book.status;
+  }
+
+  function getVectorCoverage(book: {
+    chunkCount: number;
+    embeddedChunkCount: number;
+    pineconeIndexedChunkCount?: number;
+    pineconeMissingChunkCount?: number;
+    vectorBackendCandidate?: string;
+  }) {
+    const chunkCount = Math.max(0, book.chunkCount || 0);
+    const embeddedCount = Math.max(0, book.embeddedChunkCount || 0);
+    const pineconeIndexed = Math.max(0, book.pineconeIndexedChunkCount || 0);
+    const pineconeMissing = Math.max(0, book.pineconeMissingChunkCount || 0);
+    const pineconeCandidate = book.vectorBackendCandidate === "pinecone" || pineconeIndexed > 0;
+
+    if (pineconeCandidate && pineconeIndexed > 0 && pineconeMissing === 0) {
+      return {
+        status: "pinecone-ready",
+        label: "Pinecone ready",
+        detail: `${pineconeIndexed}/${chunkCount || pineconeIndexed} indexed`,
+      };
+    }
+
+    if (pineconeCandidate && (pineconeIndexed > 0 || pineconeMissing > 0)) {
+      return {
+        status: "pinecone-incomplete",
+        label: "Pinecone incomplete",
+        detail: `${pineconeIndexed}/${chunkCount || pineconeIndexed + pineconeMissing} indexed · ${pineconeMissing} missing`,
+      };
+    }
+
+    if (embeddedCount > 0) {
+      return {
+        status: "firestore-vectors",
+        label: "Firestore vectors",
+        detail: `${embeddedCount}/${chunkCount || embeddedCount} embedded`,
+      };
+    }
+
+    if (chunkCount > 0) {
+      return {
+        status: "text-only",
+        label: "Text retrieval",
+        detail: `${chunkCount} chunks · vectors pending`,
+      };
+    }
+
+    return {
+      status: "not-ready",
+      label: t.notReadyYet,
+      detail: "",
+    };
   }
 
   async function searchExtractedText(event: FormEvent<HTMLFormElement>) {
@@ -2734,7 +2801,20 @@ export function App() {
                         <small>{book.bookId}</small>
                       </td>
                       <td data-label="User">{renderAdminUserCell(book)}</td>
-                      <td data-label="Indexed">{book.indexedChunkCount}</td>
+                      <td data-label="Indexed">
+                        <span
+                          className={`vector-coverage-pill vector-${
+                            book.indexedChunkCount > 0 && book.missingChunkCount === 0
+                              ? "pinecone-ready"
+                              : "pinecone-incomplete"
+                          }`}
+                        >
+                          {book.indexedChunkCount > 0 && book.missingChunkCount === 0
+                            ? "Ready"
+                            : "Incomplete"}
+                        </span>
+                        <small>{book.indexedChunkCount} indexed</small>
+                      </td>
                       <td data-label="Missing">{book.missingChunkCount}</td>
                     </tr>
                   ))}
@@ -2789,11 +2869,17 @@ export function App() {
                         </small>
                       </td>
                       <td data-label="Vectors">
-                        {book.embeddedChunkCount}/{book.chunkCount}
-                        <small>
-                          Pinecone {book.pineconeIndexedChunkCount}/
-                          {book.chunkCount} · missing {book.pineconeMissingChunkCount}
-                        </small>
+                        {(() => {
+                          const vectorCoverage = getVectorCoverage(book);
+                          return (
+                            <>
+                              <span className={`vector-coverage-pill vector-${vectorCoverage.status}`}>
+                                {vectorCoverage.label}
+                              </span>
+                              <small>{vectorCoverage.detail || "No vector coverage yet"}</small>
+                            </>
+                          );
+                        })()}
                       </td>
                       <td data-label="Debug">
                         <button
@@ -3248,6 +3334,7 @@ export function App() {
               <div className="book-list">
                 {books.map((book) => {
                   const job = jobsByBookId.get(book.id);
+                  const vectorCoverage = getVectorCoverage(book);
                   return (
                   <article
                     key={book.id}
@@ -3280,6 +3367,10 @@ export function App() {
                       <p className="error-text">{job.errorMessageSafe}</p>
                     ) : null}
                     {book.chunkCount > 0 ? <p>{book.chunkCount} chunks</p> : null}
+                    <p className={`vector-coverage-pill vector-${vectorCoverage.status}`}>
+                      {vectorCoverage.label}
+                      {vectorCoverage.detail ? <span>{vectorCoverage.detail}</span> : null}
+                    </p>
                     <p className="small-note">
                       {book.language || "unknown"} · {Math.round(book.sizeBytes / 1024)} KB
                       {book.embeddedChunkCount > 0
@@ -3367,7 +3458,9 @@ export function App() {
               <section className="book-detail-panel" ref={bookDetailRef}>
                 {books
                   .filter((book) => book.id === selectedBookDetailId)
-                  .map((book) => (
+                  .map((book) => {
+                    const vectorCoverage = getVectorCoverage(book);
+                    return (
                     <div key={book.id}>
                       <div className="section-heading">
                         <div>
@@ -3414,9 +3507,10 @@ export function App() {
                         <div>
                           <dt>{t.vectorReady}</dt>
                           <dd>
-                            {book.embeddedChunkCount > 0
-                              ? `${book.embeddedChunkCount}/${book.chunkCount}`
-                              : t.notReadyYet}
+                            <span className={`vector-coverage-pill vector-${vectorCoverage.status}`}>
+                              {vectorCoverage.label}
+                              {vectorCoverage.detail ? <span>{vectorCoverage.detail}</span> : null}
+                            </span>
                           </dd>
                         </div>
                       </dl>
@@ -3538,7 +3632,8 @@ export function App() {
                         </div>
                       ) : null}
                     </div>
-                  ))}
+                    );
+                  })}
               </section>
             ) : null}
 
