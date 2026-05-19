@@ -1438,6 +1438,23 @@ export function App() {
     });
   }
 
+  function askSearchQuestionAsAi() {
+    const question = searchQuestion.trim();
+    if (!question) {
+      return;
+    }
+
+    setAskQuestion(question);
+    setAskAnswer("");
+    setAskMode("");
+    setAskSources([]);
+    setAskMessage("");
+    setWorkspaceTab("ask");
+    window.requestAnimationFrame(() => {
+      document.getElementById("library")?.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+  }
+
   async function openBookReader(book: BookRecord, page = -1) {
     const progressKey = user
       ? `readwisehub_reader_progress_${user.uid}_${book.id}`
@@ -2317,6 +2334,16 @@ export function App() {
               {searchMessage ? <p className="error-text">{searchMessage}</p> : null}
               {searchResults.length > 0 ? (
                 <div className="search-results">
+                  <div className="search-results-header">
+                    <h4>{t.sourcePassagesTitle}</h4>
+                    <button
+                      className="button secondary compact"
+                      type="button"
+                      onClick={askSearchQuestionAsAi}
+                    >
+                      {t.askAiWithThisQuestion}
+                    </button>
+                  </div>
                   {searchResults.map((result) => (
                     <article key={`${result.bookId}-${result.chunkIndex}`}>
                       <h4>{result.bookTitle}</h4>

@@ -829,6 +829,14 @@ select {
   gap: 12px;
 }
 
+.search-results-header {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+}
+
 .help-panel {
   display: grid;
   gap: 14px;
@@ -1727,6 +1735,10 @@ select {
 .search-results h4 {
   margin: 0 0 8px;
   font-size: 1rem;
+}
+
+.search-results-header h4 {
+  margin: 0;
 }
 
 .search-results span {
