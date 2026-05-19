@@ -188,6 +188,11 @@ async function cleanup() {
     await clearConversation(conversation.id);
   }
 
+  const routeTraces = await db.collection("routeTraces").where("userId", "==", uid).get();
+  for (const routeTrace of routeTraces.docs) {
+    await routeTrace.ref.delete();
+  }
+
   const readerSettings = await db
     .collection("users")
     .doc(uid)
@@ -375,6 +380,14 @@ async function run() {
   check(search.ok === true, "searchLibrary did not return ok.");
   check(search.results?.length > 0, "searchLibrary returned no source results.");
   check(search.results?.[0]?.bookId === primaryBookId, "searchLibrary returned the wrong book.");
+  const conversationsAfterSourceSearch = await db
+    .collection("conversations")
+    .where("userId", "==", uid)
+    .get();
+  check(
+    conversationsAfterSourceSearch.empty,
+    "searchLibrary created a conversation/history entry, but source lookup should not."
+  );
 
   const ask = await callFunction(
     "askLibrary",
@@ -385,6 +398,31 @@ async function run() {
   check(ask.mode === "ai_grounded", `askLibrary mode was ${ask.mode}, expected ai_grounded.`);
   check(Boolean(ask.conversationId), "askLibrary did not create a conversation.");
   check(ask.results?.length > 0, "askLibrary returned no sources.");
+  const askConversation = await db.collection("conversations").doc(ask.conversationId).get();
+  check(askConversation.exists, "askLibrary did not save the conversation document.");
+  check(
+    askConversation.get("mode") === "ai_grounded",
+    `askLibrary saved mode ${askConversation.get("mode")}, expected ai_grounded.`
+  );
+  check(
+    Boolean(askConversation.get("routeTraceId")),
+    "askLibrary did not save a routeTraceId on the conversation."
+  );
+  const askMessages = await db
+    .collection("conversations")
+    .doc(ask.conversationId)
+    .collection("messages")
+    .get();
+  check(askMessages.size >= 2, "askLibrary did not save user and assistant messages.");
+  const routeTraceId = askConversation.get("routeTraceId");
+  if (routeTraceId) {
+    const routeTrace = await db.collection("routeTraces").doc(routeTraceId).get();
+    check(routeTrace.exists, "askLibrary routeTraceId did not point to a route trace document.");
+    check(
+      routeTrace.get("answerMode") === "ai_grounded",
+      `askLibrary route trace answerMode was ${routeTrace.get("answerMode")}, expected ai_grounded.`
+    );
+  }
 
   const bookDetail = await callFunction("getBookDetail", { bookId: primaryBookId }, idToken);
   check(bookDetail.ok === true, "getBookDetail did not return ok.");
@@ -440,6 +478,10 @@ async function run() {
   check(deleteConversation.ok === true, "deleteConversation did not return ok.");
   const deletedConversation = await db.collection("conversations").doc(ask.conversationId).get();
   check(!deletedConversation.exists, "deleteConversation left conversation document behind.");
+  if (routeTraceId) {
+    const deletedRouteTrace = await db.collection("routeTraces").doc(routeTraceId).get();
+    check(!deletedRouteTrace.exists, "deleteConversation left route trace document behind.");
+  }
 
   const deleteBook = await callFunction("deleteBook", { bookId: primaryBookId }, idToken);
   check(deleteBook.ok === true, "deleteBook did not return ok.");
@@ -478,6 +520,7 @@ async function run() {
   const remainingChunks = await db.collection("bookChunks").where("userId", "==", uid).get();
   const remainingSections = await db.collection("bookSections").where("userId", "==", uid).get();
   const remainingSessions = await db.collection("userSessions").where("userId", "==", uid).get();
+  const remainingRouteTraces = await db.collection("routeTraces").where("userId", "==", uid).get();
   const remainingReaderSettings = await db
     .collection("users")
     .doc(uid)
@@ -489,6 +532,7 @@ async function run() {
   check(remainingChunks.empty, "deleteAccountData left chunks behind.");
   check(remainingSections.empty, "deleteAccountData left sections behind.");
   check(remainingSessions.empty, "deleteAccountData left sessions behind.");
+  check(remainingRouteTraces.empty, "deleteAccountData left route traces behind.");
   check(remainingReaderSettings.empty, "deleteAccountData left reader settings behind.");
 
   if (failures.length > 0) {

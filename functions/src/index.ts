@@ -1875,11 +1875,38 @@ async function clearUserConversations(userId: string) {
 
   for (const conversationSnapshot of snapshot.docs) {
     await clearConversationMessages(conversationSnapshot.id);
+    const routeTraceId =
+      typeof conversationSnapshot.get("routeTraceId") === "string"
+        ? conversationSnapshot.get("routeTraceId")
+        : "";
+    if (routeTraceId) {
+      await db.collection("routeTraces").doc(routeTraceId).delete().catch(() => undefined);
+    }
     await conversationSnapshot.ref.delete();
   }
 
   if (snapshot.size === 100) {
     await clearUserConversations(userId);
+  }
+}
+
+async function clearUserRouteTraces(userId: string) {
+  const snapshot = await db
+    .collection("routeTraces")
+    .where("userId", "==", userId)
+    .limit(100)
+    .get();
+
+  if (snapshot.empty) {
+    return;
+  }
+
+  const batch = db.batch();
+  snapshot.docs.forEach((docSnapshot) => batch.delete(docSnapshot.ref));
+  await batch.commit();
+
+  if (snapshot.size === 100) {
+    await clearUserRouteTraces(userId);
   }
 }
 
@@ -3378,6 +3405,72 @@ export const adminListBooks = onCall(
   }
 );
 
+export const adminListUsers = onCall(
+  { region: "us-central1", timeoutSeconds: 60, memory: "512MiB" },
+  async (request) => {
+    const viewer = requireAdmin(request.auth?.token
+      ? {
+          uid: request.auth.uid,
+          email: request.auth.token.email,
+          name: request.auth.token.name,
+          picture: request.auth.token.picture,
+        }
+      : undefined);
+    const limit = Math.max(1, Math.min(Number(request.data?.limit) || 80, 120));
+    const snapshot = await db.collection("users").limit(limit).get();
+
+    const users = await Promise.all(
+      snapshot.docs.map(async (userSnapshot) => {
+        const userId = userSnapshot.id;
+        const [booksCount, conversationsCount, activeSessionsCount] = await Promise.all([
+          db.collection("books").where("userId", "==", userId).count().get(),
+          db.collection("conversations").where("userId", "==", userId).count().get(),
+          db
+            .collection("userSessions")
+            .where("userId", "==", userId)
+            .where("status", "==", "active")
+            .count()
+            .get(),
+        ]);
+        const email = typeof userSnapshot.get("email") === "string" ? userSnapshot.get("email") : "";
+        const displayName =
+          typeof userSnapshot.get("displayName") === "string"
+            ? userSnapshot.get("displayName")
+            : "";
+
+        return {
+          userId,
+          email,
+          displayName,
+          userLabel: email || displayName || userId,
+          plan: userSnapshot.get("plan") || "free",
+          subscriptionStatus: userSnapshot.get("subscriptionStatus") || "none",
+          emailVerified: userSnapshot.get("emailVerified") === true,
+          onboardingStatus: userSnapshot.get("onboardingStatus") || "",
+          usageCurrentPeriod: normalizeFirestoreValue(userSnapshot.get("usageCurrentPeriod")),
+          limits: normalizeFirestoreValue(userSnapshot.get("limits")),
+          bookCount: booksCount.data().count,
+          conversationCount: conversationsCount.data().count,
+          activeSessionCount: activeSessionsCount.data().count,
+          lastLoginAt: normalizeFirestoreValue(userSnapshot.get("lastLoginAt")),
+          createdAt: normalizeFirestoreValue(userSnapshot.get("createdAt")),
+          updatedAt: normalizeFirestoreValue(userSnapshot.get("updatedAt")),
+        };
+      })
+    );
+
+    await writeAdminAuditEvent({
+      viewer,
+      action: "adminListUsers",
+    });
+
+    return {
+      ok: true,
+      users,
+    };
+  }
+);
+
 export const adminGetBookDebug = onCall(
   { region: "us-central1", timeoutSeconds: 60, memory: "512MiB" },
   async (request) => {
@@ -3726,6 +3819,13 @@ export const deleteConversation = onCall(
     }
 
     await clearConversationMessages(conversationId);
+    const routeTraceId =
+      typeof conversationSnapshot.get("routeTraceId") === "string"
+        ? conversationSnapshot.get("routeTraceId")
+        : "";
+    if (routeTraceId) {
+      await db.collection("routeTraces").doc(routeTraceId).delete().catch(() => undefined);
+    }
     await conversationRef.delete();
 
     return {
@@ -3757,6 +3857,7 @@ export const deleteAccountData = onCall(
 
     await clearUserBooks(auth.uid);
     await clearUserConversations(auth.uid);
+    await clearUserRouteTraces(auth.uid);
     await clearUserReaderSettings(auth.uid);
     await clearUserSessions(auth.uid);
     await db.collection("users").doc(auth.uid).delete();

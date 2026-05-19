@@ -272,6 +272,25 @@ type AdminBookDebug = {
   sections: Array<Record<string, unknown>>;
 };
 
+type AdminUserSummary = {
+  userId: string;
+  email: string;
+  displayName: string;
+  userLabel: string;
+  plan: string;
+  subscriptionStatus: string;
+  emailVerified: boolean;
+  onboardingStatus: string;
+  usageCurrentPeriod?: Record<string, unknown>;
+  limits?: Record<string, unknown>;
+  bookCount: number;
+  conversationCount: number;
+  activeSessionCount: number;
+  lastLoginAt?: string;
+  createdAt?: string;
+  updatedAt?: string;
+};
+
 const UPLOAD_BACKEND_ENABLED = true;
 const MAX_FREE_FILE_BYTES = 20 * 1024 * 1024;
 const ALLOWED_UPLOAD_TYPES = new Set([
@@ -594,6 +613,11 @@ export function App() {
     useState<AdminConversationDebug | null>(null);
   const [adminBooks, setAdminBooks] = useState<AdminBookSummary[]>([]);
   const [adminBookDebug, setAdminBookDebug] = useState<AdminBookDebug | null>(null);
+  const [adminUsers, setAdminUsers] = useState<AdminUserSummary[]>([]);
+  const [adminSearch, setAdminSearch] = useState("");
+  const [adminBookStatusFilter, setAdminBookStatusFilter] = useState("all");
+  const [adminConversationModeFilter, setAdminConversationModeFilter] = useState("all");
+  const [adminConversationBackendFilter, setAdminConversationBackendFilter] = useState("all");
   const [adminBusy, setAdminBusy] = useState(false);
   const [adminMessage, setAdminMessage] = useState("");
 
@@ -1092,12 +1116,26 @@ export function App() {
     setAdminBooks(response.data.books ?? []);
   }
 
+  async function loadAdminUsers() {
+    const listUsers = httpsCallable<
+      { limit: number },
+      { ok: boolean; users: AdminUserSummary[] }
+    >(functions, "adminListUsers");
+    const response = await listUsers({ limit: 80 });
+    setAdminUsers(response.data.users ?? []);
+  }
+
   async function loadAdminConsole() {
     setAdminBusy(true);
     setAdminMessage("");
 
     try {
-      await Promise.all([loadAdminDashboard(), loadAdminConversations(), loadAdminBooks()]);
+      await Promise.all([
+        loadAdminDashboard(),
+        loadAdminConversations(),
+        loadAdminBooks(),
+        loadAdminUsers(),
+      ]);
     } catch (error) {
       setAdminMessage(getErrorMessage(error, "Admin console failed"));
     } finally {
@@ -2263,6 +2301,98 @@ export function App() {
     );
   }
 
+  function matchesAdminSearch(values: Array<string | undefined>) {
+    const needle = adminSearch.trim().toLowerCase();
+    if (!needle) {
+      return true;
+    }
+
+    return values.some((value) => (value || "").toLowerCase().includes(needle));
+  }
+
+  function getAdminDiagnosticValue(
+    diagnostics: Record<string, unknown> | undefined,
+    key: string
+  ) {
+    return diagnostics && key in diagnostics ? String(diagnostics[key] ?? "") : "";
+  }
+
+  function renderDiagnosticSummary(diagnostics: Record<string, unknown> | undefined) {
+    if (!diagnostics) {
+      return <p className="small-note">No retrieval diagnostics stored.</p>;
+    }
+
+    const rows = [
+      ["Backend", getAdminDiagnosticValue(diagnostics, "backend") || "-"],
+      ["Requested", getAdminDiagnosticValue(diagnostics, "requestedBackend") || "-"],
+      ["Pinecone attempted", getAdminDiagnosticValue(diagnostics, "pineconeAttempted") || "false"],
+      ["Pinecone enabled", getAdminDiagnosticValue(diagnostics, "pineconeEnabledForUser") || "false"],
+      ["Fallback", getAdminDiagnosticValue(diagnostics, "fallbackReason") || "none"],
+      ["Candidate chunks", getAdminDiagnosticValue(diagnostics, "candidateCount") || "0"],
+      ["Results", getAdminDiagnosticValue(diagnostics, "resultCount") || "0"],
+      ["Scoped book", getAdminDiagnosticValue(diagnostics, "scopedBookId") || "library"],
+    ];
+
+    return (
+      <dl className="admin-diagnostic-list">
+        {rows.map(([label, value]) => (
+          <div key={label}>
+            <dt>{label}</dt>
+            <dd>{value}</dd>
+          </div>
+        ))}
+      </dl>
+    );
+  }
+
+  const filteredAdminUsers = adminUsers.filter((userSummary) =>
+    matchesAdminSearch([
+      userSummary.userLabel,
+      userSummary.email,
+      userSummary.displayName,
+      userSummary.userId,
+      userSummary.plan,
+    ])
+  );
+  const filteredAdminBooks = adminBooks.filter((book) => {
+    const statusMatches =
+      adminBookStatusFilter === "all" || book.status === adminBookStatusFilter;
+    return (
+      statusMatches &&
+      matchesAdminSearch([
+        book.displayTitle,
+        book.title,
+        book.userLabel,
+        book.userEmail,
+        book.userDisplayName,
+        book.userId,
+        book.status,
+      ])
+    );
+  });
+  const filteredAdminConversations = adminConversations.filter((conversation) => {
+    const backend = getAdminDiagnosticValue(conversation.retrievalDiagnostics, "backend");
+    const modeMatches =
+      adminConversationModeFilter === "all" || conversation.mode === adminConversationModeFilter;
+    const backendMatches =
+      adminConversationBackendFilter === "all" || backend === adminConversationBackendFilter;
+
+    return (
+      modeMatches &&
+      backendMatches &&
+      matchesAdminSearch([
+        conversation.title,
+        conversation.latestQuestion,
+        conversation.userLabel,
+        conversation.userEmail,
+        conversation.userDisplayName,
+        conversation.userId,
+        conversation.mode,
+        backend,
+      ])
+    );
+  });
+
   function renderAdminConsole() {
     const counts = adminDashboard?.counts ?? {};
 
@@ -2319,6 +2449,83 @@ export function App() {
 
           {adminMessage ? <p className="status-message error">{adminMessage}</p> : null}
 
+          <section className="admin-section admin-filter-panel">
+            <div className="section-heading">
+              <p className="eyebrow">Find records</p>
+              <h2>Admin filters</h2>
+            </div>
+            <div className="admin-filter-grid">
+              <label>
+                Search
+                <input
+                  type="search"
+                  value={adminSearch}
+                  placeholder="Email, user, book, question"
+                  onChange={(event) => setAdminSearch(event.target.value)}
+                />
+              </label>
+              <label>
+                Book status
+                <select
+                  value={adminBookStatusFilter}
+                  onChange={(event) => setAdminBookStatusFilter(event.target.value)}
+                >
+                  <option value="all">All books</option>
+                  <option value="text_ready">Text ready</option>
+                  <option value="processing">Processing</option>
+                  <option value="queued">Queued</option>
+                  <option value="failed">Failed</option>
+                  <option value="upload_reserved">Upload reserved</option>
+                </select>
+              </label>
+              <label>
+                Conversation mode
+                <select
+                  value={adminConversationModeFilter}
+                  onChange={(event) => setAdminConversationModeFilter(event.target.value)}
+                >
+                  <option value="all">All modes</option>
+                  <option value="ai_grounded">AI grounded</option>
+                  <option value="source_draft">Source draft</option>
+                </select>
+              </label>
+              <label>
+                Retrieval backend
+                <select
+                  value={adminConversationBackendFilter}
+                  onChange={(event) => setAdminConversationBackendFilter(event.target.value)}
+                >
+                  <option value="all">All backends</option>
+                  <option value="firestore">Firestore</option>
+                  <option value="pinecone">Pinecone</option>
+                </select>
+              </label>
+            </div>
+          </section>
+
+          <section className="admin-section">
+            <div className="section-heading">
+              <p className="eyebrow">Security audit</p>
+              <h2>Callable enforcement checklist</h2>
+            </div>
+            <div className="admin-audit-grid">
+              {[
+                ["Public profile/session", "Auth required; session registration does not require email verification."],
+                ["Upload and ingestion", "Auth, verified email, ownership, file checks, and plan limits enforced server-side."],
+                ["Book reading/details", "Auth and book ownership enforced; reader detail requires text-ready where needed."],
+                ["AI ask/source lookup", "Auth, verified email, ownership/book scope, and message limit enforced server-side."],
+                ["Delete/export account data", "Auth and ownership enforced; account deletion requires confirmation phrase."],
+                ["Admin diagnostics", "Auth plus ADMIN_ALLOWED_UIDS; access is audit-logged."],
+                ["Open audit item", "Hard session/device validity is tracked, but not yet enforced across every callable path."],
+              ].map(([title, body]) => (
+                <article className="admin-card admin-audit-card" key={title}>
+                  <strong>{title}</strong>
+                  <p>{body}</p>
+                </article>
+              ))}
+            </div>
+          </section>
+
           <section className="admin-section">
             <div className="section-heading">
               <p className="eyebrow">Runtime</p>
@@ -2341,6 +2548,67 @@ export function App() {
                   <strong>{typeof value === "number" ? value : "-"}</strong>
                 </div>
               ))}
+            </div>
+          </section>
+
+          <section className="admin-section">
+            <div className="section-heading">
+              <p className="eyebrow">Accounts</p>
+              <h2>Users overview</h2>
+            </div>
+            <div className="admin-table-wrap">
+              <table className="admin-table admin-users-table">
+                <thead>
+                  <tr>
+                    <th>User</th>
+                    <th>Plan</th>
+                    <th>Verified</th>
+                    <th>Usage</th>
+                    <th>Activity</th>
+                    <th>Sessions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filteredAdminUsers.map((userSummary) => {
+                    const usageCurrent = userSummary.usageCurrentPeriod ?? {};
+                    const limits = userSummary.limits ?? {};
+                    return (
+                      <tr key={userSummary.userId}>
+                        <td data-label="User">{renderAdminUserCell(userSummary)}</td>
+                        <td data-label="Plan">
+                          {userSummary.plan}
+                          <small>{userSummary.subscriptionStatus}</small>
+                        </td>
+                        <td data-label="Verified">
+                          {userSummary.emailVerified ? "yes" : "no"}
+                          <small>{userSummary.onboardingStatus || "-"}</small>
+                        </td>
+                        <td data-label="Usage">
+                          {String(usageCurrent.messages ?? 0)}/
+                          {String(limits.monthlyMessages ?? "-")} messages
+                          <small>
+                            {String(usageCurrent.books ?? userSummary.bookCount)}/
+                            {String(limits.maxBooks ?? "-")} books
+                          </small>
+                        </td>
+                        <td data-label="Activity">
+                          {userSummary.bookCount} books
+                          <small>{userSummary.conversationCount} conversations</small>
+                        </td>
+                        <td data-label="Sessions">
+                          {userSummary.activeSessionCount}
+                          <small>{userSummary.lastLoginAt || "no login timestamp"}</small>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                  {filteredAdminUsers.length === 0 ? (
+                    <tr>
+                      <td colSpan={6}>No users match the current filters.</td>
+                    </tr>
+                  ) : null}
+                </tbody>
+              </table>
             </div>
           </section>
 
@@ -2400,7 +2668,7 @@ export function App() {
                   </tr>
                 </thead>
                 <tbody>
-                  {adminBooks.map((book) => (
+                  {filteredAdminBooks.map((book) => (
                     <tr key={book.id}>
                       <td data-label="Book">
                         <strong>{book.displayTitle || book.title}</strong>
@@ -2440,9 +2708,9 @@ export function App() {
                       </td>
                     </tr>
                   ))}
-                  {adminBooks.length === 0 ? (
+                  {filteredAdminBooks.length === 0 ? (
                     <tr>
-                      <td colSpan={7}>No books loaded.</td>
+                      <td colSpan={7}>No books match the current filters.</td>
                     </tr>
                   ) : null}
                 </tbody>
@@ -2497,7 +2765,7 @@ export function App() {
                   </tr>
                 </thead>
                 <tbody>
-                  {adminConversations.map((conversation) => {
+                  {filteredAdminConversations.map((conversation) => {
                     const diagnostics = conversation.retrievalDiagnostics ?? {};
                     return (
                       <tr key={conversation.id}>
@@ -2527,9 +2795,9 @@ export function App() {
                       </tr>
                     );
                   })}
-                  {adminConversations.length === 0 ? (
+                  {filteredAdminConversations.length === 0 ? (
                     <tr>
-                      <td colSpan={6}>No conversations loaded.</td>
+                      <td colSpan={6}>No conversations match the current filters.</td>
                     </tr>
                   ) : null}
                 </tbody>
@@ -2544,6 +2812,14 @@ export function App() {
                 <h2>Route trace and messages</h2>
               </div>
               <div className="admin-debug-grid">
+                <article className="admin-card">
+                  <h3>Readable diagnostics</h3>
+                  {renderDiagnosticSummary(
+                    adminConversationDebug.conversation.retrievalDiagnostics as
+                      | Record<string, unknown>
+                      | undefined
+                  )}
+                </article>
                 <article className="admin-card">
                   <h3>Conversation</h3>
                   <pre className="admin-json">
