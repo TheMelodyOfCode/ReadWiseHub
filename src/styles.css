@@ -2395,6 +2395,113 @@ a:focus-visible {
   overflow-wrap: anywhere;
 }
 
+.admin-artifact-list {
+  display: grid;
+  gap: 12px;
+}
+
+.admin-artifact-card {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-strong);
+}
+
+.admin-artifact-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.admin-artifact-header h4 {
+  margin: 0;
+}
+
+.admin-quality-badge {
+  flex: 0 0 auto;
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.admin-quality-badge.quality-heading_aware {
+  border-color: color-mix(in srgb, var(--success) 48%, var(--border));
+  color: var(--success);
+}
+
+.admin-quality-badge.quality-weak_titles {
+  border-color: color-mix(in srgb, var(--danger) 42%, var(--border));
+  color: var(--danger);
+}
+
+.admin-artifact-meta {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 8px;
+  margin: 0;
+}
+
+.admin-artifact-meta div {
+  min-width: 0;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.admin-artifact-meta dt {
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 900;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.admin-artifact-meta dd {
+  margin: 4px 0 0;
+  overflow-wrap: anywhere;
+  font-weight: 800;
+}
+
+.admin-artifact-sections {
+  display: grid;
+  gap: 8px;
+}
+
+.admin-artifact-sections article {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.admin-artifact-sections p {
+  margin: 0;
+  color: var(--muted);
+}
+
+.admin-artifact-card details {
+  min-width: 0;
+}
+
+.admin-artifact-card summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-weight: 800;
+}
+
 @media (max-width: 719px) {
   .admin-shell .site-header {
     align-items: stretch;
@@ -2416,6 +2523,14 @@ a:focus-visible {
     padding: 9px 8px;
     font-size: 0.88rem;
     text-align: center;
+  }
+
+  .admin-artifact-header {
+    display: grid;
+  }
+
+  .admin-artifact-meta {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .admin-hero {

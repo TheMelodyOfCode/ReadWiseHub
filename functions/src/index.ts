@@ -4318,7 +4318,7 @@ export const adminGetBookDebug = onCall(
       throw new HttpsError("not-found", "Book was not found.");
     }
 
-    const [jobsSnapshot, chunksSnapshot, sectionsSnapshot] = await Promise.all([
+    const [jobsSnapshot, chunksSnapshot, sectionsSnapshot, artifactsSnapshot] = await Promise.all([
       db
         .collection("ingestionJobs")
         .where("bookId", "==", bookId)
@@ -4333,6 +4333,11 @@ export const adminGetBookDebug = onCall(
         .collection("bookSections")
         .where("bookId", "==", bookId)
         .limit(30)
+        .get(),
+      db
+        .collection("bookArtifacts")
+        .where("bookId", "==", bookId)
+        .limit(20)
         .get(),
     ]);
     const chunks = chunksSnapshot.docs
@@ -4372,6 +4377,52 @@ export const adminGetBookDebug = onCall(
       .sort((left, right) =>
         String(right.createdAt || "").localeCompare(String(left.createdAt || ""))
       );
+    const artifacts = artifactsSnapshot.docs
+      .map((artifactSnapshot) => {
+        const rawSections: unknown[] = Array.isArray(artifactSnapshot.get("sections"))
+          ? artifactSnapshot.get("sections")
+          : [];
+        const sectionEntries = rawSections
+          .map(normalizeSectionMapEntry)
+          .filter((entry): entry is SectionMapEntry => entry !== null);
+        const weakTitleCount = countWeakSectionMapTitles(sectionEntries);
+        const hasHeadingAwareTitles =
+          sectionEntries.length > 0 &&
+          weakTitleCount === 0 &&
+          sectionEntries.some((section) => !/^Section \d+$/i.test(section.title));
+
+        return {
+          id: artifactSnapshot.id,
+          type: artifactSnapshot.get("type") || "",
+          title: artifactSnapshot.get("title") || "",
+          status: artifactSnapshot.get("status") || "",
+          generatedBy: artifactSnapshot.get("generatedBy") || "",
+          targetSectionCount: Number(artifactSnapshot.get("targetSectionCount")) || 0,
+          sourceSectionCount: Number(artifactSnapshot.get("sourceSectionCount")) || 0,
+          sectionCount: sectionEntries.length,
+          weakTitleCount,
+          mapQuality:
+            weakTitleCount > 0
+              ? "weak_titles"
+              : hasHeadingAwareTitles
+                ? "heading_aware"
+                : "grouped",
+          sections: sectionEntries.map((section) => ({
+            sectionNumber: section.sectionNumber,
+            title: section.title,
+            sourceSectionStart: section.sourceSectionStart,
+            sourceSectionEnd: section.sourceSectionEnd,
+            pageStart: section.pageStart,
+            pageEnd: section.pageEnd,
+            summaryPreview: section.summary.slice(0, 280),
+          })),
+          createdAt: normalizeFirestoreValue(artifactSnapshot.get("createdAt")),
+          updatedAt: normalizeFirestoreValue(artifactSnapshot.get("updatedAt")),
+        };
+      })
+      .sort((left, right) =>
+        String(right.createdAt || "").localeCompare(String(left.createdAt || ""))
+      );
 
     await writeAdminAuditEvent({
       viewer,
@@ -4393,6 +4444,7 @@ export const adminGetBookDebug = onCall(
       ingestionJobs: jobs,
       chunks,
       sections,
+      artifacts,
     };
   }
 );

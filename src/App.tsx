@@ -292,6 +292,29 @@ type AdminBookDebug = {
   ingestionJobs: Array<Record<string, unknown>>;
   chunks: Array<Record<string, unknown>>;
   sections: Array<Record<string, unknown>>;
+  artifacts: Array<{
+    id: string;
+    type: string;
+    title: string;
+    status: string;
+    generatedBy: string;
+    targetSectionCount: number;
+    sourceSectionCount: number;
+    sectionCount: number;
+    weakTitleCount: number;
+    mapQuality: string;
+    createdAt?: string;
+    updatedAt?: string;
+    sections: Array<{
+      sectionNumber: number;
+      title: string;
+      sourceSectionStart: number;
+      sourceSectionEnd: number;
+      pageStart: number;
+      pageEnd: number;
+      summaryPreview: string;
+    }>;
+  }>;
 };
 
 type AdminUserSummary = {
@@ -2811,6 +2834,80 @@ export function App() {
                 <article className="admin-card">
                   <h3>Section previews</h3>
                   <pre className="admin-json">{formatAdminJson(adminBookDebug.sections)}</pre>
+                </article>
+                <article className="admin-card admin-debug-wide">
+                  <h3>Generated artifacts</h3>
+                  {adminBookDebug.artifacts?.length ? (
+                    <div className="admin-artifact-list">
+                      {adminBookDebug.artifacts.map((artifact) => (
+                        <article key={artifact.id} className="admin-artifact-card">
+                          <div className="admin-artifact-header">
+                            <div>
+                              <h4>{artifact.title || artifact.id}</h4>
+                              <small>
+                                {artifact.id} · {artifact.type || "artifact"} ·{" "}
+                                {artifact.createdAt || "unknown date"}
+                              </small>
+                            </div>
+                            <span
+                              className={`admin-quality-badge quality-${artifact.mapQuality || "unknown"}`}
+                            >
+                              {artifact.mapQuality || "unknown"}
+                            </span>
+                          </div>
+                          <dl className="admin-artifact-meta">
+                            <div>
+                              <dt>Status</dt>
+                              <dd>{artifact.status || "-"}</dd>
+                            </div>
+                            <div>
+                              <dt>Target</dt>
+                              <dd>{artifact.targetSectionCount}</dd>
+                            </div>
+                            <div>
+                              <dt>Sections</dt>
+                              <dd>{artifact.sectionCount}</dd>
+                            </div>
+                            <div>
+                              <dt>Source sections</dt>
+                              <dd>{artifact.sourceSectionCount}</dd>
+                            </div>
+                            <div>
+                              <dt>Weak titles</dt>
+                              <dd>{artifact.weakTitleCount}</dd>
+                            </div>
+                            <div>
+                              <dt>Generator</dt>
+                              <dd>{artifact.generatedBy || "-"}</dd>
+                            </div>
+                          </dl>
+                          <div className="admin-artifact-sections">
+                            {artifact.sections.map((section) => (
+                              <article key={`${artifact.id}-${section.sectionNumber}`}>
+                                <strong>
+                                  {section.sectionNumber}. {section.title}
+                                </strong>
+                                <small>
+                                  source {section.sourceSectionStart + 1}-
+                                  {section.sourceSectionEnd + 1}
+                                  {section.pageStart || section.pageEnd
+                                    ? ` · pages ${section.pageStart || "?"}-${section.pageEnd || "?"}`
+                                    : ""}
+                                </small>
+                                <p>{section.summaryPreview}</p>
+                              </article>
+                            ))}
+                          </div>
+                          <details>
+                            <summary>Raw artifact JSON</summary>
+                            <pre className="admin-json">{formatAdminJson(artifact)}</pre>
+                          </details>
+                        </article>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="small-note">No generated artifacts found for this book.</p>
+                  )}
                 </article>
               </div>
             </section>
