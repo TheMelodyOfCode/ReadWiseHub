@@ -1455,6 +1455,17 @@ select {
     padding-inline: 10px;
   }
 
+  .section-map-control,
+  .artifact-card-header,
+  .artifact-section-title,
+  .artifact-list-heading {
+    display: grid;
+  }
+
+  .section-map-control {
+    align-items: stretch;
+  }
+
   .reader-panel {
     padding: 10px 6px;
     overflow: clip;
@@ -1604,17 +1615,55 @@ select {
   gap: 10px;
 }
 
+.book-detail-actions {
+  align-items: center;
+}
+
+.section-map-control {
+  display: flex;
+  align-items: end;
+  gap: 8px;
+  min-width: 0;
+}
+
+.section-map-control label {
+  display: grid;
+  gap: 4px;
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 900;
+}
+
+.section-map-control select {
+  min-height: 40px;
+  padding: 0 34px 0 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-weight: 800;
+}
+
 .artifact-list {
   display: grid;
   gap: 12px;
   margin-top: 16px;
 }
 
-.artifact-list h4 {
+.artifact-list-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.artifact-list h4,
+.artifact-list-heading small {
   margin: 0;
 }
 
-.artifact-list article {
+.artifact-card {
   display: grid;
   gap: 12px;
   padding: 14px;
@@ -1623,16 +1672,57 @@ select {
   background: color-mix(in srgb, var(--primary) 7%, var(--surface));
 }
 
+.artifact-card-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.artifact-quality {
+  flex: 0 0 auto;
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.artifact-quality.quality-heading_aware {
+  border-color: color-mix(in srgb, var(--success) 48%, var(--border));
+  color: var(--success);
+}
+
+.artifact-quality.quality-weak_titles {
+  border-color: color-mix(in srgb, var(--danger) 42%, var(--border));
+  color: var(--danger);
+}
+
 .artifact-list ol {
   display: grid;
   gap: 10px;
   margin: 0;
-  padding-left: 22px;
+  padding: 0;
+  list-style: none;
 }
 
 .artifact-list li {
-  padding-bottom: 10px;
-  border-bottom: 1px solid var(--border);
+  display: grid;
+  gap: 5px;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.artifact-section-title {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
 }
 
 .artifact-list p,

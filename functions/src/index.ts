@@ -3467,20 +3467,41 @@ export const listBookArtifacts = onCall(
     return {
       ok: true,
       artifacts: snapshot.docs
-        .map((artifactSnapshot) => ({
-          id: artifactSnapshot.id,
-          title: artifactSnapshot.get("title") || "Section map",
-          type: artifactSnapshot.get("type") || "",
-          bookId: artifactSnapshot.get("bookId") || "",
-          bookTitle: artifactSnapshot.get("bookTitle") || "",
-          status: artifactSnapshot.get("status") || "",
-          targetSectionCount: Number(artifactSnapshot.get("targetSectionCount")) || 0,
-          sections: Array.isArray(artifactSnapshot.get("sections"))
+        .map((artifactSnapshot) => {
+          const rawSections: unknown[] = Array.isArray(artifactSnapshot.get("sections"))
             ? artifactSnapshot.get("sections")
-            : [],
-          createdAt: normalizeFirestoreValue(artifactSnapshot.get("createdAt")),
-          updatedAt: normalizeFirestoreValue(artifactSnapshot.get("updatedAt")),
-        }))
+            : [];
+          const sectionEntries = rawSections
+            .map(normalizeSectionMapEntry)
+            .filter((entry): entry is SectionMapEntry => entry !== null);
+          const weakTitleCount = countWeakSectionMapTitles(sectionEntries);
+          const hasHeadingAwareTitles =
+            sectionEntries.length > 0 &&
+            weakTitleCount === 0 &&
+            sectionEntries.some((section) => !/^Section \d+$/i.test(section.title));
+
+          return {
+            id: artifactSnapshot.id,
+            title: artifactSnapshot.get("title") || "Section map",
+            type: artifactSnapshot.get("type") || "",
+            bookId: artifactSnapshot.get("bookId") || "",
+            bookTitle: artifactSnapshot.get("bookTitle") || "",
+            status: artifactSnapshot.get("status") || "",
+            generatedBy: artifactSnapshot.get("generatedBy") || "",
+            targetSectionCount: Number(artifactSnapshot.get("targetSectionCount")) || 0,
+            sourceSectionCount: Number(artifactSnapshot.get("sourceSectionCount")) || 0,
+            weakTitleCount,
+            mapQuality:
+              weakTitleCount > 0
+                ? "weak_titles"
+                : hasHeadingAwareTitles
+                  ? "heading_aware"
+                  : "grouped",
+            sections: sectionEntries,
+            createdAt: normalizeFirestoreValue(artifactSnapshot.get("createdAt")),
+            updatedAt: normalizeFirestoreValue(artifactSnapshot.get("updatedAt")),
+          };
+        })
         .sort((left, right) => String(right.createdAt || "").localeCompare(String(left.createdAt || ""))),
     };
   }

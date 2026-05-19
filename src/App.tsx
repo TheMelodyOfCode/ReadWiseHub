@@ -83,9 +83,14 @@ type BookArtifact = {
   bookId: string;
   bookTitle: string;
   status: string;
+  generatedBy: string;
   targetSectionCount: number;
+  sourceSectionCount: number;
+  weakTitleCount: number;
+  mapQuality: string;
   sections: SectionMapEntry[];
   createdAt?: string;
+  updatedAt?: string;
 };
 
 type ReaderChunk = {
@@ -621,6 +626,7 @@ export function App() {
   const [selectedBookDetailId, setSelectedBookDetailId] = useState("");
   const [bookChunkPreviews, setBookChunkPreviews] = useState<BookChunkPreview[]>([]);
   const [bookArtifacts, setBookArtifacts] = useState<BookArtifact[]>([]);
+  const [sectionMapTargetCount, setSectionMapTargetCount] = useState(6);
   const [sectionMapBusy, setSectionMapBusy] = useState(false);
   const [bookDetailMessage, setBookDetailMessage] = useState("");
   const [readerBookId, setReaderBookId] = useState("");
@@ -1693,6 +1699,7 @@ export function App() {
     setBookDetailMessage("");
     setBookChunkPreviews([]);
     setBookArtifacts([]);
+    setSectionMapTargetCount(6);
 
     try {
       const getBookDetail = httpsCallable<
@@ -1738,7 +1745,7 @@ export function App() {
       >(functions, "generateBookSectionMap");
       await generateBookSectionMap(withSession({
         bookId: book.id,
-        targetSectionCount: 6,
+        targetSectionCount: sectionMapTargetCount,
       }));
       await loadBookArtifacts(book.id);
       setBookDetailMessage("Section map created.");
@@ -3416,7 +3423,7 @@ export function App() {
                       {book.formatWarning ? (
                         <p className="format-warning">{book.formatWarning}</p>
                       ) : null}
-                      <div className="book-actions">
+                      <div className="book-actions book-detail-actions">
                         {book.status === "text_ready" ? (
                           <>
                             <button
@@ -3433,40 +3440,84 @@ export function App() {
                             >
                               {t.askThisBook}
                             </button>
-                            <button
-                              className="button secondary compact"
-                              type="button"
-                              disabled={sectionMapBusy}
-                              onClick={() => generateSectionMap(book)}
-                            >
-                              {sectionMapBusy ? "Creating map..." : "Create section map"}
-                            </button>
+                            <div className="section-map-control">
+                              <label htmlFor="section-map-count">Map sections</label>
+                              <select
+                                id="section-map-count"
+                                value={sectionMapTargetCount}
+                                onChange={(event) =>
+                                  setSectionMapTargetCount(Number(event.target.value))
+                                }
+                              >
+                                {[4, 6, 8, 10, 11, 12].map((count) => (
+                                  <option key={count} value={count}>
+                                    {count}
+                                  </option>
+                                ))}
+                              </select>
+                              <button
+                                className="button secondary compact"
+                                type="button"
+                                disabled={sectionMapBusy}
+                                onClick={() => generateSectionMap(book)}
+                              >
+                                {sectionMapBusy
+                                  ? "Creating..."
+                                  : bookArtifacts.length > 0
+                                    ? "Create new map"
+                                    : "Create map"}
+                              </button>
+                            </div>
                           </>
                         ) : null}
                       </div>
                       {bookDetailMessage ? <p className="error-text">{bookDetailMessage}</p> : null}
                       {bookArtifacts.length > 0 ? (
                         <div className="artifact-list">
-                          <h4>Generated section maps</h4>
+                          <div className="artifact-list-heading">
+                            <h4>Generated section maps</h4>
+                            <small>{bookArtifacts.length} saved</small>
+                          </div>
                           {bookArtifacts.map((artifact) => (
-                            <article key={artifact.id}>
-                              <div>
-                                <strong>{artifact.title}</strong>
-                                <small>
-                                  {artifact.sections.length} sections · {artifact.createdAt || ""}
-                                </small>
+                            <article key={artifact.id} className="artifact-card">
+                              <div className="artifact-card-header">
+                                <div>
+                                  <strong>{artifact.title}</strong>
+                                  <small>
+                                    {artifact.sections.length} sections · target{" "}
+                                    {artifact.targetSectionCount || artifact.sections.length}
+                                    {artifact.sourceSectionCount
+                                      ? ` · from ${artifact.sourceSectionCount} source sections`
+                                      : ""}
+                                    {artifact.createdAt ? ` · ${artifact.createdAt}` : ""}
+                                  </small>
+                                </div>
+                                <span className={`artifact-quality quality-${artifact.mapQuality || "unknown"}`}>
+                                  {artifact.mapQuality === "heading_aware"
+                                    ? "Heading-aware"
+                                    : artifact.mapQuality === "weak_titles"
+                                      ? "Needs review"
+                                      : "Grouped"}
+                                </span>
                               </div>
                               <ol>
                                 {artifact.sections.map((section) => (
                                   <li key={section.sectionNumber}>
-                                    <strong>
-                                      {section.sectionNumber}. {section.title}
-                                    </strong>
+                                    <div className="artifact-section-title">
+                                      <strong>
+                                        {section.sectionNumber}. {section.title}
+                                      </strong>
+                                      <small>
+                                        source {section.sourceSectionStart + 1}-
+                                        {section.sourceSectionEnd + 1}
+                                        {section.pageStart || section.pageEnd
+                                          ? ` · pages ${section.pageStart || "?"}-${
+                                              section.pageEnd || "?"
+                                            }`
+                                          : ""}
+                                      </small>
+                                    </div>
                                     <p>{section.summary}</p>
-                                    <small>
-                                      Source sections {section.sourceSectionStart + 1}-
-                                      {section.sourceSectionEnd + 1}
-                                    </small>
                                   </li>
                                 ))}
                               </ol>
