@@ -645,6 +645,41 @@ async function run() {
     );
   }
 
+  const sectionFollowUp = await callFunction(
+    "askLibrary",
+    { query: "What evidence supports that?", locale: "en" },
+    idToken
+  );
+  check(sectionFollowUp.ok === true, "section-map follow-up askLibrary did not return ok.");
+  const sectionFollowUpConversation = await db
+    .collection("conversations")
+    .doc(sectionFollowUp.conversationId)
+    .get();
+  check(
+    sectionFollowUpConversation.get("activeMode") === "section_map",
+    `section-map follow-up activeMode was ${sectionFollowUpConversation.get("activeMode")}.`
+  );
+  check(
+    sectionFollowUpConversation.get("activeArtifactId") === naturalArtifactId,
+    "section-map follow-up did not inherit the active artifact id."
+  );
+  check(
+    sectionFollowUpConversation.get("activeSectionNumber") === 2,
+    "section-map follow-up did not inherit the active section number."
+  );
+  check(
+    sectionFollowUpConversation.get("parentConversationId") === sectionAsk.conversationId,
+    "section-map follow-up did not store the parent conversation id."
+  );
+  const sectionFollowUpRouteId = sectionFollowUpConversation.get("routeTraceId");
+  if (sectionFollowUpRouteId) {
+    const sectionFollowUpRoute = await db.collection("routeTraces").doc(sectionFollowUpRouteId).get();
+    check(
+      sectionFollowUpRoute.get("contextSource") === "latest_conversation",
+      "section-map follow-up route trace did not record latest conversation context."
+    );
+  }
+
   const structuredMapAsk = await callFunction(
     "askLibrary",
     {

@@ -154,6 +154,13 @@ type LibrarySearchResponse = {
   activeSectionNumber?: number;
 };
 
+type ConversationContext = {
+  conversationId: string;
+  bookId: string;
+  activeArtifactId: string;
+  activeSectionNumber: number;
+};
+
 type SourceBookSummary = {
   bookId: string;
   bookTitle: string;
@@ -1536,6 +1543,71 @@ function parseRequestedSectionNumber(queryText: string): number {
   return Number.isInteger(sectionNumber) && sectionNumber > 0 ? sectionNumber : 0;
 }
 
+function isContextualFollowUp(queryText: string): boolean {
+  const normalized = queryText.trim().toLowerCase();
+  if (!normalized || normalized.length > 180) {
+    return false;
+  }
+
+  return (
+    /\b(that|this|it|there|above|previous|vorher|das|dies|dazu)\b/.test(normalized) ||
+    /\b(evidence|support|supports|examples|beispiele|belege|quelle|quellen)\b/.test(normalized) ||
+    /\b(tell me more|explain (that|this)|why is (that|this)|what does (that|this) mean|simpler)\b/.test(normalized) ||
+    /\b(what else|was noch|mehr dazu|genauer)\b/.test(normalized)
+  );
+}
+
+async function loadLatestConversationContext(userId: string): Promise<ConversationContext | null> {
+  const conversationsSnapshot = await db
+    .collection("conversations")
+    .where("userId", "==", userId)
+    .limit(30)
+    .get();
+  const latestConversation = conversationsSnapshot.docs
+    .sort((left, right) => {
+      const leftCreatedAt = left.get("createdAt")?.toMillis?.() ?? 0;
+      const rightCreatedAt = right.get("createdAt")?.toMillis?.() ?? 0;
+      return rightCreatedAt - leftCreatedAt;
+    })
+    .find((conversationSnapshot) => {
+      const scopedBookId =
+        typeof conversationSnapshot.get("activeBookId") === "string" && conversationSnapshot.get("activeBookId")
+          ? conversationSnapshot.get("activeBookId")
+          : conversationSnapshot.get("scopedBookId");
+      const sourceBookIds = Array.isArray(conversationSnapshot.get("sourceBookIds"))
+        ? conversationSnapshot.get("sourceBookIds").filter((value: unknown) => typeof value === "string")
+        : [];
+      return Boolean(scopedBookId) || sourceBookIds.length === 1;
+    });
+
+  if (!latestConversation) {
+    return null;
+  }
+
+  const sourceBookIds = Array.isArray(latestConversation.get("sourceBookIds"))
+    ? latestConversation.get("sourceBookIds").filter((value: unknown): value is string => typeof value === "string")
+    : [];
+  const bookId =
+    (typeof latestConversation.get("activeBookId") === "string" && latestConversation.get("activeBookId")) ||
+    (typeof latestConversation.get("scopedBookId") === "string" && latestConversation.get("scopedBookId")) ||
+    sourceBookIds[0] ||
+    "";
+
+  if (!bookId) {
+    return null;
+  }
+
+  return {
+    conversationId: latestConversation.id,
+    bookId,
+    activeArtifactId:
+      typeof latestConversation.get("activeArtifactId") === "string"
+        ? latestConversation.get("activeArtifactId")
+        : "",
+    activeSectionNumber: Number(latestConversation.get("activeSectionNumber")) || 0,
+  };
+}
+
 function parseSectionMapTargetCount(queryText: string): number {
   const wantsSectionMap =
     /\b(?:divide|split|organize|map|outline|glieder|gliedere|teile|aufteilen)\b.{0,120}\b(?:sections|parts|abschnitte|teile)\b/i.test(queryText) ||
@@ -1901,6 +1973,117 @@ async function resolveSectionMapSearch(
     results,
     diagnostics,
     activeArtifactId: artifactForSearch.id,
+    activeSectionNumber,
+  };
+}
+
+async function resolveArtifactSectionSearch(
+  userId: string,
+  queryText: string,
+  bookId: string,
+  artifactId: string,
+  activeSectionNumber: number
+): Promise<LibrarySearchResponse | null> {
+  if (!bookId || !artifactId || !activeSectionNumber) {
+    return null;
+  }
+
+  const [bookSnapshot, artifactSnapshot] = await Promise.all([
+    db.collection("books").doc(bookId).get(),
+    db.collection("bookArtifacts").doc(artifactId).get(),
+  ]);
+
+  if (
+    !bookSnapshot.exists ||
+    bookSnapshot.get("userId") !== userId ||
+    !artifactSnapshot.exists ||
+    artifactSnapshot.get("userId") !== userId ||
+    artifactSnapshot.get("bookId") !== bookId
+  ) {
+    return null;
+  }
+
+  const rawSectionEntries: unknown[] = Array.isArray(artifactSnapshot.get("sections"))
+    ? artifactSnapshot.get("sections")
+    : [];
+  const sectionEntries = rawSectionEntries
+    .map(normalizeSectionMapEntry)
+    .filter((entry): entry is SectionMapEntry => entry !== null);
+  const activeSection = sectionEntries.find((entry) => entry.sectionNumber === activeSectionNumber);
+  if (!activeSection) {
+    return null;
+  }
+
+  const sectionStart = Math.min(activeSection.sourceSectionStart, activeSection.sourceSectionEnd);
+  const sectionEnd = Math.max(activeSection.sourceSectionStart, activeSection.sourceSectionEnd);
+  const sectionsSnapshot = await db
+    .collection("bookSections")
+    .where("bookId", "==", bookId)
+    .limit(600)
+    .get();
+  const bookTitle =
+    String(bookSnapshot.get("displayTitle") || "") ||
+    createDisplayTitle(String(bookSnapshot.get("title") || "Untitled"));
+  const terms = tokenizeSearchQuery(queryText);
+  const results = sectionsSnapshot.docs
+    .filter((sectionSnapshot) => sectionSnapshot.get("userId") === userId)
+    .map((sectionSnapshot) => ({
+      snapshot: sectionSnapshot,
+      sectionIndex: Number(sectionSnapshot.get("sectionIndex")) || 0,
+    }))
+    .filter(({ sectionIndex }) => sectionIndex >= sectionStart && sectionIndex <= sectionEnd)
+    .sort((left, right) => left.sectionIndex - right.sectionIndex)
+    .slice(0, 8)
+    .map(({ snapshot, sectionIndex }, index) => {
+      const title = String(snapshot.get("title") || "").trim();
+      const text = String(snapshot.get("text") || snapshot.get("textPreview") || "").replace(/\s+/g, " ").trim();
+      const excerptParts = [
+        `Generated section ${activeSection.sectionNumber}: ${activeSection.title}`,
+        title ? `Source section: ${title}` : "",
+        createExcerpt(text, terms) || text.slice(0, 2400),
+      ].filter(Boolean);
+
+      return {
+        chunkId: snapshot.id,
+        bookId,
+        bookTitle,
+        chunkIndex: sectionIndex,
+        score: 120 - index,
+        excerpt: excerptParts.join("\n"),
+      };
+    });
+
+  if (results.length === 0) {
+    return null;
+  }
+
+  const diagnostics = createRetrievalDiagnostics({
+    userId,
+    bookId,
+    books: new Map([
+      [
+        bookId,
+        {
+          title: bookTitle,
+          scope: resolveBookScope(userId, bookSnapshot),
+          pineconeIndexedChunkCount: Number(bookSnapshot.get("pineconeIndexedChunkCount")) || 0,
+          pineconeMissingChunkCount: Number(bookSnapshot.get("pineconeMissingChunkCount")) || 0,
+        },
+      ],
+    ]),
+  });
+  diagnostics.backend = "firestore";
+  diagnostics.fallbackReason = "conversation_context_section";
+  diagnostics.candidateCount = results.length;
+  diagnostics.resultCount = results.length;
+  diagnostics.sectionMapMatched = true;
+  diagnostics.activeArtifactId = artifactSnapshot.id;
+  diagnostics.activeSectionNumber = activeSectionNumber;
+
+  return {
+    results,
+    diagnostics,
+    activeArtifactId: artifactSnapshot.id,
     activeSectionNumber,
   };
 }
@@ -4548,7 +4731,7 @@ export const askLibrary = onCall(
     const queryText = assertString(request.data?.query, "query").slice(0, MAX_SEARCH_QUERY_LENGTH);
     const locale =
       typeof request.data?.locale === "string" && request.data.locale === "de" ? "de" : "en";
-    const bookId =
+    const requestedBookId =
       typeof request.data?.bookId === "string" && request.data.bookId.trim()
         ? request.data.bookId.trim()
         : "";
@@ -4567,6 +4750,10 @@ export const askLibrary = onCall(
       );
     }
 
+    const inheritedContext = !requestedBookId && isContextualFollowUp(queryText)
+      ? await loadLatestConversationContext(auth.uid)
+      : null;
+    const bookId = requestedBookId || inheritedContext?.bookId || "";
     const sectionMapTargetCount = bookId ? parseSectionMapTargetCount(queryText) : 0;
     const createdSectionMap = sectionMapTargetCount
       ? await createBookSectionMapArtifact(auth.uid, bookId, sectionMapTargetCount)
@@ -4581,7 +4768,20 @@ export const askLibrary = onCall(
           createdSectionMap.sections
         )
       : null;
-    const sectionMapSearch = sectionMapCreationSearch ?? (await resolveSectionMapSearch(auth.uid, queryText, bookId));
+    const inheritedSectionSearch =
+      !sectionMapCreationSearch && inheritedContext?.activeArtifactId && inheritedContext.activeSectionNumber
+        ? await resolveArtifactSectionSearch(
+            auth.uid,
+            queryText,
+            bookId,
+            inheritedContext.activeArtifactId,
+            inheritedContext.activeSectionNumber
+          )
+        : null;
+    const sectionMapSearch =
+      sectionMapCreationSearch ??
+      inheritedSectionSearch ??
+      (await resolveSectionMapSearch(auth.uid, queryText, bookId));
     const search = sectionMapSearch ?? (await runLibrarySearch(auth.uid, queryText, bookId));
     const results = search.results;
     const generatedSectionMapAnswer = createdSectionMap
@@ -4636,6 +4836,8 @@ export const askLibrary = onCall(
         activeBookId: bookId,
         activeArtifactId,
         activeSectionNumber,
+        contextSource: inheritedContext ? "latest_conversation" : "explicit_or_fresh",
+        parentConversationId: inheritedContext?.conversationId || "",
         sourceBookIds: sourceBooks.map((sourceBook) => sourceBook.bookId),
         sourceBookTitles: sourceBooks.map((sourceBook) => sourceBook.bookTitle),
         retrievalDiagnostics: search.diagnostics,
@@ -4686,13 +4888,17 @@ export const askLibrary = onCall(
             : "book_qa",
         selectedBookSource: activeMode === "section_map" || activeMode === "section_map_created"
           ? "section_map_artifact"
-          : bookId
+          : inheritedContext
+            ? "latest_conversation_context"
+            : bookId
             ? "explicit_book_scope"
             : "library_scope",
         scopedBookId: bookId,
         activeBookId: bookId,
         activeArtifactId,
         activeSectionNumber,
+        contextSource: inheritedContext ? "latest_conversation" : "explicit_or_fresh",
+        parentConversationId: inheritedContext?.conversationId || "",
         queryPreview: queryText.slice(0, 180),
         queryLength: queryText.length,
         answerMode: aiAnswer ? "ai_grounded" : "source_draft",
