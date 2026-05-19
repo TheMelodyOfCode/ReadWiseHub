@@ -13,6 +13,7 @@ let uid = "";
 let idToken = "";
 let primaryBookId = "";
 let structuredBookId = "";
+let chapterOnlyBookId = "";
 let accountDeleteBookId = "";
 let accountDeleteConversationId = "";
 let unverifiedUid = "";
@@ -63,6 +64,7 @@ async function createRegressionAuthUser() {
   await auth.updateUser(uid, { emailVerified: true });
   primaryBookId = `${uid}-book`;
   structuredBookId = `${uid}-structured-book`;
+  chapterOnlyBookId = `${uid}-chapter-only-book`;
   accountDeleteBookId = `${uid}-account-delete-book`;
   accountDeleteConversationId = `${uid}-account-delete-conversation`;
 }
@@ -401,6 +403,70 @@ async function seedStructuredBook() {
   await batch.commit();
 }
 
+async function seedChapterOnlyBook() {
+  await db.collection("books").doc(chapterOnlyBookId).set({
+    userId: uid,
+    title: "The_restaurant_at_the_end_of_the_universe",
+    displayTitle: "The Restaurant at the End of the Universe",
+    normalizedTitle: "the restaurant at the end of the universe",
+    author: "",
+    language: "en",
+    status: "text_ready",
+    sourceType: "regression",
+    storagePath: "",
+    originalFileName: "The_restaurant_at_the_end_of_the_universe.md",
+    mimeType: "text/markdown",
+    sizeBytes: 8192,
+    pageCount: 0,
+    textLength: 4000,
+    chunkCount: 12,
+    sectionCount: 12,
+    embeddedChunkCount: 0,
+    createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    textReadyAt: admin.firestore.FieldValue.serverTimestamp(),
+    planAtIngestion: "free",
+  });
+
+  const chapterTexts = [
+    "## Chapter 1\n\nArthur tries to get tea from the Nutrimatic machine while the Heart of Gold drifts through danger.",
+    "## Chapter 2\n\nZaphod argues with ghostly advisers about stolen ships and dangerous missions.",
+    "## Chapter 3\n\nMarvin stands in a corridor while a massive tank threatens the building.",
+    "## Chapter 4\n\nMilliways appears as travelers arrive at the restaurant near the end of time.",
+    "## Chapter 5\n\nHotblack Desiato and Disaster Area become part of Ford's chaotic restaurant evening.",
+    "## Chapter 6\n\nThe stuntship heads toward a star while the group scrambles for a way out.",
+    "## Chapter 7\n\nThe teleporter sends the travelers into confusion and separates their paths.",
+    "## Chapter 8\n\nThe Golgafrinchan ark reveals a civilization built on absurd priorities.",
+    "## Chapter 9\n\nArthur and Ford confront the strange logic of prehistoric Earth.",
+    "## Chapter 10\n\nThe colonists debate leaves, currency, and survival with impressive incompetence.",
+    "## Chapter 11\n\nA new social order forms around committee meetings and misplaced certainty.",
+    "## Chapter 12\n\nThe story closes with Earth history bending toward comic disaster.",
+  ];
+  const batch = db.batch();
+  chapterTexts.forEach((text, index) => {
+    batch.set(db.collection("bookChunks").doc(`${chapterOnlyBookId}_${index}`), {
+      userId: uid,
+      bookId: chapterOnlyBookId,
+      chunkIndex: index,
+      text,
+      textPreview: text.slice(0, 240),
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+    batch.set(db.collection("bookSections").doc(`${chapterOnlyBookId}_${index}`), {
+      userId: uid,
+      bookId: chapterOnlyBookId,
+      sectionIndex: index,
+      title: `Chapter ${index + 1}`,
+      text,
+      textPreview: text.slice(0, 300),
+      paragraphStart: index,
+      paragraphEnd: index,
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+  });
+  await batch.commit();
+}
+
 async function seedAccountDeleteData() {
   await seedBook(accountDeleteBookId, "Account Delete Regression Book");
   await db.collection("conversations").doc(accountDeleteConversationId).set({
@@ -435,6 +501,7 @@ async function run() {
   await seedUser();
   await seedBook(primaryBookId, "Callable Regression Book");
   await seedStructuredBook();
+  await seedChapterOnlyBook();
   const registeredSession = await callFunction(
     "registerLoginSession",
     {
@@ -732,6 +799,30 @@ async function run() {
   check(
     !structuredElevenTitles.includes("Here"),
     `11-section structured map accepted intro text as a title: ${structuredElevenTitles.join(", ")}`
+  );
+
+  const chapterOnlyMapAsk = await callFunction(
+    "askLibrary",
+    {
+      query: "Please divide this book into 10 sections with titles.",
+      locale: "en",
+      bookId: chapterOnlyBookId,
+    },
+    idToken
+  );
+  check(chapterOnlyMapAsk.ok === true, "chapter-only section map askLibrary did not return ok.");
+  const chapterOnlyMapConversation = await db
+    .collection("conversations")
+    .doc(chapterOnlyMapAsk.conversationId)
+    .get();
+  const chapterOnlyArtifactId = chapterOnlyMapConversation.get("activeArtifactId");
+  const chapterOnlyArtifact = chapterOnlyArtifactId
+    ? await db.collection("bookArtifacts").doc(chapterOnlyArtifactId).get()
+    : null;
+  const chapterOnlyTitles = chapterOnlyArtifact?.get("sections")?.map((section) => section.title) || [];
+  check(
+    chapterOnlyTitles.every((title) => !/^Chapter \d+$/i.test(title)),
+    `chapter-only section map returned generic chapter titles: ${chapterOnlyTitles.join(", ")}`
   );
 
   await writeReaderSettingsViaClient(primaryBookId);

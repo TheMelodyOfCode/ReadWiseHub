@@ -147,8 +147,7 @@ function createDisplayTitle(title: string) {
       return `${lower.charAt(0).toUpperCase()}${lower.slice(1)}`;
     })
     .join(" ");
-  const colonMatch = titleCase.match(/^(.+?)\s+(a|an|the|eine?|der|die|das)\s+/i);
-  return (colonMatch ? colonMatch[1] : titleCase).slice(0, 90) || "Untitled";
+  return titleCase.slice(0, 90) || "Untitled";
 }
 
 function normalizeBookTitle(title: string) {

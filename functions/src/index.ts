@@ -353,8 +353,7 @@ function createDisplayTitle(title: string): string {
     })
     .join(" ");
 
-  const colonMatch = titleCase.match(/^(.+?)\s+(a|an|the|eine?|der|die|das)\s+/i);
-  return (colonMatch ? colonMatch[1] : titleCase).slice(0, 90) || "Untitled";
+  return titleCase.slice(0, 90) || "Untitled";
 }
 
 function normalizeBookTitle(title: string): string {
@@ -2877,20 +2876,21 @@ function createSectionMapEntries(
   }
 
   const groupCount = Math.max(1, Math.min(targetCount, sections.length));
-  const groupSize = Math.ceil(sections.length / groupCount);
-
   return Array.from({ length: groupCount }, (_, groupIndex) => {
-    const group = sections.slice(groupIndex * groupSize, (groupIndex + 1) * groupSize);
+    const start = Math.floor((groupIndex * sections.length) / groupCount);
+    const end = Math.floor(((groupIndex + 1) * sections.length) / groupCount);
+    const group = sections.slice(start, Math.max(end, start + 1));
     const first = group[0];
     const last = group[group.length - 1] ?? first;
     const titledSection = group.find((section) => section.title.trim());
-    const title = titledSection?.title.trim() || `Section ${groupIndex + 1}`;
     const summarySource = group
       .map((section) => section.textPreview)
       .filter(Boolean)
       .join(" ")
       .replace(/\s+/g, " ")
       .trim();
+    const rawTitle = titledSection?.title.trim() || `Section ${groupIndex + 1}`;
+    const title = createUserFacingSectionTitle(rawTitle, summarySource, groupIndex + 1);
 
     return {
       sectionNumber: groupIndex + 1,
@@ -2905,6 +2905,40 @@ function createSectionMapEntries(
       pageEnd: last.pageEnd,
     };
   });
+}
+
+function isGenericSectionTitle(title: string): boolean {
+  return /^(chapter|section|part)\s+\d+$/i.test(title.trim());
+}
+
+function createTopicTitleFromText(text: string, fallback: string): string {
+  const cleaned = text
+    .replace(/[#>*_`]+/g, " ")
+    .replace(/\b(chapter|section|part)\s+\d+\b/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  const sentence = cleaned.split(/[.!?]\s+/)[0] || cleaned;
+  const words = sentence
+    .split(" ")
+    .map((word) => word.replace(/^[^A-Za-z0-9]+|[^A-Za-z0-9]+$/g, ""))
+    .filter((word) => word.length > 1)
+    .slice(0, 7);
+
+  if (words.length < 3) {
+    return fallback;
+  }
+
+  return words.join(" ");
+}
+
+function createUserFacingSectionTitle(rawTitle: string, summarySource: string, sectionNumber: number): string {
+  const trimmedTitle = rawTitle.trim();
+  if (!trimmedTitle || isGenericSectionTitle(trimmedTitle)) {
+    const topicTitle = createTopicTitleFromText(summarySource, `Section ${sectionNumber}`);
+    return topicTitle.slice(0, 120);
+  }
+
+  return trimmedTitle.slice(0, 120);
 }
 
 function cleanDetectedHeadingTitle(rawTitle: string): string {
@@ -3055,7 +3089,7 @@ function createHeadingAwareSectionMapEntries(
   return headings.map((heading) => {
     return {
       sectionNumber: heading.number,
-      title: heading.title,
+      title: createUserFacingSectionTitle(heading.title, heading.bodyPreview || heading.textPreview, heading.number),
       summary: heading.bodyPreview || heading.textPreview || heading.title,
       sourceSectionStart: heading.sectionIndex,
       sourceSectionEnd: heading.sectionIndex,
