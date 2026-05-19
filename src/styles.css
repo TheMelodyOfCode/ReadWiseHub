@@ -1604,6 +1604,43 @@ select {
   gap: 10px;
 }
 
+.artifact-list {
+  display: grid;
+  gap: 12px;
+  margin-top: 16px;
+}
+
+.artifact-list h4 {
+  margin: 0;
+}
+
+.artifact-list article {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid color-mix(in srgb, var(--primary) 28%, var(--border));
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--primary) 7%, var(--surface));
+}
+
+.artifact-list ol {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  padding-left: 22px;
+}
+
+.artifact-list li {
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--border);
+}
+
+.artifact-list p,
+.artifact-list small {
+  margin: 4px 0 0;
+  color: var(--muted);
+}
+
 .chunk-preview-list article {
   padding: 14px;
   border: 1px solid var(--border);

@@ -165,6 +165,15 @@ type BookSection = {
   pageStart?: number;
   pageEnd?: number;
 };
+type SectionMapEntry = {
+  sectionNumber: number;
+  title: string;
+  summary: string;
+  sourceSectionStart: number;
+  sourceSectionEnd: number;
+  pageStart: number;
+  pageEnd: number;
+};
 type TextExtractionResult = {
   text: string;
   pageCount: number;
@@ -1864,6 +1873,26 @@ async function clearIngestionJobs(bookId: string) {
   }
 }
 
+async function clearBookArtifacts(bookId: string) {
+  const snapshot = await db
+    .collection("bookArtifacts")
+    .where("bookId", "==", bookId)
+    .limit(100)
+    .get();
+
+  if (snapshot.empty) {
+    return;
+  }
+
+  const batch = db.batch();
+  snapshot.docs.forEach((docSnapshot) => batch.delete(docSnapshot.ref));
+  await batch.commit();
+
+  if (snapshot.size === 100) {
+    await clearBookArtifacts(bookId);
+  }
+}
+
 async function clearConversationMessages(conversationId: string) {
   const snapshot = await db
     .collection("conversations")
@@ -1933,6 +1962,26 @@ async function clearUserRouteTraces(userId: string) {
   }
 }
 
+async function clearUserArtifacts(userId: string) {
+  const snapshot = await db
+    .collection("bookArtifacts")
+    .where("userId", "==", userId)
+    .limit(100)
+    .get();
+
+  if (snapshot.empty) {
+    return;
+  }
+
+  const batch = db.batch();
+  snapshot.docs.forEach((docSnapshot) => batch.delete(docSnapshot.ref));
+  await batch.commit();
+
+  if (snapshot.size === 100) {
+    await clearUserArtifacts(userId);
+  }
+}
+
 async function clearUserBooks(userId: string) {
   const snapshot = await db
     .collection("books")
@@ -1953,6 +2002,7 @@ async function clearUserBooks(userId: string) {
     await clearExistingChunks(bookSnapshot.id);
     await clearExistingSections(bookSnapshot.id);
     await clearIngestionJobs(bookSnapshot.id);
+    await clearBookArtifacts(bookSnapshot.id);
     await bookSnapshot.ref.delete();
   }
 
@@ -2170,6 +2220,51 @@ async function writeSections(
   if (writes > 0) {
     await batch.commit();
   }
+}
+
+function createSectionMapEntries(
+  sections: Array<{
+    sectionIndex: number;
+    title: string;
+    textPreview: string;
+    pageStart: number;
+    pageEnd: number;
+  }>,
+  targetCount: number
+): SectionMapEntry[] {
+  if (sections.length === 0) {
+    return [];
+  }
+
+  const groupCount = Math.max(1, Math.min(targetCount, sections.length));
+  const groupSize = Math.ceil(sections.length / groupCount);
+
+  return Array.from({ length: groupCount }, (_, groupIndex) => {
+    const group = sections.slice(groupIndex * groupSize, (groupIndex + 1) * groupSize);
+    const first = group[0];
+    const last = group[group.length - 1] ?? first;
+    const titledSection = group.find((section) => section.title.trim());
+    const title = titledSection?.title.trim() || `Section ${groupIndex + 1}`;
+    const summarySource = group
+      .map((section) => section.textPreview)
+      .filter(Boolean)
+      .join(" ")
+      .replace(/\s+/g, " ")
+      .trim();
+
+    return {
+      sectionNumber: groupIndex + 1,
+      title: title.slice(0, 120),
+      summary:
+        summarySource.length > 420
+          ? `${summarySource.slice(0, 417).trim()}...`
+          : summarySource || "No preview text available for this section yet.",
+      sourceSectionStart: first.sectionIndex,
+      sourceSectionEnd: last.sectionIndex,
+      pageStart: first.pageStart,
+      pageEnd: last.pageEnd,
+    };
+  });
 }
 
 function assessDocumentStructure(
@@ -2546,10 +2641,11 @@ export const exportAccountData = onCall(
 
     await ensureUserProfile(auth);
 
-    const [userSnapshot, booksSnapshot, conversationsSnapshot] = await Promise.all([
+    const [userSnapshot, booksSnapshot, conversationsSnapshot, artifactsSnapshot] = await Promise.all([
       db.collection("users").doc(auth.uid).get(),
       db.collection("books").where("userId", "==", auth.uid).get(),
       db.collection("conversations").where("userId", "==", auth.uid).get(),
+      db.collection("bookArtifacts").where("userId", "==", auth.uid).get(),
     ]);
     const conversations = await Promise.all(
       conversationsSnapshot.docs.map(async (conversationSnapshot) => {
@@ -2572,6 +2668,10 @@ export const exportAccountData = onCall(
       books: booksSnapshot.docs.map((bookSnapshot) => ({
         id: bookSnapshot.id,
         ...bookSnapshot.data(),
+      })),
+      artifacts: artifactsSnapshot.docs.map((artifactSnapshot) => ({
+        id: artifactSnapshot.id,
+        ...artifactSnapshot.data(),
       })),
       conversations,
     };
@@ -2717,6 +2817,149 @@ export const getBookReader = onCall(
       pageSize,
       totalChunks: readerItems.length,
       chunks: readerItems.slice(start, start + pageSize),
+    };
+  }
+);
+
+export const listBookArtifacts = onCall(
+  { region: "us-central1", timeoutSeconds: 60, memory: "512MiB", invoker: "public" },
+  async (request) => {
+    const auth = requireAuth(request.auth?.token
+      ? {
+          uid: request.auth.uid,
+          email: request.auth.token.email,
+          name: request.auth.token.name,
+          picture: request.auth.token.picture,
+        }
+      : undefined);
+    const bookId = assertString(request.data?.bookId, "bookId");
+    await requireActiveSession(auth, request.data?.sessionId);
+    await requireVerifiedEmail(auth);
+
+    const bookSnapshot = await db.collection("books").doc(bookId).get();
+    if (!bookSnapshot.exists || bookSnapshot.get("userId") !== auth.uid) {
+      throw new HttpsError("not-found", "Book was not found.");
+    }
+
+    const snapshot = await db
+      .collection("bookArtifacts")
+      .where("userId", "==", auth.uid)
+      .where("bookId", "==", bookId)
+      .where("type", "==", "section_map")
+      .limit(20)
+      .get();
+
+    return {
+      ok: true,
+      artifacts: snapshot.docs
+        .map((artifactSnapshot) => ({
+          id: artifactSnapshot.id,
+          title: artifactSnapshot.get("title") || "Section map",
+          type: artifactSnapshot.get("type") || "",
+          bookId: artifactSnapshot.get("bookId") || "",
+          bookTitle: artifactSnapshot.get("bookTitle") || "",
+          status: artifactSnapshot.get("status") || "",
+          targetSectionCount: Number(artifactSnapshot.get("targetSectionCount")) || 0,
+          sections: Array.isArray(artifactSnapshot.get("sections"))
+            ? artifactSnapshot.get("sections")
+            : [],
+          createdAt: normalizeFirestoreValue(artifactSnapshot.get("createdAt")),
+          updatedAt: normalizeFirestoreValue(artifactSnapshot.get("updatedAt")),
+        }))
+        .sort((left, right) => String(right.createdAt || "").localeCompare(String(left.createdAt || ""))),
+    };
+  }
+);
+
+export const generateBookSectionMap = onCall(
+  { region: "us-central1", timeoutSeconds: 60, memory: "512MiB", invoker: "public" },
+  async (request) => {
+    const auth = requireAuth(request.auth?.token
+      ? {
+          uid: request.auth.uid,
+          email: request.auth.token.email,
+          name: request.auth.token.name,
+          picture: request.auth.token.picture,
+        }
+      : undefined);
+    const bookId = assertString(request.data?.bookId, "bookId");
+    const targetSectionCount = Math.max(
+      3,
+      Math.min(12, Math.floor(Number(request.data?.targetSectionCount) || 6))
+    );
+    await requireActiveSession(auth, request.data?.sessionId);
+    await requireVerifiedEmail(auth);
+
+    const bookSnapshot = await db.collection("books").doc(bookId).get();
+    if (!bookSnapshot.exists || bookSnapshot.get("userId") !== auth.uid) {
+      throw new HttpsError("not-found", "Book was not found.");
+    }
+
+    if (bookSnapshot.get("status") !== "text_ready") {
+      throw new HttpsError("failed-precondition", "Book text is not ready yet.");
+    }
+
+    const sectionsSnapshot = await db
+      .collection("bookSections")
+      .where("bookId", "==", bookId)
+      .limit(600)
+      .get();
+    const sectionSources = sectionsSnapshot.docs
+      .filter((sectionSnapshot) => sectionSnapshot.get("userId") === auth.uid)
+      .map((sectionSnapshot) => ({
+        sectionIndex: Number(sectionSnapshot.get("sectionIndex")) || 0,
+        title:
+          typeof sectionSnapshot.get("title") === "string"
+            ? sectionSnapshot.get("title")
+            : "",
+        textPreview:
+          typeof sectionSnapshot.get("textPreview") === "string"
+            ? sectionSnapshot.get("textPreview")
+            : "",
+        pageStart: Number(sectionSnapshot.get("pageStart")) || 0,
+        pageEnd: Number(sectionSnapshot.get("pageEnd")) || 0,
+      }))
+      .sort((left, right) => left.sectionIndex - right.sectionIndex);
+
+    if (sectionSources.length === 0) {
+      throw new HttpsError("failed-precondition", "This book has no sections to map yet.");
+    }
+
+    const bookScope = resolveBookScope(auth.uid, bookSnapshot);
+    const displayTitle =
+      bookSnapshot.get("displayTitle") ||
+      createDisplayTitle(String(bookSnapshot.get("title") || "Untitled"));
+    const mapEntries = createSectionMapEntries(sectionSources, targetSectionCount);
+    const artifactRef = db.collection("bookArtifacts").doc();
+    const now = FieldValue.serverTimestamp();
+    const artifact = {
+      id: artifactRef.id,
+      userId: auth.uid,
+      tenantId: bookScope.tenantId,
+      workspaceId: bookScope.workspaceId,
+      libraryId: bookScope.libraryId,
+      bookId,
+      bookTitle: displayTitle,
+      type: "section_map",
+      title: `${displayTitle} section map`,
+      status: "ready",
+      generatedBy: "readwisehub_section_map_v1",
+      targetSectionCount,
+      sourceSectionCount: sectionSources.length,
+      sections: mapEntries,
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    await artifactRef.set(artifact);
+
+    return {
+      ok: true,
+      artifact: {
+        ...artifact,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      },
     };
   }
 );
@@ -3058,6 +3301,7 @@ export const deleteBook = onCall(
     await clearExistingSections(bookId);
     await clearNestedBookSections(bookId);
     await clearIngestionJobs(bookId);
+    await clearBookArtifacts(bookId);
     await db
       .collection("users")
       .doc(auth.uid)
@@ -3893,6 +4137,7 @@ export const deleteAccountData = onCall(
     await clearUserBooks(auth.uid);
     await clearUserConversations(auth.uid);
     await clearUserRouteTraces(auth.uid);
+    await clearUserArtifacts(auth.uid);
     await clearUserReaderSettings(auth.uid);
     await clearUserSessions(auth.uid);
     await db.collection("users").doc(auth.uid).delete();

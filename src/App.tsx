@@ -66,6 +66,28 @@ type BookChunkPreview = {
   textPreview: string;
 };
 
+type SectionMapEntry = {
+  sectionNumber: number;
+  title: string;
+  summary: string;
+  sourceSectionStart: number;
+  sourceSectionEnd: number;
+  pageStart: number;
+  pageEnd: number;
+};
+
+type BookArtifact = {
+  id: string;
+  title: string;
+  type: string;
+  bookId: string;
+  bookTitle: string;
+  status: string;
+  targetSectionCount: number;
+  sections: SectionMapEntry[];
+  createdAt?: string;
+};
+
 type ReaderChunk = {
   id: string;
   chunkIndex: number;
@@ -575,6 +597,8 @@ export function App() {
   const [processingBookId, setProcessingBookId] = useState("");
   const [selectedBookDetailId, setSelectedBookDetailId] = useState("");
   const [bookChunkPreviews, setBookChunkPreviews] = useState<BookChunkPreview[]>([]);
+  const [bookArtifacts, setBookArtifacts] = useState<BookArtifact[]>([]);
+  const [sectionMapBusy, setSectionMapBusy] = useState(false);
   const [bookDetailMessage, setBookDetailMessage] = useState("");
   const [readerBookId, setReaderBookId] = useState("");
   const [readerChunks, setReaderChunks] = useState<ReaderChunk[]>([]);
@@ -1645,6 +1669,7 @@ export function App() {
     setSelectedBookDetailId(book.id);
     setBookDetailMessage("");
     setBookChunkPreviews([]);
+    setBookArtifacts([]);
 
     try {
       const getBookDetail = httpsCallable<
@@ -1657,11 +1682,47 @@ export function App() {
           .sort((left, right) => left.chunkIndex - right.chunkIndex)
           .slice(0, 12)
       );
+      await loadBookArtifacts(book.id);
       window.requestAnimationFrame(() => {
         bookDetailRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
       });
     } catch (error) {
       setBookDetailMessage(getErrorMessage(error, "Book detail failed"));
+    }
+  }
+
+  async function loadBookArtifacts(bookId: string) {
+    const listBookArtifacts = httpsCallable<
+      { bookId: string; sessionId: string },
+      { ok: boolean; artifacts: BookArtifact[] }
+    >(functions, "listBookArtifacts");
+    const response = await listBookArtifacts(withSession({ bookId }));
+    setBookArtifacts(response.data.artifacts ?? []);
+  }
+
+  async function generateSectionMap(book: BookRecord) {
+    if (!requireVerifiedUi(setBookDetailMessage)) {
+      return;
+    }
+
+    setSectionMapBusy(true);
+    setBookDetailMessage("");
+
+    try {
+      const generateBookSectionMap = httpsCallable<
+        { bookId: string; targetSectionCount: number; sessionId: string },
+        { ok: boolean; artifact: BookArtifact }
+      >(functions, "generateBookSectionMap");
+      await generateBookSectionMap(withSession({
+        bookId: book.id,
+        targetSectionCount: 6,
+      }));
+      await loadBookArtifacts(book.id);
+      setBookDetailMessage("Section map created.");
+    } catch (error) {
+      setBookDetailMessage(getErrorMessage(error, "Section map failed"));
+    } finally {
+      setSectionMapBusy(false);
     }
   }
 
@@ -3275,10 +3336,47 @@ export function App() {
                             >
                               {t.askThisBook}
                             </button>
+                            <button
+                              className="button secondary compact"
+                              type="button"
+                              disabled={sectionMapBusy}
+                              onClick={() => generateSectionMap(book)}
+                            >
+                              {sectionMapBusy ? "Creating map..." : "Create section map"}
+                            </button>
                           </>
                         ) : null}
                       </div>
                       {bookDetailMessage ? <p className="error-text">{bookDetailMessage}</p> : null}
+                      {bookArtifacts.length > 0 ? (
+                        <div className="artifact-list">
+                          <h4>Generated section maps</h4>
+                          {bookArtifacts.map((artifact) => (
+                            <article key={artifact.id}>
+                              <div>
+                                <strong>{artifact.title}</strong>
+                                <small>
+                                  {artifact.sections.length} sections · {artifact.createdAt || ""}
+                                </small>
+                              </div>
+                              <ol>
+                                {artifact.sections.map((section) => (
+                                  <li key={section.sectionNumber}>
+                                    <strong>
+                                      {section.sectionNumber}. {section.title}
+                                    </strong>
+                                    <p>{section.summary}</p>
+                                    <small>
+                                      Source sections {section.sourceSectionStart + 1}-
+                                      {section.sourceSectionEnd + 1}
+                                    </small>
+                                  </li>
+                                ))}
+                              </ol>
+                            </article>
+                          ))}
+                        </div>
+                      ) : null}
                       {bookChunkPreviews.length > 0 ? (
                         <div className="chunk-preview-list">
                           {bookChunkPreviews.map((chunk) => (

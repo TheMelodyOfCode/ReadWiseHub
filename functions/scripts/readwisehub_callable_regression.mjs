@@ -193,6 +193,11 @@ async function cleanup() {
     await clearBook(book.id);
   }
 
+  const artifacts = await db.collection("bookArtifacts").where("userId", "==", uid).get();
+  for (const artifact of artifacts.docs) {
+    await artifact.ref.delete();
+  }
+
   const conversations = await db.collection("conversations").where("userId", "==", uid).get();
   for (const conversation of conversations.docs) {
     await clearConversation(conversation.id);
@@ -483,6 +488,28 @@ async function run() {
     "getBookReader did not return readable chunk text."
   );
 
+  const sectionMap = await callFunction(
+    "generateBookSectionMap",
+    { bookId: primaryBookId, targetSectionCount: 3 },
+    idToken
+  );
+  check(sectionMap.ok === true, "generateBookSectionMap did not return ok.");
+  check(sectionMap.artifact?.type === "section_map", "generateBookSectionMap returned wrong artifact type.");
+  check(
+    sectionMap.artifact?.sections?.length > 0,
+    "generateBookSectionMap returned no section map entries."
+  );
+  const listedArtifacts = await callFunction(
+    "listBookArtifacts",
+    { bookId: primaryBookId },
+    idToken
+  );
+  check(listedArtifacts.ok === true, "listBookArtifacts did not return ok.");
+  check(
+    listedArtifacts.artifacts?.some((artifact) => artifact.id === sectionMap.artifact.id),
+    "listBookArtifacts did not include generated section map."
+  );
+
   await writeReaderSettingsViaClient(primaryBookId);
   const readerSettings = await db
     .collection("users")
@@ -530,6 +557,7 @@ async function run() {
   const deletedBook = await db.collection("books").doc(primaryBookId).get();
   const deletedChunks = await db.collection("bookChunks").where("bookId", "==", primaryBookId).get();
   const deletedSections = await db.collection("bookSections").where("bookId", "==", primaryBookId).get();
+  const deletedArtifacts = await db.collection("bookArtifacts").where("bookId", "==", primaryBookId).get();
   const deletedReaderSettings = await db
     .collection("users")
     .doc(uid)
@@ -539,6 +567,7 @@ async function run() {
   check(!deletedBook.exists, "deleteBook left book document behind.");
   check(deletedChunks.empty, "deleteBook left chunk documents behind.");
   check(deletedSections.empty, "deleteBook left section documents behind.");
+  check(deletedArtifacts.empty, "deleteBook left generated artifacts behind.");
   check(!deletedReaderSettings.exists, "deleteBook left reader settings behind.");
 
   await seedAccountDeleteData();
@@ -561,6 +590,7 @@ async function run() {
   const remainingConversations = await db.collection("conversations").where("userId", "==", uid).get();
   const remainingChunks = await db.collection("bookChunks").where("userId", "==", uid).get();
   const remainingSections = await db.collection("bookSections").where("userId", "==", uid).get();
+  const remainingArtifacts = await db.collection("bookArtifacts").where("userId", "==", uid).get();
   const remainingSessions = await db.collection("userSessions").where("userId", "==", uid).get();
   const remainingRouteTraces = await db.collection("routeTraces").where("userId", "==", uid).get();
   const remainingReaderSettings = await db
@@ -573,6 +603,7 @@ async function run() {
   check(remainingConversations.empty, "deleteAccountData left conversations behind.");
   check(remainingChunks.empty, "deleteAccountData left chunks behind.");
   check(remainingSections.empty, "deleteAccountData left sections behind.");
+  check(remainingArtifacts.empty, "deleteAccountData left generated artifacts behind.");
   check(remainingSessions.empty, "deleteAccountData left sessions behind.");
   check(remainingRouteTraces.empty, "deleteAccountData left route traces behind.");
   check(remainingReaderSettings.empty, "deleteAccountData left reader settings behind.");
