@@ -2327,7 +2327,7 @@ export function App() {
               <h2>Pinecone indexed books</h2>
             </div>
             <div className="admin-table-wrap">
-              <table className="admin-table">
+              <table className="admin-table admin-pinecone-table">
                 <thead>
                   <tr>
                     <th>Book</th>
@@ -2339,13 +2339,13 @@ export function App() {
                 <tbody>
                   {(adminDashboard?.pineconeBooks ?? []).map((book) => (
                     <tr key={book.bookId}>
-                      <td>
+                      <td data-label="Book">
                         <strong>{book.title}</strong>
                         <small>{book.bookId}</small>
                       </td>
-                      <td>{book.userId}</td>
-                      <td>{book.indexedChunkCount}</td>
-                      <td>{book.missingChunkCount}</td>
+                      <td data-label="User">{book.userId}</td>
+                      <td data-label="Indexed">{book.indexedChunkCount}</td>
+                      <td data-label="Missing">{book.missingChunkCount}</td>
                     </tr>
                   ))}
                   {adminDashboard && adminDashboard.pineconeBooks.length === 0 ? (
@@ -2364,7 +2364,7 @@ export function App() {
               <h2>Books and ingestion metadata</h2>
             </div>
             <div className="admin-table-wrap">
-              <table className="admin-table">
+              <table className="admin-table admin-books-table">
                 <thead>
                   <tr>
                     <th>Book</th>
@@ -2379,33 +2379,33 @@ export function App() {
                 <tbody>
                   {adminBooks.map((book) => (
                     <tr key={book.id}>
-                      <td>
+                      <td data-label="Book">
                         <strong>{book.displayTitle || book.title}</strong>
                         <small>
                           {book.id} · {book.contentType || "unknown"} ·{" "}
                           {Math.round(book.sizeBytes / 1024)} KB
                         </small>
                       </td>
-                      <td>{book.userId}</td>
-                      <td>{book.status || "-"}</td>
-                      <td>
+                      <td data-label="User">{book.userId}</td>
+                      <td data-label="Status">{book.status || "-"}</td>
+                      <td data-label="Structure">
                         {book.structureQuality || "-"}
                         {book.formatWarning ? <small>{book.formatWarning}</small> : null}
                       </td>
-                      <td>
+                      <td data-label="Chunks">
                         {book.chunkCount}
                         <small>
                           {book.sectionCount} sections · {book.pageCount || "-"} pages
                         </small>
                       </td>
-                      <td>
+                      <td data-label="Vectors">
                         {book.embeddedChunkCount}/{book.chunkCount}
                         <small>
                           Pinecone {book.pineconeIndexedChunkCount}/
                           {book.chunkCount} · missing {book.pineconeMissingChunkCount}
                         </small>
                       </td>
-                      <td>
+                      <td data-label="Debug">
                         <button
                           className="button secondary-button"
                           type="button"
@@ -2462,7 +2462,7 @@ export function App() {
               <h2>Recent conversations</h2>
             </div>
             <div className="admin-table-wrap">
-              <table className="admin-table">
+              <table className="admin-table admin-conversations-table">
                 <thead>
                   <tr>
                     <th>Conversation</th>
@@ -2478,20 +2478,20 @@ export function App() {
                     const diagnostics = conversation.retrievalDiagnostics ?? {};
                     return (
                       <tr key={conversation.id}>
-                        <td>
+                        <td data-label="Conversation">
                           <strong>{conversation.title}</strong>
                           <small>{conversation.latestQuestion}</small>
                         </td>
-                        <td>{conversation.userId}</td>
-                        <td>{conversation.mode || "-"}</td>
-                        <td>
+                        <td data-label="User">{conversation.userId}</td>
+                        <td data-label="Mode">{conversation.mode || "-"}</td>
+                        <td data-label="Retrieval">
                           {String(diagnostics.backend ?? "-")}
                           {diagnostics.fallbackReason ? (
                             <small>{String(diagnostics.fallbackReason)}</small>
                           ) : null}
                         </td>
-                        <td>{conversation.sourceCount}</td>
-                        <td>
+                        <td data-label="Sources">{conversation.sourceCount}</td>
+                        <td data-label="Debug">
                           <button
                             className="button secondary-button"
                             type="button"
