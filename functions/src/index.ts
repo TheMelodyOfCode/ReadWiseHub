@@ -8,6 +8,21 @@ import { defineSecret } from "firebase-functions/params";
 import { PDFParse } from "pdf-parse";
 import AdmZip from "adm-zip";
 import mammoth from "mammoth";
+import {
+  DEFAULT_EMBEDDING_DIMENSIONS,
+  DEFAULT_LIBRARY_ID,
+  DEFAULT_VECTOR_INDEX_NAME,
+  DEFAULT_WORKSPACE_ID,
+} from "./retrieval/bookRetrievalBackend";
+import {
+  buildBookVectorMetadata,
+  buildPineconeNamespace,
+  buildPineconeVectorId,
+  resolveLibraryId,
+  resolveTenantId,
+  resolveWorkspaceId,
+} from "./retrieval/pineconeMetadata";
+import { PineconeBookRetrievalBackend } from "./retrieval/pineconeBookRetrievalBackend";
 
 initializeApp();
 
@@ -68,7 +83,10 @@ const PDF_EXTRACTOR_URL =
   "https://readwisehub-pdf-extractor-ydgljnpaua-uc.a.run.app";
 const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-4.1-mini";
 const OPENAI_EMBEDDING_MODEL = process.env.OPENAI_EMBEDDING_MODEL || "text-embedding-3-small";
+const CHUNKER_VERSION = "rwh_chunker_1";
+const EXTRACTOR_VERSION = "rwh_extractor_1";
 const openAiApiKey = defineSecret("OPENAI_API_KEY");
+const pineconeApiKey = defineSecret("PINECONE_API_KEY");
 const ACTIVE_BOOK_STATUSES = [
   "upload_reserved",
   "uploading",
@@ -125,6 +143,32 @@ type StructureAssessment = {
   structureQuality: string;
   formatWarning: string;
 };
+type BookScope = {
+  tenantId: string;
+  workspaceId: string;
+  libraryId: string;
+  vectorNamespace: string;
+};
+
+function buildDefaultBookScope(userId: string): BookScope {
+  const tenantId = resolveTenantId(userId);
+  return {
+    tenantId,
+    workspaceId: DEFAULT_WORKSPACE_ID,
+    libraryId: DEFAULT_LIBRARY_ID,
+    vectorNamespace: buildPineconeNamespace(tenantId),
+  };
+}
+
+function resolveBookScope(userId: string, source?: FirebaseFirestore.DocumentSnapshot): BookScope {
+  const tenantId = resolveTenantId(userId, source?.get("tenantId"));
+  return {
+    tenantId,
+    workspaceId: resolveWorkspaceId(source?.get("workspaceId")),
+    libraryId: resolveLibraryId(source?.get("libraryId")),
+    vectorNamespace: buildPineconeNamespace(tenantId),
+  };
+}
 
 function requireAuth(auth: AuthContext | undefined): AuthContext {
   if (!auth?.uid) {
@@ -733,6 +777,28 @@ function getOpenAiApiKey(): string {
   }
 }
 
+function getPineconeApiKey(): string {
+  try {
+    return pineconeApiKey.value() || process.env.PINECONE_API_KEY || "";
+  } catch {
+    return process.env.PINECONE_API_KEY || "";
+  }
+}
+
+function requirePineconeTestUser(auth: AuthContext) {
+  const allowlist = (process.env.PINECONE_TEST_USER_IDS || "")
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+
+  if (!allowlist.includes(auth.uid)) {
+    throw new HttpsError(
+      "permission-denied",
+      "Pinecone prototype indexing is limited to configured test users."
+    );
+  }
+}
+
 function cosineSimilarity(left: number[], right: number[]): number {
   if (left.length === 0 || left.length !== right.length) {
     return 0;
@@ -1210,6 +1276,7 @@ async function ensureUserProfile(auth: AuthContext) {
   const snapshot = await userRef.get();
   const now = FieldValue.serverTimestamp();
   const emailVerified = await getAuthEmailVerified(auth.uid);
+  const userScope = resolveBookScope(auth.uid, snapshot);
 
   if (snapshot.exists) {
     const plan = normalizePlan(snapshot.get("plan"));
@@ -1235,6 +1302,9 @@ async function ensureUserProfile(auth: AuthContext) {
         email: auth.email ?? snapshot.get("email") ?? "",
         displayName: auth.name ?? snapshot.get("displayName") ?? "",
         photoURL: auth.picture ?? snapshot.get("photoURL") ?? "",
+        tenantId: userScope.tenantId,
+        defaultWorkspaceId: userScope.workspaceId,
+        defaultLibraryId: userScope.libraryId,
         emailVerified,
         onboardingStatus: emailVerified ? "active" : "email_verification_pending",
         billingProvider: snapshot.get("billingProvider") ?? "none",
@@ -1254,6 +1324,9 @@ async function ensureUserProfile(auth: AuthContext) {
     email: auth.email ?? "",
     displayName: auth.name ?? "",
     photoURL: auth.picture ?? "",
+    tenantId: userScope.tenantId,
+    defaultWorkspaceId: userScope.workspaceId,
+    defaultLibraryId: userScope.libraryId,
     plan: "free",
     subscriptionStatus: "none",
     emailVerified,
@@ -1658,6 +1731,8 @@ async function writeChunks(
   chunks: TextChunk[],
   userId: string,
   bookId: string,
+  scope: BookScope,
+  language: string,
   embeddingsByIndex = new Map<number, number[]>()
 ) {
   let batch: WriteBatch = db.batch();
@@ -1665,20 +1740,46 @@ async function writeChunks(
   const maxWritesPerBatch = embeddingsByIndex.size > 0 ? 20 : 300;
 
   for (const chunk of chunks) {
-    const chunkRef = db.collection("bookChunks").doc(`${bookId}_${chunk.chunkIndex}`);
+    const chunkId = `${bookId}_${chunk.chunkIndex}`;
+    const vectorRecordId = buildPineconeVectorId(bookId, chunk.chunkIndex);
+    const chunkRef = db.collection("bookChunks").doc(chunkId);
     const embedding = embeddingsByIndex.get(chunk.chunkIndex);
     batch.set(chunkRef, {
       userId,
+      tenantId: scope.tenantId,
+      workspaceId: scope.workspaceId,
+      libraryId: scope.libraryId,
       bookId,
+      fileId: bookId,
+      chunkId,
       chunkIndex: chunk.chunkIndex,
       text: chunk.text,
       textPreview: chunk.textPreview,
       charStart: chunk.charStart,
       charEnd: chunk.charEnd,
+      vectorBackend: "firestore",
+      vectorIndexName: DEFAULT_VECTOR_INDEX_NAME,
+      vectorNamespace: scope.vectorNamespace,
+      vectorRecordId,
+      vectorMetadata: buildBookVectorMetadata({
+        userId,
+        tenantId: scope.tenantId,
+        workspaceId: scope.workspaceId,
+        libraryId: scope.libraryId,
+        bookId,
+        fileId: bookId,
+        chunkId,
+        chunkIndex: chunk.chunkIndex,
+        language,
+        embeddingModel: OPENAI_EMBEDDING_MODEL,
+        chunkerVersion: CHUNKER_VERSION,
+        extractorVersion: EXTRACTOR_VERSION,
+      }),
       ...(embedding
         ? {
             embedding,
             embeddingModel: OPENAI_EMBEDDING_MODEL,
+            embeddingDimensions: embedding.length,
           }
         : {}),
       createdAt: FieldValue.serverTimestamp(),
@@ -1697,7 +1798,12 @@ async function writeChunks(
   }
 }
 
-async function writeSections(sections: BookSection[], userId: string, bookId: string) {
+async function writeSections(
+  sections: BookSection[],
+  userId: string,
+  bookId: string,
+  scope: BookScope
+) {
   let batch: WriteBatch = db.batch();
   let writes = 0;
 
@@ -1705,6 +1811,9 @@ async function writeSections(sections: BookSection[], userId: string, bookId: st
     const sectionRef = db.collection("bookSections").doc(`${bookId}_${section.sectionIndex}`);
     batch.set(sectionRef, {
       userId,
+      tenantId: scope.tenantId,
+      workspaceId: scope.workspaceId,
+      libraryId: scope.libraryId,
       bookId,
       sectionIndex: section.sectionIndex,
       title: section.title,
@@ -1849,6 +1958,8 @@ async function processIngestionJobById(jobId: string) {
         ? extraction.outline
         : buildBookOutline(sections);
     const structureAssessment = assessDocumentStructure(mimeType, extraction, sections);
+    const language = detectLanguage(extraction.text);
+    const bookScope = resolveBookScope(userId, bookSnapshot);
 
     await jobRef.update({
       stage: "embedding_chunks",
@@ -1860,13 +1971,15 @@ async function processIngestionJobById(jobId: string) {
 
     await clearExistingChunks(bookId);
     await clearExistingSections(bookId);
-    await writeChunks(chunks, userId, bookId, embeddingsByIndex);
-    await writeSections(sections, userId, bookId);
+    await writeChunks(chunks, userId, bookId, bookScope, language, embeddingsByIndex);
+    await writeSections(sections, userId, bookId, bookScope);
 
-    const language = detectLanguage(extraction.text);
     await db.runTransaction(async (transaction) => {
       transaction.update(bookRef, {
         status: "text_ready",
+        tenantId: bookScope.tenantId,
+        workspaceId: bookScope.workspaceId,
+        libraryId: bookScope.libraryId,
         language,
         pageCount: extraction.pageCount,
         textLength: extraction.text.length,
@@ -1877,12 +1990,21 @@ async function processIngestionJobById(jobId: string) {
         formatWarning: structureAssessment.formatWarning,
         embeddedChunkCount: embeddingsByIndex.size,
         embeddingModel: embeddingsByIndex.size > 0 ? OPENAI_EMBEDDING_MODEL : "",
+        embeddingDimensions: embeddingsByIndex.size > 0 ? DEFAULT_EMBEDDING_DIMENSIONS : 0,
+        vectorBackend: "firestore",
+        vectorIndexName: DEFAULT_VECTOR_INDEX_NAME,
+        vectorNamespace: bookScope.vectorNamespace,
+        chunkerVersion: CHUNKER_VERSION,
+        extractorVersion: EXTRACTOR_VERSION,
         outline,
         updatedAt: FieldValue.serverTimestamp(),
         textReadyAt: FieldValue.serverTimestamp(),
       });
       transaction.update(jobRef, {
         status: "completed",
+        tenantId: bookScope.tenantId,
+        workspaceId: bookScope.workspaceId,
+        libraryId: bookScope.libraryId,
         stage: "text_ready",
         progress: 100,
         chunkCount: chunks.length,
@@ -2140,7 +2262,6 @@ export const getBookDetail = onCall(
     if (!bookSnapshot.exists || bookSnapshot.get("userId") !== auth.uid) {
       throw new HttpsError("not-found", "Book was not found.");
     }
-
     const chunksSnapshot = await db
       .collection("bookChunks")
       .where("bookId", "==", bookId)
@@ -2372,11 +2493,15 @@ export const createUploadReservation = onCall(
     await assertNoDuplicateActiveBook(auth.uid, title);
 
     const bookRef = db.collection("books").doc();
+    const bookScope = buildDefaultBookScope(auth.uid);
     const storagePath = `userUploads/${auth.uid}/${bookRef.id}/${fileName}`;
     const now = FieldValue.serverTimestamp();
 
     await bookRef.set({
       userId: auth.uid,
+      tenantId: bookScope.tenantId,
+      workspaceId: bookScope.workspaceId,
+      libraryId: bookScope.libraryId,
       title,
       displayTitle: createDisplayTitle(title),
       normalizedTitle,
@@ -2393,6 +2518,11 @@ export const createUploadReservation = onCall(
       chunkCount: 0,
       sectionCount: 0,
       embeddedChunkCount: 0,
+      embeddingModel: "",
+      embeddingDimensions: 0,
+      vectorBackend: "firestore",
+      vectorIndexName: DEFAULT_VECTOR_INDEX_NAME,
+      vectorNamespace: bookScope.vectorNamespace,
       scanStatus: "pending_basic_check",
       createdAt: now,
       updatedAt: now,
@@ -2461,6 +2591,7 @@ export const finalizeUploadReservation = onCall(
     const activeBookCount = await getActiveBookCount(auth.uid);
     const activeStorageBytes = await getActiveStorageBytes(auth.uid);
     const currentBookSize = Number(bookSnapshot.get("sizeBytes")) || 0;
+    const bookScope = resolveBookScope(auth.uid, bookSnapshot);
 
     if (activeBookCount > limits.maxBooks) {
       throw new HttpsError(
@@ -2488,6 +2619,9 @@ export const finalizeUploadReservation = onCall(
 
       transaction.set(jobRef, {
         userId: auth.uid,
+        tenantId: bookScope.tenantId,
+        workspaceId: bookScope.workspaceId,
+        libraryId: bookScope.libraryId,
         bookId,
         status: "queued",
         stage: "waiting_for_ingestion_worker",
@@ -2711,6 +2845,7 @@ export const askLibrary = onCall(
     const aiAnswer = await createAiGroundedAnswer(queryText, results, locale);
     const answer = aiAnswer ?? createGroundedDraft(queryText, results, locale);
     const sourceBooks = summarizeSourceBooks(results);
+    const conversationScope = buildDefaultBookScope(auth.uid);
     const now = FieldValue.serverTimestamp();
     const conversationRef = db.collection("conversations").doc();
     const userMessageRef = conversationRef.collection("messages").doc();
@@ -2732,6 +2867,9 @@ export const askLibrary = onCall(
 
       transaction.set(conversationRef, {
         userId: auth.uid,
+        tenantId: conversationScope.tenantId,
+        workspaceId: conversationScope.workspaceId,
+        libraryId: conversationScope.libraryId,
         title: queryText.slice(0, 90),
         mode: aiAnswer ? "ai_grounded" : "source_draft",
         status: "answered",
@@ -2750,12 +2888,18 @@ export const askLibrary = onCall(
       });
       transaction.set(userMessageRef, {
         userId: auth.uid,
+        tenantId: conversationScope.tenantId,
+        workspaceId: conversationScope.workspaceId,
+        libraryId: conversationScope.libraryId,
         role: "user",
         text: queryText,
         createdAt: now,
       });
       transaction.set(assistantMessageRef, {
         userId: auth.uid,
+        tenantId: conversationScope.tenantId,
+        workspaceId: conversationScope.workspaceId,
+        libraryId: conversationScope.libraryId,
         role: "assistant",
         text: answer,
         mode: aiAnswer ? "ai_grounded" : "source_draft",
@@ -2865,6 +3009,9 @@ export const backfillBookEmbeddings = onCall(
     if (!bookSnapshot.exists || bookSnapshot.get("userId") !== auth.uid) {
       throw new HttpsError("not-found", "Book was not found.");
     }
+    const bookScope = resolveBookScope(auth.uid, bookSnapshot);
+    const language =
+      typeof bookSnapshot.get("language") === "string" ? String(bookSnapshot.get("language")) : "";
 
     const chunksSnapshot = await db
       .collection("bookChunks")
@@ -2894,9 +3041,35 @@ export const backfillBookEmbeddings = onCall(
         return;
       }
 
+      const chunkId = chunkSnapshot.id;
+      const vectorRecordId = buildPineconeVectorId(bookId, chunkIndex);
       batch.update(chunkSnapshot.ref, {
+        tenantId: bookScope.tenantId,
+        workspaceId: bookScope.workspaceId,
+        libraryId: bookScope.libraryId,
+        fileId: bookId,
+        chunkId,
         embedding,
         embeddingModel: OPENAI_EMBEDDING_MODEL,
+        embeddingDimensions: embedding.length,
+        vectorBackend: "firestore",
+        vectorIndexName: DEFAULT_VECTOR_INDEX_NAME,
+        vectorNamespace: bookScope.vectorNamespace,
+        vectorRecordId,
+        vectorMetadata: buildBookVectorMetadata({
+          userId: auth.uid,
+          tenantId: bookScope.tenantId,
+          workspaceId: bookScope.workspaceId,
+          libraryId: bookScope.libraryId,
+          bookId,
+          fileId: bookId,
+          chunkId,
+          chunkIndex,
+          language,
+          embeddingModel: OPENAI_EMBEDDING_MODEL,
+          chunkerVersion: CHUNKER_VERSION,
+          extractorVersion: EXTRACTOR_VERSION,
+        }),
         embeddedAt: FieldValue.serverTimestamp(),
       });
       writes += 1;
@@ -2907,7 +3080,16 @@ export const backfillBookEmbeddings = onCall(
     }
 
     await bookSnapshot.ref.update({
+      tenantId: bookScope.tenantId,
+      workspaceId: bookScope.workspaceId,
+      libraryId: bookScope.libraryId,
       embeddingModel: OPENAI_EMBEDDING_MODEL,
+      embeddingDimensions: DEFAULT_EMBEDDING_DIMENSIONS,
+      vectorBackend: "firestore",
+      vectorIndexName: DEFAULT_VECTOR_INDEX_NAME,
+      vectorNamespace: bookScope.vectorNamespace,
+      chunkerVersion: CHUNKER_VERSION,
+      extractorVersion: EXTRACTOR_VERSION,
       embeddedChunkCount: writes,
       embeddedAt: FieldValue.serverTimestamp(),
       updatedAt: FieldValue.serverTimestamp(),
@@ -2917,6 +3099,210 @@ export const backfillBookEmbeddings = onCall(
       ok: true,
       bookId,
       embeddedChunkCount: writes,
+    };
+  }
+);
+
+export const backfillBookToPineconeTest = onCall(
+  {
+    region: "us-central1",
+    timeoutSeconds: 300,
+    memory: "1GiB",
+    secrets: [openAiApiKey, pineconeApiKey],
+  },
+  async (request) => {
+    const auth = requireAuth(request.auth?.token
+      ? {
+          uid: request.auth.uid,
+          email: request.auth.token.email,
+          name: request.auth.token.name,
+          picture: request.auth.token.picture,
+        }
+      : undefined);
+    requirePineconeTestUser(auth);
+
+    const confirmation = assertString(request.data?.confirmation, "confirmation");
+    if (confirmation !== "BACKFILL_PINECONE_TEST") {
+      throw new HttpsError(
+        "failed-precondition",
+        "Use the confirmation phrase BACKFILL_PINECONE_TEST."
+      );
+    }
+
+    const apiKey = getPineconeApiKey();
+    if (!apiKey) {
+      throw new HttpsError("failed-precondition", "Pinecone API key is not configured.");
+    }
+
+    const bookId = assertString(request.data?.bookId, "bookId");
+    const bookSnapshot = await db.collection("books").doc(bookId).get();
+
+    if (!bookSnapshot.exists || bookSnapshot.get("userId") !== auth.uid) {
+      throw new HttpsError("not-found", "Book was not found.");
+    }
+
+    if (bookSnapshot.get("status") !== "text_ready") {
+      throw new HttpsError("failed-precondition", "Only text-ready books can be indexed.");
+    }
+
+    const bookScope = resolveBookScope(auth.uid, bookSnapshot);
+    const language =
+      typeof bookSnapshot.get("language") === "string" ? String(bookSnapshot.get("language")) : "";
+    const chunksSnapshot = await db
+      .collection("bookChunks")
+      .where("userId", "==", auth.uid)
+      .where("bookId", "==", bookId)
+      .limit(900)
+      .get();
+    const chunks = chunksSnapshot.docs
+      .map((chunkSnapshot) => {
+        const embedding = chunkSnapshot.get("embedding");
+        const chunkIndex = Number(chunkSnapshot.get("chunkIndex")) || 0;
+        const text = chunkSnapshot.get("text");
+        const textPreview = chunkSnapshot.get("textPreview");
+
+        if (!Array.isArray(embedding) || typeof text !== "string") {
+          return null;
+        }
+
+        return {
+          chunkId: chunkSnapshot.id,
+          bookId,
+          fileId: typeof chunkSnapshot.get("fileId") === "string" ? String(chunkSnapshot.get("fileId")) : bookId,
+          chunkIndex,
+          text,
+          textPreview: typeof textPreview === "string" ? textPreview : text.slice(0, 240),
+          charStart: Number(chunkSnapshot.get("charStart")) || 0,
+          charEnd: Number(chunkSnapshot.get("charEnd")) || 0,
+          language,
+          embedding: embedding.filter((value): value is number => typeof value === "number"),
+        };
+      })
+      .filter((chunk): chunk is NonNullable<typeof chunk> => chunk !== null);
+
+    if (chunks.length === 0) {
+      throw new HttpsError(
+        "failed-precondition",
+        "This book does not have embedded chunks to index."
+      );
+    }
+
+    const backend = new PineconeBookRetrievalBackend({
+      apiKey,
+      firestore: db,
+      indexName: process.env.PINECONE_INDEX_NAME || DEFAULT_VECTOR_INDEX_NAME,
+      indexHost: process.env.PINECONE_INDEX_HOST || "",
+      embeddingModel: OPENAI_EMBEDDING_MODEL,
+      chunkerVersion: CHUNKER_VERSION,
+      extractorVersion: EXTRACTOR_VERSION,
+    });
+
+    await backend.upsertBookChunks({
+      scope: {
+        userId: auth.uid,
+        tenantId: bookScope.tenantId,
+        workspaceId: bookScope.workspaceId,
+        libraryId: bookScope.libraryId,
+      },
+      chunks,
+    });
+    const audit = await backend.auditBook({
+      scope: {
+        userId: auth.uid,
+        tenantId: bookScope.tenantId,
+        workspaceId: bookScope.workspaceId,
+        libraryId: bookScope.libraryId,
+      },
+      bookId,
+    });
+
+    await bookSnapshot.ref.update({
+      pineconeIndexedChunkCount: audit.indexedChunkCount,
+      pineconeMissingChunkCount: audit.missingChunkCount,
+      pineconeIndexedAt: FieldValue.serverTimestamp(),
+      vectorBackendCandidate: "pinecone",
+      vectorIndexName: process.env.PINECONE_INDEX_NAME || DEFAULT_VECTOR_INDEX_NAME,
+      vectorNamespace: bookScope.vectorNamespace,
+      updatedAt: FieldValue.serverTimestamp(),
+    });
+
+    return {
+      ok: true,
+      bookId,
+      namespace: bookScope.vectorNamespace,
+      indexedChunkCount: audit.indexedChunkCount,
+      missingChunkCount: audit.missingChunkCount,
+    };
+  }
+);
+
+export const deleteBookFromPineconeTest = onCall(
+  {
+    region: "us-central1",
+    timeoutSeconds: 120,
+    memory: "512MiB",
+    secrets: [pineconeApiKey],
+  },
+  async (request) => {
+    const auth = requireAuth(request.auth?.token
+      ? {
+          uid: request.auth.uid,
+          email: request.auth.token.email,
+          name: request.auth.token.name,
+          picture: request.auth.token.picture,
+        }
+      : undefined);
+    requirePineconeTestUser(auth);
+
+    const confirmation = assertString(request.data?.confirmation, "confirmation");
+    if (confirmation !== "DELETE_PINECONE_TEST") {
+      throw new HttpsError(
+        "failed-precondition",
+        "Use the confirmation phrase DELETE_PINECONE_TEST."
+      );
+    }
+
+    const apiKey = getPineconeApiKey();
+    if (!apiKey) {
+      throw new HttpsError("failed-precondition", "Pinecone API key is not configured.");
+    }
+
+    const bookId = assertString(request.data?.bookId, "bookId");
+    const bookSnapshot = await db.collection("books").doc(bookId).get();
+
+    if (!bookSnapshot.exists || bookSnapshot.get("userId") !== auth.uid) {
+      throw new HttpsError("not-found", "Book was not found.");
+    }
+
+    const bookScope = resolveBookScope(auth.uid, bookSnapshot);
+    const backend = new PineconeBookRetrievalBackend({
+      apiKey,
+      firestore: db,
+      indexName: process.env.PINECONE_INDEX_NAME || DEFAULT_VECTOR_INDEX_NAME,
+      indexHost: process.env.PINECONE_INDEX_HOST || "",
+      embeddingModel: OPENAI_EMBEDDING_MODEL,
+      chunkerVersion: CHUNKER_VERSION,
+      extractorVersion: EXTRACTOR_VERSION,
+    });
+
+    await backend.deleteBook({
+      scope: {
+        tenantId: bookScope.tenantId,
+        workspaceId: bookScope.workspaceId,
+        libraryId: bookScope.libraryId,
+      },
+      bookId,
+    });
+
+    await bookSnapshot.ref.update({
+      pineconeDeletedAt: FieldValue.serverTimestamp(),
+      updatedAt: FieldValue.serverTimestamp(),
+    });
+
+    return {
+      ok: true,
+      bookId,
+      namespace: bookScope.vectorNamespace,
     };
   }
 );
