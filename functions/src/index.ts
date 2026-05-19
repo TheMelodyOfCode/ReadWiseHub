@@ -183,8 +183,18 @@ type SectionSourceForMap = {
   sectionIndex: number;
   title: string;
   textPreview: string;
+  text: string;
   pageStart: number;
   pageEnd: number;
+};
+type NumberedHeadingCandidate = {
+  number: number;
+  title: string;
+  sectionIndex: number;
+  pageStart: number;
+  pageEnd: number;
+  textPreview: string;
+  position: number;
 };
 type TextExtractionResult = {
   text: string;
@@ -1352,6 +1362,11 @@ async function runLibrarySearch(userId: string, queryText: string, bookId = ""):
     };
   }
 
+  const wantsStructure =
+    /\b(chapter|chapters|section|sections|toc|contents|outline|kapitel|inhaltsverzeichnis|abschnitt)\b/i.test(queryText) ||
+    /\b(list|enumerate|name|what are|which are).{0,80}\b(problem|problems|unsolved|biggest|questions)\b/i.test(queryText);
+  let pineconeSeedResults: LibrarySearchResult[] = [];
+
   if (isPineconeSearchEnabledForUser(userId)) {
     diagnostics.pineconeAttempted = true;
     const pineconeSearch = await runPineconeLibrarySearch(userId, queryText, queryEmbedding, books);
@@ -1362,10 +1377,14 @@ async function runLibrarySearch(userId: string, queryText: string, bookId = ""):
       diagnostics.backend = "pinecone";
       diagnostics.fallbackReason = "";
       diagnostics.resultCount = results.length;
-      return {
-        results,
-        diagnostics,
-      };
+      if (wantsStructure) {
+        pineconeSeedResults = results;
+      } else {
+        return {
+          results,
+          diagnostics,
+        };
+      }
     }
   } else {
     diagnostics.fallbackReason = "pinecone_not_enabled_for_user";
@@ -1380,8 +1399,7 @@ async function runLibrarySearch(userId: string, queryText: string, bookId = ""):
         .get()
     )
   );
-  const scoredResults: LibrarySearchResult[] = [];
-  const wantsStructure = /\b(chapter|chapters|section|sections|toc|contents|outline|kapitel|inhaltsverzeichnis|abschnitt)\b/i.test(queryText);
+  const scoredResults: LibrarySearchResult[] = [...pineconeSeedResults];
 
   chunkSnapshots.forEach((snapshot) => {
     snapshot.docs.forEach((chunkSnapshot) => {
@@ -1425,6 +1443,15 @@ async function runLibrarySearch(userId: string, queryText: string, bookId = ""):
     const bookSnapshots = await Promise.all(
       Array.from(books.keys()).map((currentBookId) => db.collection("books").doc(currentBookId).get())
     );
+    const sectionSnapshots = await Promise.all(
+      Array.from(books.keys()).map((currentBookId) =>
+        db
+          .collection("bookSections")
+          .where("bookId", "==", currentBookId)
+          .limit(600)
+          .get()
+      )
+    );
     bookSnapshots.forEach((bookSnapshot) => {
       const book = books.get(bookSnapshot.id);
       if (!book || bookSnapshot.get("userId") !== userId) {
@@ -1448,6 +1475,42 @@ async function runLibrarySearch(userId: string, queryText: string, bookId = ""):
           chunkIndex: -1,
           score: 50,
           excerpt: `Book outline:\n${outlineText.slice(0, 1200)}`,
+        });
+      }
+    });
+    sectionSnapshots.forEach((snapshot) => {
+      const firstSection = snapshot.docs[0];
+      const currentBookId = firstSection ? assertString(firstSection.get("bookId"), "bookId") : "";
+      const book = books.get(currentBookId);
+      if (!book) {
+        return;
+      }
+      const sectionSources: SectionSourceForMap[] = snapshot.docs
+        .filter((sectionSnapshot) => sectionSnapshot.get("userId") === userId)
+        .map((sectionSnapshot) => ({
+          sectionIndex: Number(sectionSnapshot.get("sectionIndex")) || 0,
+          title: typeof sectionSnapshot.get("title") === "string" ? sectionSnapshot.get("title") : "",
+          textPreview:
+            typeof sectionSnapshot.get("textPreview") === "string"
+              ? sectionSnapshot.get("textPreview")
+              : "",
+          text: typeof sectionSnapshot.get("text") === "string" ? sectionSnapshot.get("text") : "",
+          pageStart: Number(sectionSnapshot.get("pageStart")) || 0,
+          pageEnd: Number(sectionSnapshot.get("pageEnd")) || 0,
+        }))
+        .sort((left, right) => left.sectionIndex - right.sectionIndex);
+      const targetCount = parseRequestedStructureCount(queryText) || 12;
+      const headingMap = createHeadingAwareSectionMapEntries(sectionSources, targetCount);
+      if (headingMap.length > 0) {
+        const headingText = headingMap
+          .map((entry) => `${entry.sectionNumber}. ${entry.title}`)
+          .join("\n");
+        scoredResults.push({
+          bookId: currentBookId,
+          bookTitle: book.title,
+          chunkIndex: -1,
+          score: 90,
+          excerpt: `Detected numbered structure:\n${headingText}`,
         });
       }
     });
@@ -1486,6 +1549,17 @@ function parseSectionMapTargetCount(queryText: string): number {
   return Math.max(3, Math.min(12, Math.floor(targetCount) || 6));
 }
 
+function parseRequestedStructureCount(queryText: string): number {
+  const digitMatch = queryText.match(/\b(\d{1,2})\b/);
+  if (digitMatch) {
+    return Math.max(1, Math.min(30, Number(digitMatch[1]) || 0));
+  }
+  if (/\bten\b/i.test(queryText)) {
+    return 10;
+  }
+  return 0;
+}
+
 function normalizeSectionMapEntry(value: unknown): SectionMapEntry | null {
   if (!value || typeof value !== "object") {
     return null;
@@ -1515,6 +1589,14 @@ function normalizeSectionMapEntry(value: unknown): SectionMapEntry | null {
   };
 }
 
+function countWeakSectionMapTitles(sections: SectionMapEntry[]): number {
+  return sections.filter((section) =>
+    /^Section \d+$/i.test(section.title) ||
+    /^https?:\/\//i.test(section.title) ||
+    /^\[\d+\]/.test(section.title)
+  ).length;
+}
+
 async function createBookSectionMapArtifact(userId: string, bookId: string, targetSectionCount: number) {
   const bookSnapshot = await db.collection("books").doc(bookId).get();
   if (!bookSnapshot.exists || bookSnapshot.get("userId") !== userId) {
@@ -1541,6 +1623,10 @@ async function createBookSectionMapArtifact(userId: string, bookId: string, targ
       textPreview:
         typeof sectionSnapshot.get("textPreview") === "string"
           ? sectionSnapshot.get("textPreview")
+          : "",
+      text:
+        typeof sectionSnapshot.get("text") === "string"
+          ? sectionSnapshot.get("text")
           : "",
       pageStart: Number(sectionSnapshot.get("pageStart")) || 0,
       pageEnd: Number(sectionSnapshot.get("pageEnd")) || 0,
@@ -1704,7 +1790,8 @@ async function resolveSectionMapSearch(
         Math.max(6, activeSectionNumber)
       )
     : null;
-  const artifactForSearch = latestArtifact ?? (createdArtifact ? await db.collection("bookArtifacts").doc(createdArtifact.artifactId).get() : undefined);
+  let artifactForSearch: FirebaseFirestore.DocumentSnapshot | undefined =
+    latestArtifact ?? (createdArtifact ? await db.collection("bookArtifacts").doc(createdArtifact.artifactId).get() : undefined);
 
   if (!artifactForSearch?.exists) {
     return null;
@@ -1716,6 +1803,27 @@ async function resolveSectionMapSearch(
   const sectionEntries = rawSectionEntries
     .map(normalizeSectionMapEntry)
     .filter((entry): entry is SectionMapEntry => entry !== null);
+
+  const weakTitleCount = countWeakSectionMapTitles(sectionEntries);
+  if (latestArtifact && weakTitleCount > 0) {
+    const replacement = await createBookSectionMapArtifact(
+      userId,
+      bookId,
+      Math.max(
+        activeSectionNumber,
+        Number(latestArtifact.get("targetSectionCount")) || sectionEntries.length || 6
+      )
+    );
+    const replacementWeakTitleCount = countWeakSectionMapTitles(replacement.sections);
+    if (replacementWeakTitleCount < weakTitleCount) {
+      artifactForSearch = await db.collection("bookArtifacts").doc(replacement.artifactId).get();
+      rawSectionEntries.splice(0, rawSectionEntries.length, ...replacement.sections);
+      sectionEntries.splice(0, sectionEntries.length, ...replacement.sections);
+    } else {
+      await db.collection("bookArtifacts").doc(replacement.artifactId).delete().catch(() => undefined);
+    }
+  }
+
   const activeSection = sectionEntries.find((entry) => entry.sectionNumber === activeSectionNumber);
 
   if (!activeSection) {
@@ -2568,6 +2676,7 @@ function createSectionMapEntries(
     sectionIndex: number;
     title: string;
     textPreview: string;
+    text?: string;
     pageStart: number;
     pageEnd: number;
   }>,
@@ -2575,6 +2684,11 @@ function createSectionMapEntries(
 ): SectionMapEntry[] {
   if (sections.length === 0) {
     return [];
+  }
+
+  const headingEntries = createHeadingAwareSectionMapEntries(sections, targetCount);
+  if (headingEntries.length >= Math.min(targetCount, 4)) {
+    return headingEntries;
   }
 
   const groupCount = Math.max(1, Math.min(targetCount, sections.length));
@@ -2604,6 +2718,144 @@ function createSectionMapEntries(
       sourceSectionEnd: last.sectionIndex,
       pageStart: first.pageStart,
       pageEnd: last.pageEnd,
+    };
+  });
+}
+
+function cleanDetectedHeadingTitle(rawTitle: string): string {
+  const stopWords = new Set([
+    "Although",
+    "Because",
+    "However",
+    "When",
+    "Why",
+    "What",
+    "This",
+    "These",
+    "There",
+    "That",
+    "It",
+  ]);
+  const trailingWords = new Set(["A", "An", "And", "In", "Of", "On", "The", "To", "a", "an", "and", "in", "of", "on", "the", "to"]);
+  const words = rawTitle
+    .replace(/\s+/g, " ")
+    .replace(/^[“"']|[”"']$/g, "")
+    .trim()
+    .split(" ")
+    .filter(Boolean);
+  const titleWords: string[] = [];
+
+  for (const word of words) {
+    const normalized = word.replace(/^[“"'(]+|[”"'),.;:]+$/g, "");
+    const first = normalized.charAt(0);
+    const isConnector = trailingWords.has(normalized);
+    const startsLikeTitle = first === first.toUpperCase() && /[A-Z0-9“]/.test(first);
+
+    if (titleWords.length > 0 && stopWords.has(normalized)) {
+      break;
+    }
+    if (!startsLikeTitle && !isConnector && titleWords.length > 0) {
+      break;
+    }
+    if (titleWords.length >= 8) {
+      break;
+    }
+
+    titleWords.push(word.replace(/[.;:,]+$/g, ""));
+  }
+
+  while (titleWords.length > 1 && trailingWords.has(titleWords[titleWords.length - 1].replace(/^[“"']|[”"']$/g, ""))) {
+    titleWords.pop();
+  }
+
+  return titleWords.join(" ").trim().slice(0, 120);
+}
+
+function extractNumberedHeadingCandidates(sections: SectionSourceForMap[]): NumberedHeadingCandidate[] {
+  const candidates: NumberedHeadingCandidate[] = [];
+  const headingPattern = /\b(\d{1,2})\.\s+(.+?)(?=\s+\d{1,2}\.\s+[A-Z“The]|\n{2,}|$)/g;
+  let globalPosition = 0;
+
+  sections.forEach((section) => {
+    const text = `${section.title ? `${section.title}\n\n` : ""}${section.text || section.textPreview}`;
+    let match: RegExpExecArray | null;
+    while ((match = headingPattern.exec(text)) !== null) {
+      const number = Number(match[1]);
+      const title = cleanDetectedHeadingTitle(match[2] || "");
+      if (
+        Number.isInteger(number) &&
+        number > 0 &&
+        number <= 30 &&
+        title.length >= 3 &&
+        !/^https?:\/\//i.test(title) &&
+        !/^\[\d+\]/.test(title)
+      ) {
+        candidates.push({
+          number,
+          title,
+          sectionIndex: section.sectionIndex,
+          pageStart: section.pageStart,
+          pageEnd: section.pageEnd,
+          textPreview: section.textPreview || section.text.slice(0, 420),
+          position: globalPosition + match.index,
+        });
+      }
+    }
+    globalPosition += text.length + 1;
+  });
+
+  const byNumber = new Map<number, NumberedHeadingCandidate>();
+  candidates
+    .sort((left, right) => left.position - right.position)
+    .forEach((candidate) => {
+      if (!byNumber.has(candidate.number)) {
+        byNumber.set(candidate.number, candidate);
+      }
+    });
+
+  return Array.from(byNumber.values()).sort((left, right) => left.number - right.number);
+}
+
+function createHeadingAwareSectionMapEntries(
+  sections: Array<{
+    sectionIndex: number;
+    title: string;
+    textPreview: string;
+    text?: string;
+    pageStart: number;
+    pageEnd: number;
+  }>,
+  targetCount: number
+): SectionMapEntry[] {
+  const sectionSources: SectionSourceForMap[] = sections.map((section) => ({
+    ...section,
+    text: section.text || section.textPreview,
+  }));
+  const headings = extractNumberedHeadingCandidates(sectionSources)
+    .filter((heading) => heading.number <= targetCount)
+    .slice(0, targetCount);
+
+  if (headings.length < Math.min(targetCount, 4)) {
+    return [];
+  }
+
+  return headings.map((heading, index) => {
+    const nextHeading = headings[index + 1];
+    const sectionEnd = nextHeading
+      ? Math.max(heading.sectionIndex, nextHeading.sectionIndex - 1)
+      : heading.sectionIndex;
+
+    return {
+      sectionNumber: heading.number,
+      title: heading.title,
+      summary:
+        heading.textPreview.length > 420
+          ? `${heading.textPreview.slice(0, 417).trim()}...`
+          : heading.textPreview || heading.title,
+      sourceSectionStart: heading.sectionIndex,
+      sourceSectionEnd: sectionEnd,
+      pageStart: heading.pageStart,
+      pageEnd: heading.pageEnd,
     };
   });
 }

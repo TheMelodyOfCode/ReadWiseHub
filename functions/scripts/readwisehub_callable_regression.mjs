@@ -12,6 +12,7 @@ const failures = [];
 let uid = "";
 let idToken = "";
 let primaryBookId = "";
+let structuredBookId = "";
 let accountDeleteBookId = "";
 let accountDeleteConversationId = "";
 let unverifiedUid = "";
@@ -61,6 +62,7 @@ async function createRegressionAuthUser() {
   globalThis.readWiseHubRegressionIdToken = idToken;
   await auth.updateUser(uid, { emailVerified: true });
   primaryBookId = `${uid}-book`;
+  structuredBookId = `${uid}-structured-book`;
   accountDeleteBookId = `${uid}-account-delete-book`;
   accountDeleteConversationId = `${uid}-account-delete-conversation`;
 }
@@ -333,6 +335,72 @@ async function seedBook(bookId, title) {
   await batch.commit();
 }
 
+async function seedStructuredBook() {
+  await db.collection("books").doc(structuredBookId).set({
+    userId: uid,
+    title: "Structured Problems Regression Book",
+    normalizedTitle: "structured problems regression book",
+    author: "",
+    language: "en",
+    status: "text_ready",
+    sourceType: "regression",
+    storagePath: "",
+    originalFileName: "structured-problems.txt",
+    mimeType: "text/plain",
+    sizeBytes: 8192,
+    pageCount: 10,
+    textLength: 4000,
+    chunkCount: 10,
+    sectionCount: 10,
+    embeddedChunkCount: 0,
+    createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    textReadyAt: admin.firestore.FieldValue.serverTimestamp(),
+    planAtIngestion: "free",
+  });
+
+  const headings = [
+    "Quantum Gravity",
+    "Particle Masses",
+    "Measurement Problem",
+    "Turbulence",
+    "Dark Energy",
+    "Dark Matter",
+    "Complexity",
+    "Matter-Antimatter Asymmetry",
+    "Friction",
+    "Arrow of Time",
+  ];
+  const batch = db.batch();
+  headings.forEach((heading, index) => {
+    const text = `${index + 1}. ${heading}\n\nRegression text explaining why ${heading.toLowerCase()} is one of the major open problems.`;
+    batch.set(db.collection("bookChunks").doc(`${structuredBookId}_${index}`), {
+      userId: uid,
+      bookId: structuredBookId,
+      chunkIndex: index,
+      text,
+      textPreview: text.slice(0, 240),
+      charStart: index * 1000,
+      charEnd: index * 1000 + text.length,
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+    batch.set(db.collection("bookSections").doc(`${structuredBookId}_${index}`), {
+      userId: uid,
+      bookId: structuredBookId,
+      sectionIndex: index,
+      title: `${index + 1}. ${heading}`,
+      text,
+      textPreview: text.slice(0, 300),
+      paragraphStart: index,
+      paragraphEnd: index,
+      pageStart: index + 1,
+      pageEnd: index + 1,
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+  });
+  await batch.commit();
+}
+
 async function seedAccountDeleteData() {
   await seedBook(accountDeleteBookId, "Account Delete Regression Book");
   await db.collection("conversations").doc(accountDeleteConversationId).set({
@@ -366,6 +434,7 @@ async function run() {
   await createRegressionAuthUser();
   await seedUser();
   await seedBook(primaryBookId, "Callable Regression Book");
+  await seedStructuredBook();
   const registeredSession = await callFunction(
     "registerLoginSession",
     {
@@ -575,6 +644,31 @@ async function run() {
       "section-map route trace did not store the active artifact id."
     );
   }
+
+  const structuredMapAsk = await callFunction(
+    "askLibrary",
+    {
+      query: "Please divide this book into 10 sections with titles.",
+      locale: "en",
+      bookId: structuredBookId,
+    },
+    idToken
+  );
+  check(structuredMapAsk.ok === true, "structured section-map askLibrary did not return ok.");
+  const structuredMapConversation = await db.collection("conversations").doc(structuredMapAsk.conversationId).get();
+  const structuredArtifactId = structuredMapConversation.get("activeArtifactId");
+  const structuredArtifact = structuredArtifactId
+    ? await db.collection("bookArtifacts").doc(structuredArtifactId).get()
+    : null;
+  const structuredTitles = structuredArtifact?.get("sections")?.map((section) => section.title) || [];
+  check(
+    structuredTitles.includes("Quantum Gravity") && structuredTitles.includes("Arrow of Time"),
+    `structured section-map titles were not heading-aware: ${structuredTitles.join(", ")}`
+  );
+  check(
+    !structuredTitles.some((title) => /^Section \d+$/i.test(title)),
+    `structured section-map included placeholder titles: ${structuredTitles.join(", ")}`
+  );
 
   await writeReaderSettingsViaClient(primaryBookId);
   const readerSettings = await db
