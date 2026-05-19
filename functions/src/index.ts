@@ -3137,6 +3137,55 @@ async function writeAdminAuditEvent(input: {
   });
 }
 
+type AdminUserLabel = {
+  userId: string;
+  email: string;
+  displayName: string;
+  label: string;
+};
+
+async function getAdminUserLabels(userIds: string[]): Promise<Map<string, AdminUserLabel>> {
+  const uniqueUserIds = Array.from(new Set(userIds.filter(Boolean)));
+  if (uniqueUserIds.length === 0) {
+    return new Map();
+  }
+
+  const userSnapshots = await db.getAll(
+    ...uniqueUserIds.map((userId) => db.collection("users").doc(userId))
+  );
+  const labels = new Map<string, AdminUserLabel>();
+
+  userSnapshots.forEach((userSnapshot) => {
+    const email =
+      typeof userSnapshot.get("email") === "string" ? userSnapshot.get("email") : "";
+    const displayName =
+      typeof userSnapshot.get("displayName") === "string"
+        ? userSnapshot.get("displayName")
+        : "";
+    const userId = userSnapshot.id;
+
+    labels.set(userId, {
+      userId,
+      email,
+      displayName,
+      label: email || displayName || userId,
+    });
+  });
+
+  uniqueUserIds.forEach((userId) => {
+    if (!labels.has(userId)) {
+      labels.set(userId, {
+        userId,
+        email: "",
+        displayName: "",
+        label: userId,
+      });
+    }
+  });
+
+  return labels;
+}
+
 export const adminGetDashboard = onCall(
   { region: "us-central1", timeoutSeconds: 60, memory: "512MiB" },
   async (request) => {
@@ -3172,6 +3221,9 @@ export const adminGetDashboard = onCall(
       .where("vectorBackendCandidate", "==", "pinecone")
       .limit(200)
       .get();
+    const pineconeUserLabels = await getAdminUserLabels(
+      pineconeSnapshot.docs.map((bookSnapshot) => String(bookSnapshot.get("userId") || ""))
+    );
     const pineconeBooks = pineconeSnapshot.docs.map((bookSnapshot) => ({
       bookId: bookSnapshot.id,
       title:
@@ -3179,6 +3231,10 @@ export const adminGetDashboard = onCall(
         bookSnapshot.get("title") ||
         bookSnapshot.id,
       userId: bookSnapshot.get("userId") || "",
+      userLabel: pineconeUserLabels.get(String(bookSnapshot.get("userId") || ""))?.label || "",
+      userEmail: pineconeUserLabels.get(String(bookSnapshot.get("userId") || ""))?.email || "",
+      userDisplayName:
+        pineconeUserLabels.get(String(bookSnapshot.get("userId") || ""))?.displayName || "",
       indexedChunkCount: Number(bookSnapshot.get("pineconeIndexedChunkCount")) || 0,
       missingChunkCount: Number(bookSnapshot.get("pineconeMissingChunkCount")) || 0,
     }));
@@ -3227,9 +3283,16 @@ export const adminListRecentConversations = onCall(
       .orderBy("createdAt", "desc")
       .limit(limit)
       .get();
+    const userLabels = await getAdminUserLabels(
+      snapshot.docs.map((conversationSnapshot) => String(conversationSnapshot.get("userId") || ""))
+    );
     const conversations = snapshot.docs.map((conversationSnapshot) => ({
       id: conversationSnapshot.id,
       userId: conversationSnapshot.get("userId") || "",
+      userLabel: userLabels.get(String(conversationSnapshot.get("userId") || ""))?.label || "",
+      userEmail: userLabels.get(String(conversationSnapshot.get("userId") || ""))?.email || "",
+      userDisplayName:
+        userLabels.get(String(conversationSnapshot.get("userId") || ""))?.displayName || "",
       title: conversationSnapshot.get("title") || "Untitled",
       mode: conversationSnapshot.get("mode") || "",
       scopedBookId: conversationSnapshot.get("scopedBookId") || "",
@@ -3272,9 +3335,16 @@ export const adminListBooks = onCall(
       .orderBy("createdAt", "desc")
       .limit(limit)
       .get();
+    const userLabels = await getAdminUserLabels(
+      snapshot.docs.map((bookSnapshot) => String(bookSnapshot.get("userId") || ""))
+    );
     const books = snapshot.docs.map((bookSnapshot) => ({
       id: bookSnapshot.id,
       userId: bookSnapshot.get("userId") || "",
+      userLabel: userLabels.get(String(bookSnapshot.get("userId") || ""))?.label || "",
+      userEmail: userLabels.get(String(bookSnapshot.get("userId") || ""))?.email || "",
+      userDisplayName:
+        userLabels.get(String(bookSnapshot.get("userId") || ""))?.displayName || "",
       title: bookSnapshot.get("title") || "Untitled",
       displayTitle:
         bookSnapshot.get("displayTitle") ||

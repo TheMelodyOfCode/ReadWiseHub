@@ -205,6 +205,9 @@ type AdminDashboardPayload = {
     bookId: string;
     title: string;
     userId: string;
+    userLabel: string;
+    userEmail: string;
+    userDisplayName: string;
     indexedChunkCount: number;
     missingChunkCount: number;
   }>;
@@ -213,6 +216,9 @@ type AdminDashboardPayload = {
 type AdminConversationSummary = {
   id: string;
   userId: string;
+  userLabel: string;
+  userEmail: string;
+  userDisplayName: string;
   title: string;
   mode: string;
   scopedBookId: string;
@@ -236,6 +242,9 @@ type AdminConversationDebug = {
 type AdminBookSummary = {
   id: string;
   userId: string;
+  userLabel: string;
+  userEmail: string;
+  userDisplayName: string;
   title: string;
   displayTitle: string;
   status: string;
@@ -2240,6 +2249,20 @@ export function App() {
     return JSON.stringify(value ?? null, null, 2);
   }
 
+  function renderAdminUserCell(user: {
+    userId: string;
+    userLabel?: string;
+    userEmail?: string;
+    userDisplayName?: string;
+  }) {
+    return (
+      <>
+        <strong>{user.userLabel || user.userEmail || user.userDisplayName || user.userId}</strong>
+        <small>{user.userId}</small>
+      </>
+    );
+  }
+
   function renderAdminConsole() {
     const counts = adminDashboard?.counts ?? {};
 
@@ -2343,7 +2366,7 @@ export function App() {
                         <strong>{book.title}</strong>
                         <small>{book.bookId}</small>
                       </td>
-                      <td data-label="User">{book.userId}</td>
+                      <td data-label="User">{renderAdminUserCell(book)}</td>
                       <td data-label="Indexed">{book.indexedChunkCount}</td>
                       <td data-label="Missing">{book.missingChunkCount}</td>
                     </tr>
@@ -2386,7 +2409,7 @@ export function App() {
                           {Math.round(book.sizeBytes / 1024)} KB
                         </small>
                       </td>
-                      <td data-label="User">{book.userId}</td>
+                      <td data-label="User">{renderAdminUserCell(book)}</td>
                       <td data-label="Status">{book.status || "-"}</td>
                       <td data-label="Structure">
                         {book.structureQuality || "-"}
@@ -2482,7 +2505,7 @@ export function App() {
                           <strong>{conversation.title}</strong>
                           <small>{conversation.latestQuestion}</small>
                         </td>
-                        <td data-label="User">{conversation.userId}</td>
+                        <td data-label="User">{renderAdminUserCell(conversation)}</td>
                         <td data-label="Mode">{conversation.mode || "-"}</td>
                         <td data-label="Retrieval">
                           {String(diagnostics.backend ?? "-")}
