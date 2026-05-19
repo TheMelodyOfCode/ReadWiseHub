@@ -3255,6 +3255,155 @@ export const adminListRecentConversations = onCall(
   }
 );
 
+export const adminListBooks = onCall(
+  { region: "us-central1", timeoutSeconds: 60, memory: "512MiB" },
+  async (request) => {
+    const viewer = requireAdmin(request.auth?.token
+      ? {
+          uid: request.auth.uid,
+          email: request.auth.token.email,
+          name: request.auth.token.name,
+          picture: request.auth.token.picture,
+        }
+      : undefined);
+    const limit = Math.max(1, Math.min(Number(request.data?.limit) || 60, 120));
+    const snapshot = await db
+      .collection("books")
+      .orderBy("createdAt", "desc")
+      .limit(limit)
+      .get();
+    const books = snapshot.docs.map((bookSnapshot) => ({
+      id: bookSnapshot.id,
+      userId: bookSnapshot.get("userId") || "",
+      title: bookSnapshot.get("title") || "Untitled",
+      displayTitle:
+        bookSnapshot.get("displayTitle") ||
+        createDisplayTitle(String(bookSnapshot.get("title") || "Untitled")),
+      status: bookSnapshot.get("status") || "",
+      contentType: bookSnapshot.get("contentType") || "",
+      sizeBytes: Number(bookSnapshot.get("sizeBytes")) || 0,
+      pageCount: Number(bookSnapshot.get("pageCount")) || 0,
+      chunkCount: Number(bookSnapshot.get("chunkCount")) || 0,
+      sectionCount: Number(bookSnapshot.get("sectionCount")) || 0,
+      embeddedChunkCount: Number(bookSnapshot.get("embeddedChunkCount")) || 0,
+      pineconeIndexedChunkCount: Number(bookSnapshot.get("pineconeIndexedChunkCount")) || 0,
+      pineconeMissingChunkCount: Number(bookSnapshot.get("pineconeMissingChunkCount")) || 0,
+      vectorBackendCandidate: bookSnapshot.get("vectorBackendCandidate") || "",
+      structureQuality: bookSnapshot.get("structureQuality") || "",
+      formatWarning: bookSnapshot.get("formatWarning") || "",
+      language: bookSnapshot.get("language") || "",
+      createdAt: normalizeFirestoreValue(bookSnapshot.get("createdAt")),
+      updatedAt: normalizeFirestoreValue(bookSnapshot.get("updatedAt")),
+    }));
+
+    await writeAdminAuditEvent({
+      viewer,
+      action: "adminListBooks",
+    });
+
+    return {
+      ok: true,
+      books,
+    };
+  }
+);
+
+export const adminGetBookDebug = onCall(
+  { region: "us-central1", timeoutSeconds: 60, memory: "512MiB" },
+  async (request) => {
+    const viewer = requireAdmin(request.auth?.token
+      ? {
+          uid: request.auth.uid,
+          email: request.auth.token.email,
+          name: request.auth.token.name,
+          picture: request.auth.token.picture,
+        }
+      : undefined);
+    const bookId = assertString(request.data?.bookId, "bookId");
+    const bookSnapshot = await db.collection("books").doc(bookId).get();
+    if (!bookSnapshot.exists) {
+      throw new HttpsError("not-found", "Book was not found.");
+    }
+
+    const [jobsSnapshot, chunksSnapshot, sectionsSnapshot] = await Promise.all([
+      db
+        .collection("ingestionJobs")
+        .where("bookId", "==", bookId)
+        .limit(20)
+        .get(),
+      db
+        .collection("bookChunks")
+        .where("bookId", "==", bookId)
+        .limit(20)
+        .get(),
+      db
+        .collection("bookSections")
+        .where("bookId", "==", bookId)
+        .limit(30)
+        .get(),
+    ]);
+    const chunks = chunksSnapshot.docs
+      .map((chunkSnapshot) => ({
+        id: chunkSnapshot.id,
+        chunkIndex: Number(chunkSnapshot.get("chunkIndex")) || 0,
+        charStart: Number(chunkSnapshot.get("charStart")) || 0,
+        charEnd: Number(chunkSnapshot.get("charEnd")) || 0,
+        textPreview:
+          typeof chunkSnapshot.get("textPreview") === "string"
+            ? chunkSnapshot.get("textPreview")
+            : "",
+        hasEmbedding: Array.isArray(chunkSnapshot.get("embedding")),
+      }))
+      .sort((left, right) => left.chunkIndex - right.chunkIndex);
+    const sections = sectionsSnapshot.docs
+      .map((sectionSnapshot) => ({
+        id: sectionSnapshot.id,
+        sectionIndex: Number(sectionSnapshot.get("sectionIndex")) || 0,
+        title:
+          typeof sectionSnapshot.get("title") === "string"
+            ? sectionSnapshot.get("title")
+            : "",
+        pageStart: Number(sectionSnapshot.get("pageStart")) || 0,
+        pageEnd: Number(sectionSnapshot.get("pageEnd")) || 0,
+        textPreview:
+          typeof sectionSnapshot.get("textPreview") === "string"
+            ? sectionSnapshot.get("textPreview")
+            : "",
+      }))
+      .sort((left, right) => left.sectionIndex - right.sectionIndex);
+    const jobs = jobsSnapshot.docs
+      .map((jobSnapshot): Record<string, unknown> => ({
+        id: jobSnapshot.id,
+        ...(normalizeFirestoreValue(jobSnapshot.data()) as Record<string, unknown>),
+      }))
+      .sort((left, right) =>
+        String(right.createdAt || "").localeCompare(String(left.createdAt || ""))
+      );
+
+    await writeAdminAuditEvent({
+      viewer,
+      action: "adminGetBookDebug",
+      targetUserId: bookSnapshot.get("userId") || "",
+      targetBookId: bookId,
+      reason:
+        typeof request.data?.reason === "string"
+          ? request.data.reason.slice(0, 240)
+          : "Debug book ingestion and metadata.",
+    });
+
+    return {
+      ok: true,
+      book: {
+        id: bookSnapshot.id,
+        ...(normalizeFirestoreValue(bookSnapshot.data()) as Record<string, unknown>),
+      },
+      ingestionJobs: jobs,
+      chunks,
+      sections,
+    };
+  }
+);
+
 export const adminGetConversationDebug = onCall(
   { region: "us-central1", timeoutSeconds: 60, memory: "512MiB" },
   async (request) => {

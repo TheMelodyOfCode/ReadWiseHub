@@ -233,6 +233,36 @@ type AdminConversationDebug = {
   routeTrace: Record<string, unknown> | null;
 };
 
+type AdminBookSummary = {
+  id: string;
+  userId: string;
+  title: string;
+  displayTitle: string;
+  status: string;
+  contentType: string;
+  sizeBytes: number;
+  pageCount: number;
+  chunkCount: number;
+  sectionCount: number;
+  embeddedChunkCount: number;
+  pineconeIndexedChunkCount: number;
+  pineconeMissingChunkCount: number;
+  vectorBackendCandidate: string;
+  structureQuality: string;
+  formatWarning: string;
+  language: string;
+  createdAt?: string;
+  updatedAt?: string;
+};
+
+type AdminBookDebug = {
+  ok: boolean;
+  book: Record<string, unknown>;
+  ingestionJobs: Array<Record<string, unknown>>;
+  chunks: Array<Record<string, unknown>>;
+  sections: Array<Record<string, unknown>>;
+};
+
 const UPLOAD_BACKEND_ENABLED = true;
 const MAX_FREE_FILE_BYTES = 20 * 1024 * 1024;
 const ALLOWED_UPLOAD_TYPES = new Set([
@@ -553,6 +583,8 @@ export function App() {
   const [adminConversations, setAdminConversations] = useState<AdminConversationSummary[]>([]);
   const [adminConversationDebug, setAdminConversationDebug] =
     useState<AdminConversationDebug | null>(null);
+  const [adminBooks, setAdminBooks] = useState<AdminBookSummary[]>([]);
+  const [adminBookDebug, setAdminBookDebug] = useState<AdminBookDebug | null>(null);
   const [adminBusy, setAdminBusy] = useState(false);
   const [adminMessage, setAdminMessage] = useState("");
 
@@ -1042,12 +1074,21 @@ export function App() {
     setAdminConversations(response.data.conversations ?? []);
   }
 
+  async function loadAdminBooks() {
+    const listBooks = httpsCallable<
+      { limit: number },
+      { ok: boolean; books: AdminBookSummary[] }
+    >(functions, "adminListBooks");
+    const response = await listBooks({ limit: 80 });
+    setAdminBooks(response.data.books ?? []);
+  }
+
   async function loadAdminConsole() {
     setAdminBusy(true);
     setAdminMessage("");
 
     try {
-      await Promise.all([loadAdminDashboard(), loadAdminConversations()]);
+      await Promise.all([loadAdminDashboard(), loadAdminConversations(), loadAdminBooks()]);
     } catch (error) {
       setAdminMessage(getErrorMessage(error, "Admin console failed"));
     } finally {
@@ -1077,6 +1118,33 @@ export function App() {
       });
     } catch (error) {
       setAdminMessage(getErrorMessage(error, "Conversation debug failed"));
+    } finally {
+      setAdminBusy(false);
+    }
+  }
+
+  async function openAdminBook(bookId: string) {
+    setAdminBusy(true);
+    setAdminMessage("");
+
+    try {
+      const getBookDebug = httpsCallable<
+        { bookId: string; reason: string },
+        AdminBookDebug
+      >(functions, "adminGetBookDebug");
+      const response = await getBookDebug({
+        bookId,
+        reason: "Admin console book metadata and ingestion review.",
+      });
+      setAdminBookDebug(response.data);
+      window.requestAnimationFrame(() => {
+        document.getElementById("admin-book-debug")?.scrollIntoView({
+          behavior: "smooth",
+          block: "start",
+        });
+      });
+    } catch (error) {
+      setAdminMessage(getErrorMessage(error, "Book debug failed"));
     } finally {
       setAdminBusy(false);
     }
@@ -2289,6 +2357,104 @@ export function App() {
               </table>
             </div>
           </section>
+
+          <section className="admin-section">
+            <div className="section-heading">
+              <p className="eyebrow">Library operations</p>
+              <h2>Books and ingestion metadata</h2>
+            </div>
+            <div className="admin-table-wrap">
+              <table className="admin-table">
+                <thead>
+                  <tr>
+                    <th>Book</th>
+                    <th>User</th>
+                    <th>Status</th>
+                    <th>Structure</th>
+                    <th>Chunks</th>
+                    <th>Vectors</th>
+                    <th>Debug</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {adminBooks.map((book) => (
+                    <tr key={book.id}>
+                      <td>
+                        <strong>{book.displayTitle || book.title}</strong>
+                        <small>
+                          {book.id} · {book.contentType || "unknown"} ·{" "}
+                          {Math.round(book.sizeBytes / 1024)} KB
+                        </small>
+                      </td>
+                      <td>{book.userId}</td>
+                      <td>{book.status || "-"}</td>
+                      <td>
+                        {book.structureQuality || "-"}
+                        {book.formatWarning ? <small>{book.formatWarning}</small> : null}
+                      </td>
+                      <td>
+                        {book.chunkCount}
+                        <small>
+                          {book.sectionCount} sections · {book.pageCount || "-"} pages
+                        </small>
+                      </td>
+                      <td>
+                        {book.embeddedChunkCount}/{book.chunkCount}
+                        <small>
+                          Pinecone {book.pineconeIndexedChunkCount}/
+                          {book.chunkCount} · missing {book.pineconeMissingChunkCount}
+                        </small>
+                      </td>
+                      <td>
+                        <button
+                          className="button secondary-button"
+                          type="button"
+                          onClick={() => void openAdminBook(book.id)}
+                          disabled={adminBusy}
+                        >
+                          Open
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                  {adminBooks.length === 0 ? (
+                    <tr>
+                      <td colSpan={7}>No books loaded.</td>
+                    </tr>
+                  ) : null}
+                </tbody>
+              </table>
+            </div>
+          </section>
+
+          {adminBookDebug ? (
+            <section id="admin-book-debug" className="admin-section">
+              <div className="section-heading">
+                <p className="eyebrow">Book detail</p>
+                <h2>Metadata, ingestion jobs, and structure previews</h2>
+              </div>
+              <div className="admin-debug-grid">
+                <article className="admin-card">
+                  <h3>Book metadata</h3>
+                  <pre className="admin-json">{formatAdminJson(adminBookDebug.book)}</pre>
+                </article>
+                <article className="admin-card">
+                  <h3>Ingestion jobs</h3>
+                  <pre className="admin-json">
+                    {formatAdminJson(adminBookDebug.ingestionJobs)}
+                  </pre>
+                </article>
+                <article className="admin-card">
+                  <h3>Chunk previews</h3>
+                  <pre className="admin-json">{formatAdminJson(adminBookDebug.chunks)}</pre>
+                </article>
+                <article className="admin-card">
+                  <h3>Section previews</h3>
+                  <pre className="admin-json">{formatAdminJson(adminBookDebug.sections)}</pre>
+                </article>
+              </div>
+            </section>
+          ) : null}
 
           <section className="admin-section">
             <div className="section-heading">
