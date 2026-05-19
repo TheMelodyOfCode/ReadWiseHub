@@ -510,6 +510,45 @@ async function run() {
     "listBookArtifacts did not include generated section map."
   );
 
+  const sectionAsk = await callFunction(
+    "askLibrary",
+    { query: "Summarize section 2.", locale: "en", bookId: primaryBookId },
+    idToken
+  );
+  check(sectionAsk.ok === true, "section-map askLibrary did not return ok.");
+  check(
+    sectionAsk.mode === "ai_grounded",
+    `section-map askLibrary mode was ${sectionAsk.mode}, expected ai_grounded.`
+  );
+  check(Boolean(sectionAsk.conversationId), "section-map askLibrary did not create a conversation.");
+  const sectionAskConversation = await db.collection("conversations").doc(sectionAsk.conversationId).get();
+  check(sectionAskConversation.exists, "section-map askLibrary did not save the conversation document.");
+  check(
+    sectionAskConversation.get("activeMode") === "section_map",
+    `section-map conversation activeMode was ${sectionAskConversation.get("activeMode")}.`
+  );
+  check(
+    sectionAskConversation.get("activeArtifactId") === sectionMap.artifact.id,
+    "section-map conversation did not store the active artifact id."
+  );
+  check(
+    sectionAskConversation.get("activeSectionNumber") === 2,
+    "section-map conversation did not store the active section number."
+  );
+  const sectionRouteTraceId = sectionAskConversation.get("routeTraceId");
+  if (sectionRouteTraceId) {
+    const sectionRouteTrace = await db.collection("routeTraces").doc(sectionRouteTraceId).get();
+    check(sectionRouteTrace.exists, "section-map routeTraceId did not point to a route trace document.");
+    check(
+      sectionRouteTrace.get("routeIntent") === "section_qa",
+      `section-map route intent was ${sectionRouteTrace.get("routeIntent")}, expected section_qa.`
+    );
+    check(
+      sectionRouteTrace.get("activeArtifactId") === sectionMap.artifact.id,
+      "section-map route trace did not store the active artifact id."
+    );
+  }
+
   await writeReaderSettingsViaClient(primaryBookId);
   const readerSettings = await db
     .collection("users")

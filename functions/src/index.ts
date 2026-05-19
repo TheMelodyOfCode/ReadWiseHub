@@ -138,6 +138,9 @@ type RetrievalDiagnostics = {
   resultCount: number;
   pineconeCompleteBookCount: number;
   pineconeIncompleteBookIds: string[];
+  sectionMapMatched?: boolean;
+  activeArtifactId?: string;
+  activeSectionNumber?: number;
 };
 
 type AdminViewer = AuthContext & {
@@ -147,6 +150,8 @@ type AdminViewer = AuthContext & {
 type LibrarySearchResponse = {
   results: LibrarySearchResult[];
   diagnostics: RetrievalDiagnostics;
+  activeArtifactId?: string;
+  activeSectionNumber?: number;
 };
 
 type SourceBookSummary = {
@@ -1451,6 +1456,161 @@ async function runLibrarySearch(userId: string, queryText: string, bookId = ""):
   return {
     results,
     diagnostics,
+  };
+}
+
+function parseRequestedSectionNumber(queryText: string): number {
+  const match = queryText.match(/\b(?:section|part|abschnitt|teil)\s+(\d{1,2})\b/i);
+  const sectionNumber = match ? Number(match[1]) : 0;
+  return Number.isInteger(sectionNumber) && sectionNumber > 0 ? sectionNumber : 0;
+}
+
+function normalizeSectionMapEntry(value: unknown): SectionMapEntry | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+
+  const entry = value as Partial<SectionMapEntry>;
+  const sectionNumber = Number(entry.sectionNumber);
+  const sourceSectionStart = Number(entry.sourceSectionStart);
+  const sourceSectionEnd = Number(entry.sourceSectionEnd);
+
+  if (
+    !Number.isInteger(sectionNumber) ||
+    !Number.isInteger(sourceSectionStart) ||
+    !Number.isInteger(sourceSectionEnd)
+  ) {
+    return null;
+  }
+
+  return {
+    sectionNumber,
+    title: typeof entry.title === "string" ? entry.title : `Section ${sectionNumber}`,
+    summary: typeof entry.summary === "string" ? entry.summary : "",
+    sourceSectionStart,
+    sourceSectionEnd,
+    pageStart: Number(entry.pageStart) || 0,
+    pageEnd: Number(entry.pageEnd) || 0,
+  };
+}
+
+async function resolveSectionMapSearch(
+  userId: string,
+  queryText: string,
+  bookId: string
+): Promise<LibrarySearchResponse | null> {
+  const activeSectionNumber = parseRequestedSectionNumber(queryText);
+  if (!bookId || !activeSectionNumber) {
+    return null;
+  }
+
+  const bookSnapshot = await db.collection("books").doc(bookId).get();
+  if (!bookSnapshot.exists || bookSnapshot.get("userId") !== userId) {
+    return null;
+  }
+
+  const artifactsSnapshot = await db
+    .collection("bookArtifacts")
+    .where("userId", "==", userId)
+    .where("bookId", "==", bookId)
+    .where("type", "==", "section_map")
+    .limit(20)
+    .get();
+
+  const latestArtifact = artifactsSnapshot.docs
+    .filter((artifactSnapshot) => artifactSnapshot.get("status") === "ready")
+    .sort((left, right) => {
+      const leftCreatedAt = left.get("createdAt")?.toMillis?.() ?? 0;
+      const rightCreatedAt = right.get("createdAt")?.toMillis?.() ?? 0;
+      return rightCreatedAt - leftCreatedAt;
+    })[0];
+
+  if (!latestArtifact) {
+    return null;
+  }
+
+  const rawSectionEntries: unknown[] = Array.isArray(latestArtifact.get("sections"))
+    ? latestArtifact.get("sections")
+    : [];
+  const sectionEntries = rawSectionEntries
+    .map(normalizeSectionMapEntry)
+    .filter((entry): entry is SectionMapEntry => entry !== null);
+  const activeSection = sectionEntries.find((entry) => entry.sectionNumber === activeSectionNumber);
+
+  if (!activeSection) {
+    return null;
+  }
+
+  const sectionStart = Math.min(activeSection.sourceSectionStart, activeSection.sourceSectionEnd);
+  const sectionEnd = Math.max(activeSection.sourceSectionStart, activeSection.sourceSectionEnd);
+  const sectionsSnapshot = await db
+    .collection("bookSections")
+    .where("bookId", "==", bookId)
+    .limit(600)
+    .get();
+  const bookTitle =
+    String(bookSnapshot.get("displayTitle") || "") ||
+    createDisplayTitle(String(bookSnapshot.get("title") || "Untitled"));
+  const results = sectionsSnapshot.docs
+    .filter((sectionSnapshot) => sectionSnapshot.get("userId") === userId)
+    .map((sectionSnapshot) => ({
+      snapshot: sectionSnapshot,
+      sectionIndex: Number(sectionSnapshot.get("sectionIndex")) || 0,
+    }))
+    .filter(({ sectionIndex }) => sectionIndex >= sectionStart && sectionIndex <= sectionEnd)
+    .sort((left, right) => left.sectionIndex - right.sectionIndex)
+    .slice(0, 8)
+    .map(({ snapshot, sectionIndex }, index) => {
+      const title = String(snapshot.get("title") || "").trim();
+      const text = String(snapshot.get("text") || snapshot.get("textPreview") || "").replace(/\s+/g, " ").trim();
+      const excerptParts = [
+        `Generated section ${activeSection.sectionNumber}: ${activeSection.title}`,
+        title ? `Source section: ${title}` : "",
+        text.slice(0, 2400),
+      ].filter(Boolean);
+
+      return {
+        chunkId: snapshot.id,
+        bookId,
+        bookTitle,
+        chunkIndex: sectionIndex,
+        score: 120 - index,
+        excerpt: excerptParts.join("\n"),
+      };
+    });
+
+  if (results.length === 0) {
+    return null;
+  }
+
+  const diagnostics = createRetrievalDiagnostics({
+    userId,
+    bookId,
+    books: new Map([
+      [
+        bookId,
+        {
+          title: bookTitle,
+          scope: resolveBookScope(userId, bookSnapshot),
+          pineconeIndexedChunkCount: Number(bookSnapshot.get("pineconeIndexedChunkCount")) || 0,
+          pineconeMissingChunkCount: Number(bookSnapshot.get("pineconeMissingChunkCount")) || 0,
+        },
+      ],
+    ]),
+  });
+  diagnostics.backend = "firestore";
+  diagnostics.fallbackReason = "section_map_scope";
+  diagnostics.candidateCount = results.length;
+  diagnostics.resultCount = results.length;
+  diagnostics.sectionMapMatched = true;
+  diagnostics.activeArtifactId = latestArtifact.id;
+  diagnostics.activeSectionNumber = activeSectionNumber;
+
+  return {
+    results,
+    diagnostics,
+    activeArtifactId: latestArtifact.id,
+    activeSectionNumber,
   };
 }
 
@@ -3940,12 +4100,16 @@ export const askLibrary = onCall(
       );
     }
 
-    const search = await runLibrarySearch(auth.uid, queryText, bookId);
+    const sectionMapSearch = await resolveSectionMapSearch(auth.uid, queryText, bookId);
+    const search = sectionMapSearch ?? (await runLibrarySearch(auth.uid, queryText, bookId));
     const results = search.results;
     const aiAnswer = await createAiGroundedAnswer(queryText, results, locale);
     const answer = aiAnswer ?? createGroundedDraft(queryText, results, locale);
     const sourceBooks = summarizeSourceBooks(results);
     const conversationScope = buildDefaultBookScope(auth.uid);
+    const activeArtifactId = search.activeArtifactId || "";
+    const activeSectionNumber = search.activeSectionNumber || 0;
+    const activeMode = activeArtifactId && activeSectionNumber ? "section_map" : "book_qa";
     const now = FieldValue.serverTimestamp();
     const conversationRef = db.collection("conversations").doc();
     const routeTraceRef = db.collection("routeTraces").doc();
@@ -3980,6 +4144,10 @@ export const askLibrary = onCall(
         latestAnswerPreview: answer.slice(0, 360),
         scopedBookId: bookId,
         scope: bookId ? "single_book" : "library",
+        activeMode,
+        activeBookId: bookId,
+        activeArtifactId,
+        activeSectionNumber,
         sourceBookIds: sourceBooks.map((sourceBook) => sourceBook.bookId),
         sourceBookTitles: sourceBooks.map((sourceBook) => sourceBook.bookTitle),
         retrievalDiagnostics: search.diagnostics,
@@ -4023,9 +4191,16 @@ export const askLibrary = onCall(
         libraryId: conversationScope.libraryId,
         conversationId: conversationRef.id,
         callable: "askLibrary",
-        routeIntent: "book_qa",
-        selectedBookSource: bookId ? "explicit_book_scope" : "library_scope",
+        routeIntent: activeMode === "section_map" ? "section_qa" : "book_qa",
+        selectedBookSource: activeMode === "section_map"
+          ? "section_map_artifact"
+          : bookId
+            ? "explicit_book_scope"
+            : "library_scope",
         scopedBookId: bookId,
+        activeBookId: bookId,
+        activeArtifactId,
+        activeSectionNumber,
         queryPreview: queryText.slice(0, 180),
         queryLength: queryText.length,
         answerMode: aiAnswer ? "ai_grounded" : "source_draft",
