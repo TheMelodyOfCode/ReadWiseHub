@@ -1663,11 +1663,40 @@ function normalizeSectionMapEntry(value: unknown): SectionMapEntry | null {
 
 function countWeakSectionMapTitles(sections: SectionMapEntry[]): number {
   return sections.filter((section) =>
-    /^Section \d+$/i.test(section.title) ||
+    /^(Chapter|Section|Part) \d+$/i.test(section.title) ||
     /^https?:\/\//i.test(section.title) ||
     /^\[\d+\]/.test(section.title) ||
     /^Here$/i.test(section.title)
   ).length;
+}
+
+async function supersedePriorSectionMaps(userId: string, bookId: string, targetSectionCount: number, currentArtifactId: string) {
+  const snapshot = await db
+    .collection("bookArtifacts")
+    .where("userId", "==", userId)
+    .where("bookId", "==", bookId)
+    .where("type", "==", "section_map")
+    .where("targetSectionCount", "==", targetSectionCount)
+    .limit(50)
+    .get();
+
+  const batch = db.batch();
+  let writes = 0;
+  snapshot.docs.forEach((artifactSnapshot) => {
+    if (artifactSnapshot.id === currentArtifactId || artifactSnapshot.get("status") !== "ready") {
+      return;
+    }
+    batch.update(artifactSnapshot.ref, {
+      status: "superseded",
+      supersededBy: currentArtifactId,
+      updatedAt: FieldValue.serverTimestamp(),
+    });
+    writes += 1;
+  });
+
+  if (writes > 0) {
+    await batch.commit();
+  }
 }
 
 async function createBookSectionMapArtifact(userId: string, bookId: string, targetSectionCount: number) {
@@ -1737,6 +1766,7 @@ async function createBookSectionMapArtifact(userId: string, bookId: string, targ
   };
 
   await artifactRef.set(artifact);
+  await supersedePriorSectionMaps(userId, bookId, targetSectionCount, artifactRef.id);
 
   return {
     artifact,
@@ -3689,14 +3719,18 @@ export const listBookArtifacts = onCall(
           const rawSections: unknown[] = Array.isArray(artifactSnapshot.get("sections"))
             ? artifactSnapshot.get("sections")
             : [];
+          const status = artifactSnapshot.get("status") || "";
+          if (status !== "ready") {
+            return null;
+          }
           const sectionEntries = rawSections
             .map(normalizeSectionMapEntry)
             .filter((entry): entry is SectionMapEntry => entry !== null);
           const weakTitleCount = countWeakSectionMapTitles(sectionEntries);
           const hasHeadingAwareTitles =
             sectionEntries.length > 0 &&
-            weakTitleCount === 0 &&
-            sectionEntries.some((section) => !/^Section \d+$/i.test(section.title));
+              weakTitleCount === 0 &&
+              sectionEntries.some((section) => !/^(Chapter|Section|Part) \d+$/i.test(section.title));
 
           return {
             id: artifactSnapshot.id,
@@ -3704,7 +3738,7 @@ export const listBookArtifacts = onCall(
             type: artifactSnapshot.get("type") || "",
             bookId: artifactSnapshot.get("bookId") || "",
             bookTitle: artifactSnapshot.get("bookTitle") || "",
-            status: artifactSnapshot.get("status") || "",
+            status,
             generatedBy: artifactSnapshot.get("generatedBy") || "",
             targetSectionCount: Number(artifactSnapshot.get("targetSectionCount")) || 0,
             sourceSectionCount: Number(artifactSnapshot.get("sourceSectionCount")) || 0,
@@ -3720,6 +3754,7 @@ export const listBookArtifacts = onCall(
             updatedAt: normalizeFirestoreValue(artifactSnapshot.get("updatedAt")),
           };
         })
+        .filter((artifact): artifact is NonNullable<typeof artifact> => artifact !== null)
         .sort((left, right) => String(right.createdAt || "").localeCompare(String(left.createdAt || ""))),
     };
   }

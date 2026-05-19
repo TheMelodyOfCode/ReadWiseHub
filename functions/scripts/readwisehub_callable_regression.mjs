@@ -645,6 +645,26 @@ async function run() {
     listedArtifacts.artifacts?.some((artifact) => artifact.id === sectionMap.artifact.id),
     "listBookArtifacts did not include generated section map."
   );
+  const replacementSectionMap = await callFunction(
+    "generateBookSectionMap",
+    { bookId: primaryBookId, targetSectionCount: 3 },
+    idToken
+  );
+  check(replacementSectionMap.ok === true, "replacement generateBookSectionMap did not return ok.");
+  const listedArtifactsAfterReplacement = await callFunction(
+    "listBookArtifacts",
+    { bookId: primaryBookId },
+    idToken
+  );
+  const listedArtifactIdsAfterReplacement = listedArtifactsAfterReplacement.artifacts?.map((artifact) => artifact.id) || [];
+  check(
+    listedArtifactIdsAfterReplacement.includes(replacementSectionMap.artifact.id),
+    "listBookArtifacts did not include replacement section map."
+  );
+  check(
+    !listedArtifactIdsAfterReplacement.includes(sectionMap.artifact.id),
+    "listBookArtifacts included superseded section map."
+  );
 
   const naturalSectionMapAsk = await callFunction(
     "askLibrary",
