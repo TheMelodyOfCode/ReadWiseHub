@@ -837,6 +837,21 @@ select {
   flex-wrap: wrap;
 }
 
+.advanced-source-panel {
+  border-style: dashed;
+}
+
+.advanced-source-warning {
+  display: inline-flex;
+  width: fit-content;
+  margin: 4px 0 0;
+  padding: 7px 10px;
+  border-radius: 8px;
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--border));
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  font-weight: 800;
+}
+
 .help-panel {
   display: grid;
   gap: 14px;

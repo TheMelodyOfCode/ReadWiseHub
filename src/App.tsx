@@ -1438,23 +1438,6 @@ export function App() {
     });
   }
 
-  function askSearchQuestionAsAi() {
-    const question = searchQuestion.trim();
-    if (!question) {
-      return;
-    }
-
-    setAskQuestion(question);
-    setAskAnswer("");
-    setAskMode("");
-    setAskSources([]);
-    setAskMessage("");
-    setWorkspaceTab("ask");
-    window.requestAnimationFrame(() => {
-      document.getElementById("library")?.scrollIntoView({ behavior: "smooth", block: "start" });
-    });
-  }
-
   async function openBookReader(book: BookRecord, page = -1) {
     const progressKey = user
       ? `readwisehub_reader_progress_${user.uid}_${book.id}`
@@ -2285,77 +2268,6 @@ export function App() {
               ) : null}
               {uploadMessage ? <p className="error-text">{uploadMessage}</p> : null}
             </div>
-
-            <form className="search-panel" onSubmit={searchExtractedText}>
-              <div>
-                <h3>{t.searchTitle}</h3>
-                <p>{t.searchCopy}</p>
-              </div>
-              <label>
-                {t.bookScope}
-                <select
-                  value={selectedBookScope}
-                  onChange={(event) => setSelectedBookScope(event.target.value)}
-                  disabled={textReadyBooks.length === 0}
-                >
-                  <option value="">{t.allReadyBooks}</option>
-                  {textReadyBooks.map((book) => (
-                    <option key={book.id} value={book.id}>
-                      {book.displayTitle}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label>
-                {t.searchLabel}
-                <input
-                  type="search"
-                  value={searchQuestion}
-                  onChange={(event) => setSearchQuestion(event.target.value)}
-                  placeholder={t.searchPlaceholder}
-                  disabled={textReadyBooks.length === 0}
-                />
-              </label>
-              <button
-                className="button primary"
-                type="submit"
-                disabled={
-                  !emailVerified ||
-                  searchBusy ||
-                  textReadyBooks.length === 0 ||
-                  !searchQuestion.trim()
-                }
-              >
-                {searchBusy ? t.searching : t.searchButton}
-              </button>
-              {textReadyBooks.length === 0 ? (
-                <p className="small-note">{t.searchNeedsText}</p>
-              ) : null}
-              {searchMessage ? <p className="error-text">{searchMessage}</p> : null}
-              {searchResults.length > 0 ? (
-                <div className="search-results">
-                  <div className="search-results-header">
-                    <h4>{t.sourcePassagesTitle}</h4>
-                    <button
-                      className="button secondary compact"
-                      type="button"
-                      onClick={askSearchQuestionAsAi}
-                    >
-                      {t.askAiWithThisQuestion}
-                    </button>
-                  </div>
-                  {searchResults.map((result) => (
-                    <article key={`${result.bookId}-${result.chunkIndex}`}>
-                      <h4>{result.bookTitle}</h4>
-                      <p>{result.excerpt}</p>
-                      <span>
-                        {getSourceLabel(result, t)}
-                      </span>
-                    </article>
-                  ))}
-                </div>
-              ) : null}
-            </form>
 
             {!booksReady ? (
               <p>Loading...</p>
@@ -3198,6 +3110,72 @@ export function App() {
                     </article>
                   </div>
                 </section>
+                <form className="search-panel advanced-source-panel" onSubmit={searchExtractedText}>
+                  <div>
+                    <p className="eyebrow">{t.advancedTool}</p>
+                    <h3>{t.searchTitle}</h3>
+                    <p>{t.searchCopy}</p>
+                    <p className="advanced-source-warning">{t.searchNoAiWarning}</p>
+                  </div>
+                  <label>
+                    {t.bookScope}
+                    <select
+                      value={selectedBookScope}
+                      onChange={(event) => setSelectedBookScope(event.target.value)}
+                      disabled={textReadyBooks.length === 0}
+                    >
+                      <option value="">{t.allReadyBooks}</option>
+                      {textReadyBooks.map((book) => (
+                        <option key={book.id} value={book.id}>
+                          {book.displayTitle}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label>
+                    {t.searchLabel}
+                    <input
+                      type="search"
+                      value={searchQuestion}
+                      onChange={(event) => setSearchQuestion(event.target.value)}
+                      placeholder={t.searchPlaceholder}
+                      disabled={textReadyBooks.length === 0}
+                    />
+                  </label>
+                  <button
+                    className="button secondary"
+                    type="submit"
+                    disabled={
+                      !emailVerified ||
+                      searchBusy ||
+                      textReadyBooks.length === 0 ||
+                      !searchQuestion.trim()
+                    }
+                  >
+                    {searchBusy ? t.searching : t.searchButton}
+                  </button>
+                  {textReadyBooks.length === 0 ? (
+                    <p className="small-note">{t.searchNeedsText}</p>
+                  ) : null}
+                  {searchMessage ? <p className="error-text">{searchMessage}</p> : null}
+                  {searchResults.length > 0 ? (
+                    <div className="search-results">
+                      <div className="search-results-header">
+                        <h4>{t.sourcePassagesTitle}</h4>
+                        <span>{t.noAiBadge}</span>
+                      </div>
+                      {searchResults.map((result) => (
+                        <article key={`${result.bookId}-${result.chunkIndex}`}>
+                          <h4>{result.bookTitle}</h4>
+                          <p>{result.excerpt}</p>
+                          <span>
+                            {getSourceLabel(result, t)}
+                          </span>
+                        </article>
+                      ))}
+                    </div>
+                  ) : null}
+                </form>
               </div>
             ) : null}
           </section>
