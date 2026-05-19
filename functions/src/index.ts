@@ -179,6 +179,13 @@ type SectionMapEntry = {
   pageStart: number;
   pageEnd: number;
 };
+type SectionSourceForMap = {
+  sectionIndex: number;
+  title: string;
+  textPreview: string;
+  pageStart: number;
+  pageEnd: number;
+};
 type TextExtractionResult = {
   text: string;
   pageCount: number;
@@ -1465,6 +1472,20 @@ function parseRequestedSectionNumber(queryText: string): number {
   return Number.isInteger(sectionNumber) && sectionNumber > 0 ? sectionNumber : 0;
 }
 
+function parseSectionMapTargetCount(queryText: string): number {
+  const wantsSectionMap =
+    /\b(?:divide|split|organize|map|outline|glieder|gliedere|teile|aufteilen)\b.{0,120}\b(?:sections|parts|abschnitte|teile)\b/i.test(queryText) ||
+    /\b(?:section map|reading map|book map|gliederung|lesekarte)\b/i.test(queryText);
+
+  if (!wantsSectionMap) {
+    return 0;
+  }
+
+  const countMatch = queryText.match(/\b(\d{1,2})\s+(?:logical\s+|natural\s+)?(?:sections|parts|abschnitte|teile)\b/i);
+  const targetCount = countMatch ? Number(countMatch[1]) : 6;
+  return Math.max(3, Math.min(12, Math.floor(targetCount) || 6));
+}
+
 function normalizeSectionMapEntry(value: unknown): SectionMapEntry | null {
   if (!value || typeof value !== "object") {
     return null;
@@ -1491,6 +1512,157 @@ function normalizeSectionMapEntry(value: unknown): SectionMapEntry | null {
     sourceSectionEnd,
     pageStart: Number(entry.pageStart) || 0,
     pageEnd: Number(entry.pageEnd) || 0,
+  };
+}
+
+async function createBookSectionMapArtifact(userId: string, bookId: string, targetSectionCount: number) {
+  const bookSnapshot = await db.collection("books").doc(bookId).get();
+  if (!bookSnapshot.exists || bookSnapshot.get("userId") !== userId) {
+    throw new HttpsError("not-found", "Book was not found.");
+  }
+
+  if (bookSnapshot.get("status") !== "text_ready") {
+    throw new HttpsError("failed-precondition", "Book text is not ready yet.");
+  }
+
+  const sectionsSnapshot = await db
+    .collection("bookSections")
+    .where("bookId", "==", bookId)
+    .limit(600)
+    .get();
+  const sectionSources: SectionSourceForMap[] = sectionsSnapshot.docs
+    .filter((sectionSnapshot) => sectionSnapshot.get("userId") === userId)
+    .map((sectionSnapshot) => ({
+      sectionIndex: Number(sectionSnapshot.get("sectionIndex")) || 0,
+      title:
+        typeof sectionSnapshot.get("title") === "string"
+          ? sectionSnapshot.get("title")
+          : "",
+      textPreview:
+        typeof sectionSnapshot.get("textPreview") === "string"
+          ? sectionSnapshot.get("textPreview")
+          : "",
+      pageStart: Number(sectionSnapshot.get("pageStart")) || 0,
+      pageEnd: Number(sectionSnapshot.get("pageEnd")) || 0,
+    }))
+    .sort((left, right) => left.sectionIndex - right.sectionIndex);
+
+  if (sectionSources.length === 0) {
+    throw new HttpsError("failed-precondition", "This book has no sections to map yet.");
+  }
+
+  const bookScope = resolveBookScope(userId, bookSnapshot);
+  const displayTitle =
+    bookSnapshot.get("displayTitle") ||
+    createDisplayTitle(String(bookSnapshot.get("title") || "Untitled"));
+  const mapEntries = createSectionMapEntries(sectionSources, targetSectionCount);
+  const artifactRef = db.collection("bookArtifacts").doc();
+  const now = FieldValue.serverTimestamp();
+  const artifact = {
+    id: artifactRef.id,
+    userId,
+    tenantId: bookScope.tenantId,
+    workspaceId: bookScope.workspaceId,
+    libraryId: bookScope.libraryId,
+    bookId,
+    bookTitle: displayTitle,
+    type: "section_map",
+    title: `${displayTitle} section map`,
+    status: "ready",
+    generatedBy: "readwisehub_section_map_v1",
+    targetSectionCount,
+    sourceSectionCount: sectionSources.length,
+    sections: mapEntries,
+    createdAt: now,
+    updatedAt: now,
+  };
+
+  await artifactRef.set(artifact);
+
+  return {
+    artifact,
+    artifactId: artifactRef.id,
+    bookSnapshot,
+    bookTitle: String(displayTitle),
+    sections: mapEntries,
+  };
+}
+
+function createSectionMapAnswer(bookTitle: string, sections: SectionMapEntry[], locale: string): string {
+  const sectionLines = sections
+    .map((section) => {
+      const pageLabel =
+        section.pageStart || section.pageEnd
+          ? `, pages ${section.pageStart || "?"}-${section.pageEnd || "?"}`
+          : "";
+      return `${section.sectionNumber}. ${section.title}${pageLabel}\n   ${section.summary}`;
+    })
+    .join("\n\n");
+
+  if (locale === "de") {
+    return [
+      `Ich habe eine Abschnittskarte fuer "${bookTitle}" erstellt und gespeichert.`,
+      "",
+      sectionLines,
+      "",
+      "Du kannst jetzt natuerlich weiterfragen, zum Beispiel: \"Fasse Abschnitt 2 zusammen.\"",
+    ].join("\n");
+  }
+
+  return [
+    `I created and saved a section map for "${bookTitle}".`,
+    "",
+    sectionLines,
+    "",
+    "You can now ask follow-ups such as: \"Summarize section 2.\"",
+  ].join("\n");
+}
+
+function buildSectionMapCreationSearch(
+  userId: string,
+  bookId: string,
+  bookTitle: string,
+  bookSnapshot: FirebaseFirestore.DocumentSnapshot,
+  artifactId: string,
+  sections: SectionMapEntry[]
+): LibrarySearchResponse {
+  const diagnostics = createRetrievalDiagnostics({
+    userId,
+    bookId,
+    books: new Map([
+      [
+        bookId,
+        {
+          title: bookTitle,
+          scope: resolveBookScope(userId, bookSnapshot),
+          pineconeIndexedChunkCount: Number(bookSnapshot.get("pineconeIndexedChunkCount")) || 0,
+          pineconeMissingChunkCount: Number(bookSnapshot.get("pineconeMissingChunkCount")) || 0,
+        },
+      ],
+    ]),
+  });
+  diagnostics.backend = "firestore";
+  diagnostics.fallbackReason = "section_map_created";
+  diagnostics.candidateCount = sections.length;
+  diagnostics.resultCount = sections.length;
+  diagnostics.sectionMapMatched = true;
+  diagnostics.activeArtifactId = artifactId;
+
+  return {
+    results: sections.map((section, index) => ({
+      chunkId: `${artifactId}_section_${section.sectionNumber}`,
+      bookId,
+      bookTitle,
+      chunkIndex: section.sourceSectionStart,
+      score: 100 - index,
+      excerpt: [
+        `Generated section ${section.sectionNumber}: ${section.title}`,
+        `Source sections ${section.sourceSectionStart + 1}-${section.sourceSectionEnd + 1}`,
+        section.summary,
+      ].join("\n"),
+    })),
+    diagnostics,
+    activeArtifactId: artifactId,
   };
 }
 
@@ -1525,12 +1697,21 @@ async function resolveSectionMapSearch(
       return rightCreatedAt - leftCreatedAt;
     })[0];
 
-  if (!latestArtifact) {
+  const createdArtifact = !latestArtifact && activeSectionNumber <= 12
+    ? await createBookSectionMapArtifact(
+        userId,
+        bookId,
+        Math.max(6, activeSectionNumber)
+      )
+    : null;
+  const artifactForSearch = latestArtifact ?? (createdArtifact ? await db.collection("bookArtifacts").doc(createdArtifact.artifactId).get() : undefined);
+
+  if (!artifactForSearch?.exists) {
     return null;
   }
 
-  const rawSectionEntries: unknown[] = Array.isArray(latestArtifact.get("sections"))
-    ? latestArtifact.get("sections")
+  const rawSectionEntries: unknown[] = Array.isArray(artifactForSearch.get("sections"))
+    ? artifactForSearch.get("sections")
     : [];
   const sectionEntries = rawSectionEntries
     .map(normalizeSectionMapEntry)
@@ -1603,13 +1784,13 @@ async function resolveSectionMapSearch(
   diagnostics.candidateCount = results.length;
   diagnostics.resultCount = results.length;
   diagnostics.sectionMapMatched = true;
-  diagnostics.activeArtifactId = latestArtifact.id;
+  diagnostics.activeArtifactId = artifactForSearch.id;
   diagnostics.activeSectionNumber = activeSectionNumber;
 
   return {
     results,
     diagnostics,
-    activeArtifactId: latestArtifact.id,
+    activeArtifactId: artifactForSearch.id,
     activeSectionNumber,
   };
 }
@@ -3050,73 +3231,12 @@ export const generateBookSectionMap = onCall(
     await requireActiveSession(auth, request.data?.sessionId);
     await requireVerifiedEmail(auth);
 
-    const bookSnapshot = await db.collection("books").doc(bookId).get();
-    if (!bookSnapshot.exists || bookSnapshot.get("userId") !== auth.uid) {
-      throw new HttpsError("not-found", "Book was not found.");
-    }
-
-    if (bookSnapshot.get("status") !== "text_ready") {
-      throw new HttpsError("failed-precondition", "Book text is not ready yet.");
-    }
-
-    const sectionsSnapshot = await db
-      .collection("bookSections")
-      .where("bookId", "==", bookId)
-      .limit(600)
-      .get();
-    const sectionSources = sectionsSnapshot.docs
-      .filter((sectionSnapshot) => sectionSnapshot.get("userId") === auth.uid)
-      .map((sectionSnapshot) => ({
-        sectionIndex: Number(sectionSnapshot.get("sectionIndex")) || 0,
-        title:
-          typeof sectionSnapshot.get("title") === "string"
-            ? sectionSnapshot.get("title")
-            : "",
-        textPreview:
-          typeof sectionSnapshot.get("textPreview") === "string"
-            ? sectionSnapshot.get("textPreview")
-            : "",
-        pageStart: Number(sectionSnapshot.get("pageStart")) || 0,
-        pageEnd: Number(sectionSnapshot.get("pageEnd")) || 0,
-      }))
-      .sort((left, right) => left.sectionIndex - right.sectionIndex);
-
-    if (sectionSources.length === 0) {
-      throw new HttpsError("failed-precondition", "This book has no sections to map yet.");
-    }
-
-    const bookScope = resolveBookScope(auth.uid, bookSnapshot);
-    const displayTitle =
-      bookSnapshot.get("displayTitle") ||
-      createDisplayTitle(String(bookSnapshot.get("title") || "Untitled"));
-    const mapEntries = createSectionMapEntries(sectionSources, targetSectionCount);
-    const artifactRef = db.collection("bookArtifacts").doc();
-    const now = FieldValue.serverTimestamp();
-    const artifact = {
-      id: artifactRef.id,
-      userId: auth.uid,
-      tenantId: bookScope.tenantId,
-      workspaceId: bookScope.workspaceId,
-      libraryId: bookScope.libraryId,
-      bookId,
-      bookTitle: displayTitle,
-      type: "section_map",
-      title: `${displayTitle} section map`,
-      status: "ready",
-      generatedBy: "readwisehub_section_map_v1",
-      targetSectionCount,
-      sourceSectionCount: sectionSources.length,
-      sections: mapEntries,
-      createdAt: now,
-      updatedAt: now,
-    };
-
-    await artifactRef.set(artifact);
+    const sectionMap = await createBookSectionMapArtifact(auth.uid, bookId, targetSectionCount);
 
     return {
       ok: true,
       artifact: {
-        ...artifact,
+        ...sectionMap.artifact,
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
       },
@@ -4100,16 +4220,37 @@ export const askLibrary = onCall(
       );
     }
 
-    const sectionMapSearch = await resolveSectionMapSearch(auth.uid, queryText, bookId);
+    const sectionMapTargetCount = bookId ? parseSectionMapTargetCount(queryText) : 0;
+    const createdSectionMap = sectionMapTargetCount
+      ? await createBookSectionMapArtifact(auth.uid, bookId, sectionMapTargetCount)
+      : null;
+    const sectionMapCreationSearch = createdSectionMap
+      ? buildSectionMapCreationSearch(
+          auth.uid,
+          bookId,
+          createdSectionMap.bookTitle,
+          createdSectionMap.bookSnapshot,
+          createdSectionMap.artifactId,
+          createdSectionMap.sections
+        )
+      : null;
+    const sectionMapSearch = sectionMapCreationSearch ?? (await resolveSectionMapSearch(auth.uid, queryText, bookId));
     const search = sectionMapSearch ?? (await runLibrarySearch(auth.uid, queryText, bookId));
     const results = search.results;
-    const aiAnswer = await createAiGroundedAnswer(queryText, results, locale);
+    const generatedSectionMapAnswer = createdSectionMap
+      ? createSectionMapAnswer(createdSectionMap.bookTitle, createdSectionMap.sections, locale)
+      : "";
+    const aiAnswer = generatedSectionMapAnswer || (await createAiGroundedAnswer(queryText, results, locale));
     const answer = aiAnswer ?? createGroundedDraft(queryText, results, locale);
     const sourceBooks = summarizeSourceBooks(results);
     const conversationScope = buildDefaultBookScope(auth.uid);
     const activeArtifactId = search.activeArtifactId || "";
     const activeSectionNumber = search.activeSectionNumber || 0;
-    const activeMode = activeArtifactId && activeSectionNumber ? "section_map" : "book_qa";
+    const activeMode = createdSectionMap
+      ? "section_map_created"
+      : activeArtifactId && activeSectionNumber
+        ? "section_map"
+        : "book_qa";
     const now = FieldValue.serverTimestamp();
     const conversationRef = db.collection("conversations").doc();
     const routeTraceRef = db.collection("routeTraces").doc();
@@ -4191,8 +4332,12 @@ export const askLibrary = onCall(
         libraryId: conversationScope.libraryId,
         conversationId: conversationRef.id,
         callable: "askLibrary",
-        routeIntent: activeMode === "section_map" ? "section_qa" : "book_qa",
-        selectedBookSource: activeMode === "section_map"
+        routeIntent: activeMode === "section_map_created"
+          ? "section_map_generation"
+          : activeMode === "section_map"
+            ? "section_qa"
+            : "book_qa",
+        selectedBookSource: activeMode === "section_map" || activeMode === "section_map_created"
           ? "section_map_artifact"
           : bookId
             ? "explicit_book_scope"

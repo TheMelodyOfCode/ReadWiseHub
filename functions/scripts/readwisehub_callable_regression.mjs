@@ -510,6 +510,33 @@ async function run() {
     "listBookArtifacts did not include generated section map."
   );
 
+  const naturalSectionMapAsk = await callFunction(
+    "askLibrary",
+    { query: "Please divide the book into 4 sections with titles.", locale: "en", bookId: primaryBookId },
+    idToken
+  );
+  check(naturalSectionMapAsk.ok === true, "natural section-map askLibrary did not return ok.");
+  check(
+    naturalSectionMapAsk.mode === "ai_grounded",
+    `natural section-map askLibrary mode was ${naturalSectionMapAsk.mode}, expected ai_grounded.`
+  );
+  const naturalMapConversation = await db.collection("conversations").doc(naturalSectionMapAsk.conversationId).get();
+  check(naturalMapConversation.exists, "natural section-map askLibrary did not save a conversation.");
+  check(
+    naturalMapConversation.get("activeMode") === "section_map_created",
+    `natural section-map activeMode was ${naturalMapConversation.get("activeMode")}.`
+  );
+  const naturalArtifactId = naturalMapConversation.get("activeArtifactId");
+  check(Boolean(naturalArtifactId), "natural section-map conversation did not store an artifact id.");
+  const naturalArtifact = naturalArtifactId
+    ? await db.collection("bookArtifacts").doc(naturalArtifactId).get()
+    : null;
+  check(naturalArtifact?.exists, "natural section-map askLibrary did not create a section-map artifact.");
+  check(
+    naturalArtifact?.get("targetSectionCount") === 4,
+    `natural section-map target count was ${naturalArtifact?.get("targetSectionCount")}.`
+  );
+
   const sectionAsk = await callFunction(
     "askLibrary",
     { query: "Summarize section 2.", locale: "en", bookId: primaryBookId },
@@ -528,7 +555,7 @@ async function run() {
     `section-map conversation activeMode was ${sectionAskConversation.get("activeMode")}.`
   );
   check(
-    sectionAskConversation.get("activeArtifactId") === sectionMap.artifact.id,
+    sectionAskConversation.get("activeArtifactId") === naturalArtifactId,
     "section-map conversation did not store the active artifact id."
   );
   check(
@@ -544,7 +571,7 @@ async function run() {
       `section-map route intent was ${sectionRouteTrace.get("routeIntent")}, expected section_qa.`
     );
     check(
-      sectionRouteTrace.get("activeArtifactId") === sectionMap.artifact.id,
+      sectionRouteTrace.get("activeArtifactId") === naturalArtifactId,
       "section-map route trace did not store the active artifact id."
     );
   }
