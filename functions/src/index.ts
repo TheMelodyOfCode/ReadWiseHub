@@ -125,6 +125,25 @@ type SearchableBook = {
   pineconeMissingChunkCount: number;
 };
 
+type RetrievalDiagnostics = {
+  backend: "firestore" | "pinecone";
+  requestedBackend: "firestore" | "pinecone" | "auto";
+  pineconeEnabledForUser: boolean;
+  pineconeAttempted: boolean;
+  fallbackReason: string;
+  bookCount: number;
+  scopedBookId: string;
+  candidateCount: number;
+  resultCount: number;
+  pineconeCompleteBookCount: number;
+  pineconeIncompleteBookIds: string[];
+};
+
+type LibrarySearchResponse = {
+  results: LibrarySearchResult[];
+  diagnostics: RetrievalDiagnostics;
+};
+
 type SourceBookSummary = {
   bookId: string;
   bookTitle: string;
@@ -794,13 +813,26 @@ function getPineconeApiKey(): string {
   }
 }
 
-function requirePineconeTestUser(auth: AuthContext) {
-  const allowlist = (process.env.PINECONE_TEST_USER_IDS || "")
+function parseUidAllowlist(value: string | undefined): string[] {
+  return (value || "")
     .split(",")
     .map((entry) => entry.trim())
     .filter(Boolean);
+}
 
-  if (!allowlist.includes(auth.uid)) {
+function isPineconeTestUser(userId: string): boolean {
+  return parseUidAllowlist(process.env.PINECONE_TEST_USER_IDS).includes(userId);
+}
+
+function canViewRetrievalDiagnostics(userId: string): boolean {
+  return (
+    isPineconeTestUser(userId) ||
+    parseUidAllowlist(process.env.PINECONE_SEARCH_USER_IDS).includes(userId)
+  );
+}
+
+function requirePineconeTestUser(auth: AuthContext) {
+  if (!isPineconeTestUser(auth.uid)) {
     throw new HttpsError(
       "permission-denied",
       "Pinecone prototype indexing is limited to configured test users."
@@ -1014,17 +1046,45 @@ function isPineconeSearchEnabledForUser(userId: string): boolean {
   if (explicitBackend === "pinecone") {
     return true;
   }
+  if (explicitBackend === "firestore") {
+    return false;
+  }
 
-  const allowlist = (process.env.PINECONE_SEARCH_USER_IDS || "")
-    .split(",")
-    .map((entry) => entry.trim())
-    .filter(Boolean);
-
-  return allowlist.includes(userId);
+  return parseUidAllowlist(process.env.PINECONE_SEARCH_USER_IDS).includes(userId);
 }
 
 function hasCompletePineconeCoverage(book: SearchableBook): boolean {
   return book.pineconeIndexedChunkCount > 0 && book.pineconeMissingChunkCount === 0;
+}
+
+function getRequestedRetrievalBackend(): RetrievalDiagnostics["requestedBackend"] {
+  const requested = (process.env.READWISEHUB_RETRIEVAL_BACKEND || "").trim().toLowerCase();
+  return requested === "pinecone" || requested === "firestore" ? requested : "auto";
+}
+
+function createRetrievalDiagnostics(input: {
+  userId: string;
+  bookId: string;
+  books: Map<string, SearchableBook>;
+}): RetrievalDiagnostics {
+  const bookEntries = Array.from(input.books.entries());
+  const pineconeIncompleteBookIds = bookEntries
+    .filter(([, book]) => !hasCompletePineconeCoverage(book))
+    .map(([currentBookId]) => currentBookId);
+
+  return {
+    backend: "firestore",
+    requestedBackend: getRequestedRetrievalBackend(),
+    pineconeEnabledForUser: isPineconeSearchEnabledForUser(input.userId),
+    pineconeAttempted: false,
+    fallbackReason: "",
+    bookCount: input.books.size,
+    scopedBookId: input.bookId,
+    candidateCount: 0,
+    resultCount: 0,
+    pineconeCompleteBookCount: bookEntries.length - pineconeIncompleteBookIds.length,
+    pineconeIncompleteBookIds,
+  };
 }
 
 async function collectSearchableBooks(userId: string, bookId: string) {
@@ -1076,15 +1136,27 @@ async function runPineconeLibrarySearch(
   queryText: string,
   queryEmbedding: number[],
   books: Map<string, SearchableBook>
-): Promise<LibrarySearchResult[]> {
+): Promise<{ results: LibrarySearchResult[]; candidateCount: number; fallbackReason: string }> {
   const apiKey = getPineconeApiKey();
   if (!apiKey || queryEmbedding.length === 0 || books.size === 0) {
-    return [];
+    return {
+      results: [],
+      candidateCount: 0,
+      fallbackReason: !apiKey
+        ? "pinecone_api_key_missing"
+        : queryEmbedding.length === 0
+          ? "query_embedding_missing"
+          : "no_searchable_books",
+    };
   }
 
   const bookEntries = Array.from(books.entries());
   if (!bookEntries.every(([, book]) => hasCompletePineconeCoverage(book))) {
-    return [];
+    return {
+      results: [],
+      candidateCount: 0,
+      fallbackReason: "pinecone_coverage_incomplete",
+    };
   }
 
   const firstScope = bookEntries[0][1].scope;
@@ -1094,7 +1166,11 @@ async function runPineconeLibrarySearch(
     book.scope.libraryId === firstScope.libraryId
   );
   if (!sameScope) {
-    return [];
+    return {
+      results: [],
+      candidateCount: 0,
+      fallbackReason: "pinecone_scope_mismatch",
+    };
   }
 
   const backend = new PineconeBookRetrievalBackend({
@@ -1121,7 +1197,7 @@ async function runPineconeLibrarySearch(
     mode: bookEntries.length > 1 ? "library" : "book",
   });
 
-  return chunks
+  const results = chunks
     .map((chunk: RetrievedBookChunk) => {
       const book = books.get(chunk.bookId);
       if (!book) {
@@ -1155,9 +1231,15 @@ async function runPineconeLibrarySearch(
     })
     .filter((result): result is LibrarySearchResult => result !== null)
     .sort((left, right) => right.score - left.score);
+
+  return {
+    results,
+    candidateCount: chunks.length,
+    fallbackReason: results.length > 0 ? "" : "pinecone_no_ranked_results",
+  };
 }
 
-async function runLibrarySearch(userId: string, queryText: string, bookId = "") {
+async function runLibrarySearch(userId: string, queryText: string, bookId = ""): Promise<LibrarySearchResponse> {
   const terms = tokenizeSearchQuery(queryText);
   const queryEmbeddings = await createEmbeddings([queryText]);
   const queryEmbedding = queryEmbeddings[0] ?? [];
@@ -1167,16 +1249,37 @@ async function runLibrarySearch(userId: string, queryText: string, bookId = "") 
   }
 
   const books = await collectSearchableBooks(userId, bookId);
+  const diagnostics = createRetrievalDiagnostics({
+    userId,
+    bookId,
+    books,
+  });
 
   if (books.size === 0) {
-    return [];
+    diagnostics.fallbackReason = "no_searchable_books";
+    return {
+      results: [],
+      diagnostics,
+    };
   }
 
   if (isPineconeSearchEnabledForUser(userId)) {
-    const pineconeResults = await runPineconeLibrarySearch(userId, queryText, queryEmbedding, books);
-    if (pineconeResults.length > 0) {
-      return selectDistinctResults(pineconeResults);
+    diagnostics.pineconeAttempted = true;
+    const pineconeSearch = await runPineconeLibrarySearch(userId, queryText, queryEmbedding, books);
+    diagnostics.candidateCount = pineconeSearch.candidateCount;
+    diagnostics.fallbackReason = pineconeSearch.fallbackReason;
+    if (pineconeSearch.results.length > 0) {
+      const results = selectDistinctResults(pineconeSearch.results);
+      diagnostics.backend = "pinecone";
+      diagnostics.fallbackReason = "";
+      diagnostics.resultCount = results.length;
+      return {
+        results,
+        diagnostics,
+      };
     }
+  } else {
+    diagnostics.fallbackReason = "pinecone_not_enabled_for_user";
   }
 
   const chunkSnapshots = await Promise.all(
@@ -1262,7 +1365,15 @@ async function runLibrarySearch(userId: string, queryText: string, bookId = "") 
 
   scoredResults.sort((left, right) => right.score - left.score);
 
-  return selectDistinctResults(scoredResults);
+  const results = selectDistinctResults(scoredResults);
+  diagnostics.backend = "firestore";
+  diagnostics.candidateCount = scoredResults.length;
+  diagnostics.resultCount = results.length;
+
+  return {
+    results,
+    diagnostics,
+  };
 }
 
 function createGroundedDraft(queryText: string, results: LibrarySearchResult[], locale: string) {
@@ -2923,13 +3034,24 @@ export const searchLibrary = onCall(
         : "";
 
     await ensureUserProfile(auth);
-    const results = await runLibrarySearch(auth.uid, queryText, bookId);
+    const search = await runLibrarySearch(auth.uid, queryText, bookId);
 
-    return {
+    const response: {
+      ok: boolean;
+      query: string;
+      results: LibrarySearchResult[];
+      retrievalDiagnostics?: RetrievalDiagnostics;
+    } = {
       ok: true,
       query: queryText,
-      results,
+      results: search.results,
     };
+
+    if (canViewRetrievalDiagnostics(auth.uid)) {
+      response.retrievalDiagnostics = search.diagnostics;
+    }
+
+    return response;
   }
 );
 
@@ -2967,7 +3089,8 @@ export const askLibrary = onCall(
       );
     }
 
-    const results = await runLibrarySearch(auth.uid, queryText, bookId);
+    const search = await runLibrarySearch(auth.uid, queryText, bookId);
+    const results = search.results;
     const aiAnswer = await createAiGroundedAnswer(queryText, results, locale);
     const answer = aiAnswer ?? createGroundedDraft(queryText, results, locale);
     const sourceBooks = summarizeSourceBooks(results);
@@ -3007,6 +3130,7 @@ export const askLibrary = onCall(
         scope: bookId ? "single_book" : "library",
         sourceBookIds: sourceBooks.map((sourceBook) => sourceBook.bookId),
         sourceBookTitles: sourceBooks.map((sourceBook) => sourceBook.bookTitle),
+        retrievalDiagnostics: search.diagnostics,
         hasUnavailableSources: false,
         unavailableBookTitles: [],
         createdAt: now,
@@ -3044,7 +3168,15 @@ export const askLibrary = onCall(
       });
     });
 
-    return {
+    const response: {
+      ok: boolean;
+      query: string;
+      answer: string;
+      mode: string;
+      conversationId: string;
+      results: LibrarySearchResult[];
+      retrievalDiagnostics?: RetrievalDiagnostics;
+    } = {
       ok: true,
       query: queryText,
       answer,
@@ -3052,6 +3184,12 @@ export const askLibrary = onCall(
       conversationId: conversationRef.id,
       results,
     };
+
+    if (canViewRetrievalDiagnostics(auth.uid)) {
+      response.retrievalDiagnostics = search.diagnostics;
+    }
+
+    return response;
   }
 );
 
