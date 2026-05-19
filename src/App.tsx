@@ -131,6 +131,7 @@ function normalizeBookTitle(title: string) {
 }
 
 type LibrarySearchResult = {
+  chunkId?: string;
   bookId: string;
   bookTitle: string;
   chunkIndex: number;
@@ -191,6 +192,45 @@ type UserUsage = {
   maxBooks: number;
   storageBytes: number;
   maxStorageBytes: number;
+};
+
+type AdminDashboardPayload = {
+  ok: boolean;
+  viewer: {
+    uid: string;
+    email: string;
+  };
+  counts: Record<string, number>;
+  pineconeBooks: Array<{
+    bookId: string;
+    title: string;
+    userId: string;
+    indexedChunkCount: number;
+    missingChunkCount: number;
+  }>;
+};
+
+type AdminConversationSummary = {
+  id: string;
+  userId: string;
+  title: string;
+  mode: string;
+  scopedBookId: string;
+  scope: string;
+  sourceCount: number;
+  latestQuestion: string;
+  latestAnswerPreview: string;
+  retrievalDiagnostics?: Record<string, unknown>;
+  routeTraceId: string;
+  createdAt?: string;
+  updatedAt?: string;
+};
+
+type AdminConversationDebug = {
+  ok: boolean;
+  conversation: Record<string, unknown>;
+  messages: Array<Record<string, unknown>>;
+  routeTrace: Record<string, unknown> | null;
 };
 
 const UPLOAD_BACKEND_ENABLED = true;
@@ -426,6 +466,7 @@ function getErrorMessage(error: unknown, fallback: string) {
 }
 
 export function App() {
+  const isAdminPath = window.location.pathname.startsWith("/admin");
   const [locale, setLocale] = useState<Locale>(() => detectInitialLocale());
   const [theme, setTheme] = useState<Theme>(() => getInitialTheme());
   const [user, setUser] = useState<User | null>(null);
@@ -508,6 +549,12 @@ export function App() {
     storageBytes: 0,
     maxStorageBytes: 20 * 1024 * 1024,
   });
+  const [adminDashboard, setAdminDashboard] = useState<AdminDashboardPayload | null>(null);
+  const [adminConversations, setAdminConversations] = useState<AdminConversationSummary[]>([]);
+  const [adminConversationDebug, setAdminConversationDebug] =
+    useState<AdminConversationDebug | null>(null);
+  const [adminBusy, setAdminBusy] = useState(false);
+  const [adminMessage, setAdminMessage] = useState("");
 
   const t = useMemo(() => dictionaries[locale], [locale]);
   const textReadyBooks = useMemo(
@@ -843,6 +890,14 @@ export function App() {
   }, [t.untitledQuestion, user]);
 
   useEffect(() => {
+    if (!user || !isAdminPath) {
+      return;
+    }
+
+    void loadAdminConsole();
+  }, [isAdminPath, user]);
+
+  useEffect(() => {
     if (!lastUploadedBookId) {
       return;
     }
@@ -968,6 +1023,64 @@ export function App() {
     document.addEventListener("pointerdown", handlePointerDown);
     return () => document.removeEventListener("pointerdown", handlePointerDown);
   }, [menuOpen, readerBookmarkMenuOpen]);
+
+  async function loadAdminDashboard() {
+    const getDashboard = httpsCallable<unknown, AdminDashboardPayload>(
+      functions,
+      "adminGetDashboard"
+    );
+    const response = await getDashboard({});
+    setAdminDashboard(response.data);
+  }
+
+  async function loadAdminConversations() {
+    const listConversations = httpsCallable<
+      { limit: number },
+      { ok: boolean; conversations: AdminConversationSummary[] }
+    >(functions, "adminListRecentConversations");
+    const response = await listConversations({ limit: 40 });
+    setAdminConversations(response.data.conversations ?? []);
+  }
+
+  async function loadAdminConsole() {
+    setAdminBusy(true);
+    setAdminMessage("");
+
+    try {
+      await Promise.all([loadAdminDashboard(), loadAdminConversations()]);
+    } catch (error) {
+      setAdminMessage(getErrorMessage(error, "Admin console failed"));
+    } finally {
+      setAdminBusy(false);
+    }
+  }
+
+  async function openAdminConversation(conversationId: string) {
+    setAdminBusy(true);
+    setAdminMessage("");
+
+    try {
+      const getDebug = httpsCallable<
+        { conversationId: string; reason: string },
+        AdminConversationDebug
+      >(functions, "adminGetConversationDebug");
+      const response = await getDebug({
+        conversationId,
+        reason: "Admin console conversation route trace review.",
+      });
+      setAdminConversationDebug(response.data);
+      window.requestAnimationFrame(() => {
+        document.getElementById("admin-debug")?.scrollIntoView({
+          behavior: "smooth",
+          block: "start",
+        });
+      });
+    } catch (error) {
+      setAdminMessage(getErrorMessage(error, "Conversation debug failed"));
+    } finally {
+      setAdminBusy(false);
+    }
+  }
 
   async function handlePasswordAuth(
     event: FormEvent<HTMLFormElement>,
@@ -2055,7 +2168,224 @@ export function App() {
     }
   }
 
+  function formatAdminJson(value: unknown) {
+    return JSON.stringify(value ?? null, null, 2);
+  }
+
+  function renderAdminConsole() {
+    const counts = adminDashboard?.counts ?? {};
+
+    return (
+      <div className="app-shell admin-shell">
+        <header className="site-header">
+          <a className="brand" href="/" aria-label="ReadWiseHub app">
+            <img className="brand-mark" src={readWiseHubIcon} alt="" aria-hidden="true" />
+            <span>
+              <strong>ReadWiseHub Admin</strong>
+              <small>Read-only diagnostics</small>
+            </span>
+          </a>
+
+          <div className="admin-header-actions">
+            <button
+              className="button header-button"
+              type="button"
+              onClick={() => void loadAdminConsole()}
+              disabled={adminBusy}
+            >
+              {adminBusy ? "Refreshing..." : "Refresh"}
+            </button>
+            <a className="button header-button" href="/">
+              Back to app
+            </a>
+            <button
+              className="button header-button sign-out-button"
+              type="button"
+              onClick={() => void handleSignOut()}
+            >
+              {t.signOut}
+            </button>
+          </div>
+        </header>
+
+        <main className="admin-main">
+          <section className="admin-hero">
+            <div>
+              <p className="eyebrow">Internal diagnostics</p>
+              <h1>Admin console</h1>
+              <p>
+                Read-only operational view for retrieval, Pinecone coverage, route traces,
+                and recent book Q&A regressions.
+              </p>
+            </div>
+            {adminDashboard ? (
+              <div className="admin-card">
+                <h2>Viewer</h2>
+                <p>{adminDashboard.viewer.email || adminDashboard.viewer.uid}</p>
+              </div>
+            ) : null}
+          </section>
+
+          {adminMessage ? <p className="status-message error">{adminMessage}</p> : null}
+
+          <section className="admin-section">
+            <div className="section-heading">
+              <p className="eyebrow">Runtime</p>
+              <h2>Dashboard</h2>
+            </div>
+            <div className="admin-grid">
+              {[
+                ["Users", counts.users],
+                ["Books", counts.books],
+                ["Text-ready books", counts.textReadyBooks],
+                ["Failed books", counts.failedBooks],
+                ["Conversations", counts.conversations],
+                ["Queued jobs", counts.queuedIngestionJobs],
+                ["Failed jobs", counts.failedIngestionJobs],
+                ["Route traces", counts.routeTraces],
+                ["Pinecone books", counts.pineconeBooks],
+              ].map(([label, value]) => (
+                <div className="admin-card admin-count-card" key={label}>
+                  <span>{label}</span>
+                  <strong>{typeof value === "number" ? value : "-"}</strong>
+                </div>
+              ))}
+            </div>
+          </section>
+
+          <section className="admin-section">
+            <div className="section-heading">
+              <p className="eyebrow">Vector backend</p>
+              <h2>Pinecone indexed books</h2>
+            </div>
+            <div className="admin-table-wrap">
+              <table className="admin-table">
+                <thead>
+                  <tr>
+                    <th>Book</th>
+                    <th>User</th>
+                    <th>Indexed</th>
+                    <th>Missing</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(adminDashboard?.pineconeBooks ?? []).map((book) => (
+                    <tr key={book.bookId}>
+                      <td>
+                        <strong>{book.title}</strong>
+                        <small>{book.bookId}</small>
+                      </td>
+                      <td>{book.userId}</td>
+                      <td>{book.indexedChunkCount}</td>
+                      <td>{book.missingChunkCount}</td>
+                    </tr>
+                  ))}
+                  {adminDashboard && adminDashboard.pineconeBooks.length === 0 ? (
+                    <tr>
+                      <td colSpan={4}>No Pinecone candidate books found.</td>
+                    </tr>
+                  ) : null}
+                </tbody>
+              </table>
+            </div>
+          </section>
+
+          <section className="admin-section">
+            <div className="section-heading">
+              <p className="eyebrow">Vega-style trace review</p>
+              <h2>Recent conversations</h2>
+            </div>
+            <div className="admin-table-wrap">
+              <table className="admin-table">
+                <thead>
+                  <tr>
+                    <th>Conversation</th>
+                    <th>User</th>
+                    <th>Mode</th>
+                    <th>Retrieval</th>
+                    <th>Sources</th>
+                    <th>Debug</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {adminConversations.map((conversation) => {
+                    const diagnostics = conversation.retrievalDiagnostics ?? {};
+                    return (
+                      <tr key={conversation.id}>
+                        <td>
+                          <strong>{conversation.title}</strong>
+                          <small>{conversation.latestQuestion}</small>
+                        </td>
+                        <td>{conversation.userId}</td>
+                        <td>{conversation.mode || "-"}</td>
+                        <td>
+                          {String(diagnostics.backend ?? "-")}
+                          {diagnostics.fallbackReason ? (
+                            <small>{String(diagnostics.fallbackReason)}</small>
+                          ) : null}
+                        </td>
+                        <td>{conversation.sourceCount}</td>
+                        <td>
+                          <button
+                            className="button secondary-button"
+                            type="button"
+                            onClick={() => void openAdminConversation(conversation.id)}
+                            disabled={adminBusy}
+                          >
+                            Open
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                  {adminConversations.length === 0 ? (
+                    <tr>
+                      <td colSpan={6}>No conversations loaded.</td>
+                    </tr>
+                  ) : null}
+                </tbody>
+              </table>
+            </div>
+          </section>
+
+          {adminConversationDebug ? (
+            <section id="admin-debug" className="admin-section">
+              <div className="section-heading">
+                <p className="eyebrow">Conversation detail</p>
+                <h2>Route trace and messages</h2>
+              </div>
+              <div className="admin-debug-grid">
+                <article className="admin-card">
+                  <h3>Conversation</h3>
+                  <pre className="admin-json">
+                    {formatAdminJson(adminConversationDebug.conversation)}
+                  </pre>
+                </article>
+                <article className="admin-card">
+                  <h3>Route trace</h3>
+                  <pre className="admin-json">
+                    {formatAdminJson(adminConversationDebug.routeTrace)}
+                  </pre>
+                </article>
+                <article className="admin-card admin-debug-wide">
+                  <h3>Messages</h3>
+                  <pre className="admin-json">
+                    {formatAdminJson(adminConversationDebug.messages)}
+                  </pre>
+                </article>
+              </div>
+            </section>
+          ) : null}
+        </main>
+      </div>
+    );
+  }
+
   if (user) {
+    if (isAdminPath) {
+      return renderAdminConsole();
+    }
+
     return (
       <div className="app-shell workspace-shell">
         <header className="site-header">

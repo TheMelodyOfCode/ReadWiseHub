@@ -109,6 +109,7 @@ type AuthContext = {
 type UserPlan = keyof typeof PLAN_LIMITS;
 
 type LibrarySearchResult = {
+  chunkId?: string;
   bookId: string;
   bookTitle: string;
   chunkIndex: number;
@@ -137,6 +138,10 @@ type RetrievalDiagnostics = {
   resultCount: number;
   pineconeCompleteBookCount: number;
   pineconeIncompleteBookIds: string[];
+};
+
+type AdminViewer = AuthContext & {
+  role: "admin";
 };
 
 type LibrarySearchResponse = {
@@ -204,6 +209,24 @@ function requireAuth(auth: AuthContext | undefined): AuthContext {
   }
 
   return auth;
+}
+
+function getAdminAllowedUids(): string[] {
+  return parseUidAllowlist(process.env.ADMIN_ALLOWED_UIDS);
+}
+
+function requireAdmin(auth: AuthContext | undefined): AdminViewer {
+  const viewer = requireAuth(auth);
+  const allowedUids = getAdminAllowedUids();
+
+  if (allowedUids.length === 0 || !allowedUids.includes(viewer.uid)) {
+    throw new HttpsError("permission-denied", "Admin access is not enabled for this account.");
+  }
+
+  return {
+    ...viewer,
+    role: "admin",
+  };
 }
 
 async function getAuthEmailVerified(userId: string): Promise<boolean> {
@@ -820,6 +843,27 @@ function parseUidAllowlist(value: string | undefined): string[] {
     .filter(Boolean);
 }
 
+function normalizeFirestoreValue(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map(normalizeFirestoreValue);
+  }
+
+  if (value && typeof value === "object") {
+    if (typeof (value as { toDate?: unknown }).toDate === "function") {
+      return ((value as { toDate: () => Date }).toDate()).toISOString();
+    }
+
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>).map(([key, item]) => [
+        key,
+        normalizeFirestoreValue(item),
+      ])
+    );
+  }
+
+  return value;
+}
+
 function isPineconeTestUser(userId: string): boolean {
   return parseUidAllowlist(process.env.PINECONE_TEST_USER_IDS).includes(userId);
 }
@@ -1213,6 +1257,7 @@ async function runPineconeLibrarySearch(
       }
 
       const result: LibrarySearchResult = {
+        chunkId: chunk.chunkId,
         bookId: chunk.bookId,
         bookTitle: book.title,
         chunkIndex: chunk.chunkIndex,
@@ -1320,6 +1365,7 @@ async function runLibrarySearch(userId: string, queryText: string, bookId = ""):
       }
 
       scoredResults.push({
+        chunkId: chunkSnapshot.id,
         bookId: currentBookId,
         bookTitle: book.title,
         chunkIndex: Number(chunkSnapshot.get("chunkIndex")) || 0,
@@ -3055,6 +3101,222 @@ export const searchLibrary = onCall(
   }
 );
 
+async function getCollectionCount(collectionPath: string): Promise<number> {
+  const aggregate = await db.collection(collectionPath).count().get();
+  return aggregate.data().count;
+}
+
+async function getStatusCount(collectionPath: string, status: string): Promise<number> {
+  const aggregate = await db
+    .collection(collectionPath)
+    .where("status", "==", status)
+    .count()
+    .get();
+  return aggregate.data().count;
+}
+
+async function writeAdminAuditEvent(input: {
+  viewer: AdminViewer;
+  action: string;
+  targetUserId?: string;
+  targetBookId?: string;
+  targetConversationId?: string;
+  reason?: string;
+}) {
+  const auditRef = db.collection("adminAuditEvents").doc();
+  await auditRef.set({
+    id: auditRef.id,
+    viewerUid: input.viewer.uid,
+    viewerEmail: input.viewer.email || "",
+    action: input.action,
+    targetUserId: input.targetUserId || "",
+    targetBookId: input.targetBookId || "",
+    targetConversationId: input.targetConversationId || "",
+    reason: input.reason || "",
+    createdAt: FieldValue.serverTimestamp(),
+  });
+}
+
+export const adminGetDashboard = onCall(
+  { region: "us-central1", timeoutSeconds: 60, memory: "512MiB" },
+  async (request) => {
+    const viewer = requireAdmin(request.auth?.token
+      ? {
+          uid: request.auth.uid,
+          email: request.auth.token.email,
+          name: request.auth.token.name,
+          picture: request.auth.token.picture,
+        }
+      : undefined);
+    const [
+      userCount,
+      bookCount,
+      textReadyBookCount,
+      failedBookCount,
+      conversationCount,
+      failedIngestionJobCount,
+      queuedIngestionJobCount,
+      routeTraceCount,
+    ] = await Promise.all([
+      getCollectionCount("users"),
+      getCollectionCount("books"),
+      getStatusCount("books", "text_ready"),
+      getStatusCount("books", "failed"),
+      getCollectionCount("conversations"),
+      getStatusCount("ingestionJobs", "failed"),
+      getStatusCount("ingestionJobs", "queued"),
+      getCollectionCount("routeTraces"),
+    ]);
+    const pineconeSnapshot = await db
+      .collection("books")
+      .where("vectorBackendCandidate", "==", "pinecone")
+      .limit(200)
+      .get();
+    const pineconeBooks = pineconeSnapshot.docs.map((bookSnapshot) => ({
+      bookId: bookSnapshot.id,
+      title:
+        bookSnapshot.get("displayTitle") ||
+        bookSnapshot.get("title") ||
+        bookSnapshot.id,
+      userId: bookSnapshot.get("userId") || "",
+      indexedChunkCount: Number(bookSnapshot.get("pineconeIndexedChunkCount")) || 0,
+      missingChunkCount: Number(bookSnapshot.get("pineconeMissingChunkCount")) || 0,
+    }));
+
+    await writeAdminAuditEvent({
+      viewer,
+      action: "adminGetDashboard",
+    });
+
+    return {
+      ok: true,
+      viewer: {
+        uid: viewer.uid,
+        email: viewer.email || "",
+      },
+      counts: {
+        users: userCount,
+        books: bookCount,
+        textReadyBooks: textReadyBookCount,
+        failedBooks: failedBookCount,
+        conversations: conversationCount,
+        failedIngestionJobs: failedIngestionJobCount,
+        queuedIngestionJobs: queuedIngestionJobCount,
+        routeTraces: routeTraceCount,
+        pineconeBooks: pineconeBooks.length,
+      },
+      pineconeBooks,
+    };
+  }
+);
+
+export const adminListRecentConversations = onCall(
+  { region: "us-central1", timeoutSeconds: 60, memory: "512MiB" },
+  async (request) => {
+    const viewer = requireAdmin(request.auth?.token
+      ? {
+          uid: request.auth.uid,
+          email: request.auth.token.email,
+          name: request.auth.token.name,
+          picture: request.auth.token.picture,
+        }
+      : undefined);
+    const limit = Math.max(1, Math.min(Number(request.data?.limit) || 30, 80));
+    const snapshot = await db
+      .collection("conversations")
+      .orderBy("createdAt", "desc")
+      .limit(limit)
+      .get();
+    const conversations = snapshot.docs.map((conversationSnapshot) => ({
+      id: conversationSnapshot.id,
+      userId: conversationSnapshot.get("userId") || "",
+      title: conversationSnapshot.get("title") || "Untitled",
+      mode: conversationSnapshot.get("mode") || "",
+      scopedBookId: conversationSnapshot.get("scopedBookId") || "",
+      scope: conversationSnapshot.get("scope") || "",
+      sourceCount: Number(conversationSnapshot.get("sourceCount")) || 0,
+      latestQuestion: conversationSnapshot.get("latestQuestion") || "",
+      latestAnswerPreview: conversationSnapshot.get("latestAnswerPreview") || "",
+      retrievalDiagnostics: normalizeFirestoreValue(conversationSnapshot.get("retrievalDiagnostics")),
+      routeTraceId: conversationSnapshot.get("routeTraceId") || "",
+      createdAt: normalizeFirestoreValue(conversationSnapshot.get("createdAt")),
+      updatedAt: normalizeFirestoreValue(conversationSnapshot.get("updatedAt")),
+    }));
+
+    await writeAdminAuditEvent({
+      viewer,
+      action: "adminListRecentConversations",
+    });
+
+    return {
+      ok: true,
+      conversations,
+    };
+  }
+);
+
+export const adminGetConversationDebug = onCall(
+  { region: "us-central1", timeoutSeconds: 60, memory: "512MiB" },
+  async (request) => {
+    const viewer = requireAdmin(request.auth?.token
+      ? {
+          uid: request.auth.uid,
+          email: request.auth.token.email,
+          name: request.auth.token.name,
+          picture: request.auth.token.picture,
+        }
+      : undefined);
+    const conversationId = assertString(request.data?.conversationId, "conversationId");
+    const conversationSnapshot = await db.collection("conversations").doc(conversationId).get();
+    if (!conversationSnapshot.exists) {
+      throw new HttpsError("not-found", "Conversation was not found.");
+    }
+
+    const messagesSnapshot = await conversationSnapshot.ref
+      .collection("messages")
+      .orderBy("createdAt", "asc")
+      .get();
+    const routeTraceId =
+      typeof conversationSnapshot.get("routeTraceId") === "string"
+        ? conversationSnapshot.get("routeTraceId")
+        : "";
+    const routeTraceSnapshot = routeTraceId
+      ? await db.collection("routeTraces").doc(routeTraceId).get()
+      : null;
+
+    await writeAdminAuditEvent({
+      viewer,
+      action: "adminGetConversationDebug",
+      targetUserId: conversationSnapshot.get("userId") || "",
+      targetBookId: conversationSnapshot.get("scopedBookId") || "",
+      targetConversationId: conversationId,
+      reason:
+        typeof request.data?.reason === "string"
+          ? request.data.reason.slice(0, 240)
+          : "Debug conversation retrieval route.",
+    });
+
+    return {
+      ok: true,
+      conversation: {
+        id: conversationSnapshot.id,
+        ...(normalizeFirestoreValue(conversationSnapshot.data()) as Record<string, unknown>),
+      },
+      messages: messagesSnapshot.docs.map((messageSnapshot) => ({
+        id: messageSnapshot.id,
+        ...(normalizeFirestoreValue(messageSnapshot.data()) as Record<string, unknown>),
+      })),
+      routeTrace:
+        routeTraceSnapshot?.exists
+          ? {
+              id: routeTraceSnapshot.id,
+              ...(normalizeFirestoreValue(routeTraceSnapshot.data()) as Record<string, unknown>),
+            }
+          : null,
+    };
+  }
+);
+
 export const askLibrary = onCall(
   { region: "us-central1", timeoutSeconds: 60, memory: "512MiB", secrets: [openAiApiKey, pineconeApiKey] },
   async (request) => {
@@ -3097,6 +3359,7 @@ export const askLibrary = onCall(
     const conversationScope = buildDefaultBookScope(auth.uid);
     const now = FieldValue.serverTimestamp();
     const conversationRef = db.collection("conversations").doc();
+    const routeTraceRef = db.collection("routeTraces").doc();
     const userMessageRef = conversationRef.collection("messages").doc();
     const assistantMessageRef = conversationRef.collection("messages").doc();
 
@@ -3131,6 +3394,7 @@ export const askLibrary = onCall(
         sourceBookIds: sourceBooks.map((sourceBook) => sourceBook.bookId),
         sourceBookTitles: sourceBooks.map((sourceBook) => sourceBook.bookTitle),
         retrievalDiagnostics: search.diagnostics,
+        routeTraceId: routeTraceRef.id,
         hasUnavailableSources: false,
         unavailableBookTitles: [],
         createdAt: now,
@@ -3154,12 +3418,42 @@ export const askLibrary = onCall(
         text: answer,
         mode: aiAnswer ? "ai_grounded" : "source_draft",
         sources: results.map((result) => ({
+          chunkId: result.chunkId || "",
           bookId: result.bookId,
           bookTitle: result.bookTitle,
           chunkIndex: result.chunkIndex,
           excerpt: result.excerpt,
           score: result.score,
         })),
+        createdAt: now,
+      });
+      transaction.set(routeTraceRef, {
+        userId: auth.uid,
+        tenantId: conversationScope.tenantId,
+        workspaceId: conversationScope.workspaceId,
+        libraryId: conversationScope.libraryId,
+        conversationId: conversationRef.id,
+        callable: "askLibrary",
+        routeIntent: "book_qa",
+        selectedBookSource: bookId ? "explicit_book_scope" : "library_scope",
+        scopedBookId: bookId,
+        queryPreview: queryText.slice(0, 180),
+        queryLength: queryText.length,
+        answerMode: aiAnswer ? "ai_grounded" : "source_draft",
+        conversationSaved: true,
+        usageIncremented: true,
+        sourceCount: results.length,
+        sourceBookIds: sourceBooks.map((sourceBook) => sourceBook.bookId),
+        sourceChunkIds: results.map((result) => result.chunkId || "").filter(Boolean),
+        sourceChunks: results.map((result) => ({
+          chunkId: result.chunkId || "",
+          bookId: result.bookId,
+          bookTitle: result.bookTitle,
+          chunkIndex: result.chunkIndex,
+          score: result.score,
+        })),
+        retrievalDiagnostics: search.diagnostics,
+        errors: [],
         createdAt: now,
       });
       transaction.update(userRef, {
