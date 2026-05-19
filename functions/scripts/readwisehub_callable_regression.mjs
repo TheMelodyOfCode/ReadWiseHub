@@ -669,6 +669,35 @@ async function run() {
     !structuredTitles.some((title) => /^Section \d+$/i.test(title)),
     `structured section-map included placeholder titles: ${structuredTitles.join(", ")}`
   );
+  const structuredSummaries = structuredArtifact?.get("sections")?.map((section) => section.summary || "") || [];
+  check(
+    structuredSummaries.every((summary) => !/^\d{1,2}\.\s+/.test(summary)),
+    `structured section-map summaries repeated heading prefixes: ${structuredSummaries.join(" | ")}`
+  );
+
+  const structuredMapAskEleven = await callFunction(
+    "askLibrary",
+    {
+      query: "Please divide this book into 11 sections with titles.",
+      locale: "en",
+      bookId: structuredBookId,
+    },
+    idToken
+  );
+  check(structuredMapAskEleven.ok === true, "11-section structured map askLibrary did not return ok.");
+  const structuredMapElevenConversation = await db
+    .collection("conversations")
+    .doc(structuredMapAskEleven.conversationId)
+    .get();
+  const structuredElevenArtifactId = structuredMapElevenConversation.get("activeArtifactId");
+  const structuredElevenArtifact = structuredElevenArtifactId
+    ? await db.collection("bookArtifacts").doc(structuredElevenArtifactId).get()
+    : null;
+  const structuredElevenTitles = structuredElevenArtifact?.get("sections")?.map((section) => section.title) || [];
+  check(
+    !structuredElevenTitles.includes("Here"),
+    `11-section structured map accepted intro text as a title: ${structuredElevenTitles.join(", ")}`
+  );
 
   await writeReaderSettingsViaClient(primaryBookId);
   const readerSettings = await db

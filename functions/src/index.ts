@@ -194,6 +194,7 @@ type NumberedHeadingCandidate = {
   pageStart: number;
   pageEnd: number;
   textPreview: string;
+  bodyPreview: string;
   position: number;
 };
 type TextExtractionResult = {
@@ -1593,7 +1594,8 @@ function countWeakSectionMapTitles(sections: SectionMapEntry[]): number {
   return sections.filter((section) =>
     /^Section \d+$/i.test(section.title) ||
     /^https?:\/\//i.test(section.title) ||
-    /^\[\d+\]/.test(section.title)
+    /^\[\d+\]/.test(section.title) ||
+    /^Here$/i.test(section.title)
   ).length;
 }
 
@@ -2771,6 +2773,35 @@ function cleanDetectedHeadingTitle(rawTitle: string): string {
   return titleWords.join(" ").trim().slice(0, 120);
 }
 
+function isWeakDetectedHeadingTitle(title: string): boolean {
+  return (
+    title.length < 3 ||
+    /^https?:\/\//i.test(title) ||
+    /^\[\d+\]/.test(title) ||
+    /^(Here|There|This|That|These|Those|However|Because|Although|When|Why|What)$/i.test(title)
+  );
+}
+
+function createHeadingBodyPreview(text: string, matchEnd: number, title: string): string {
+  const repeatedHeadingPattern = new RegExp(`^\\s*\\d{1,2}\\.\\s+${escapeRegExp(title)}\\s*`, "i");
+  const afterHeading = text
+    .slice(matchEnd)
+    .replace(repeatedHeadingPattern, "")
+    .replace(/^\s*[:.-]?\s*/, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  const fallback = text
+    .replace(/\s+/g, " ")
+    .replace(repeatedHeadingPattern, "")
+    .trim();
+  const preview = afterHeading || fallback || title;
+  return preview.length > 420 ? `${preview.slice(0, 417).trim()}...` : preview;
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 function extractNumberedHeadingCandidates(sections: SectionSourceForMap[]): NumberedHeadingCandidate[] {
   const candidates: NumberedHeadingCandidate[] = [];
   const headingPattern = /\b(\d{1,2})\.\s+(.+?)(?=\s+\d{1,2}\.\s+[A-Z“The]|\n{2,}|$)/g;
@@ -2786,9 +2817,7 @@ function extractNumberedHeadingCandidates(sections: SectionSourceForMap[]): Numb
         Number.isInteger(number) &&
         number > 0 &&
         number <= 30 &&
-        title.length >= 3 &&
-        !/^https?:\/\//i.test(title) &&
-        !/^\[\d+\]/.test(title)
+        !isWeakDetectedHeadingTitle(title)
       ) {
         candidates.push({
           number,
@@ -2797,6 +2826,7 @@ function extractNumberedHeadingCandidates(sections: SectionSourceForMap[]): Numb
           pageStart: section.pageStart,
           pageEnd: section.pageEnd,
           textPreview: section.textPreview || section.text.slice(0, 420),
+          bodyPreview: createHeadingBodyPreview(text, match.index + match[0].length, title),
           position: globalPosition + match.index,
         });
       }
@@ -2839,21 +2869,13 @@ function createHeadingAwareSectionMapEntries(
     return [];
   }
 
-  return headings.map((heading, index) => {
-    const nextHeading = headings[index + 1];
-    const sectionEnd = nextHeading
-      ? Math.max(heading.sectionIndex, nextHeading.sectionIndex - 1)
-      : heading.sectionIndex;
-
+  return headings.map((heading) => {
     return {
       sectionNumber: heading.number,
       title: heading.title,
-      summary:
-        heading.textPreview.length > 420
-          ? `${heading.textPreview.slice(0, 417).trim()}...`
-          : heading.textPreview || heading.title,
+      summary: heading.bodyPreview || heading.textPreview || heading.title,
       sourceSectionStart: heading.sectionIndex,
-      sourceSectionEnd: sectionEnd,
+      sourceSectionEnd: heading.sectionIndex,
       pageStart: heading.pageStart,
       pageEnd: heading.pageEnd,
     };
