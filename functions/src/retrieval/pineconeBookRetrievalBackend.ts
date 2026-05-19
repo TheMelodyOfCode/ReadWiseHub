@@ -308,6 +308,8 @@ export class PineconeBookRetrievalBackend implements BookRetrievalBackend {
           ? String(snapshot.get("textPreview"))
           : text.slice(0, 240),
       score: typeof match.score === "number" ? match.score : 0,
+      charStart: Number(snapshot.get("charStart")) || undefined,
+      charEnd: Number(snapshot.get("charEnd")) || undefined,
       chapterId: getStringMetadata(metadata, "chapterId") || undefined,
       sectionId: getStringMetadata(metadata, "sectionId") || undefined,
       pageStart: getNumberMetadata(metadata, "pageStart") || undefined,

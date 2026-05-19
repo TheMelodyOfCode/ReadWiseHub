@@ -37,6 +37,8 @@ export type RetrievedBookChunk = {
   chunkIndex: number;
   text: string;
   score: number;
+  charStart?: number;
+  charEnd?: number;
   textPreview?: string;
   chapterId?: string;
   sectionId?: string;

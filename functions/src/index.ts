@@ -13,6 +13,7 @@ import {
   DEFAULT_LIBRARY_ID,
   DEFAULT_VECTOR_INDEX_NAME,
   DEFAULT_WORKSPACE_ID,
+  RetrievedBookChunk,
 } from "./retrieval/bookRetrievalBackend";
 import {
   buildBookVectorMetadata,
@@ -76,6 +77,7 @@ const SECTION_SIZE = 1800;
 const MAX_EXTRACTED_TEXT_BYTES = 2_500_000;
 const MAX_SEARCH_QUERY_LENGTH = 240;
 const MAX_SEARCH_RESULTS = 5;
+const PINECONE_SEARCH_CANDIDATE_COUNT = 30;
 const MAX_ACTIVE_SESSIONS = 3;
 const DELETE_CONFIRMATION_PHRASE = "ReadWiseHub 2026";
 const PDF_EXTRACTOR_URL =
@@ -114,6 +116,13 @@ type LibrarySearchResult = {
   charEnd?: number;
   score: number;
   excerpt: string;
+};
+
+type SearchableBook = {
+  title: string;
+  scope: BookScope;
+  pineconeIndexedChunkCount: number;
+  pineconeMissingChunkCount: number;
 };
 
 type SourceBookSummary = {
@@ -1000,8 +1009,26 @@ function createExcerpt(text: string, terms: string[]): string {
   return `${prefix}${text.slice(start, end).trim()}${suffix}`;
 }
 
+function isPineconeSearchEnabledForUser(userId: string): boolean {
+  const explicitBackend = (process.env.READWISEHUB_RETRIEVAL_BACKEND || "").trim().toLowerCase();
+  if (explicitBackend === "pinecone") {
+    return true;
+  }
+
+  const allowlist = (process.env.PINECONE_SEARCH_USER_IDS || "")
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+
+  return allowlist.includes(userId);
+}
+
+function hasCompletePineconeCoverage(book: SearchableBook): boolean {
+  return book.pineconeIndexedChunkCount > 0 && book.pineconeMissingChunkCount === 0;
+}
+
 async function collectSearchableBooks(userId: string, bookId: string) {
-  const books = new Map<string, { title: string }>();
+  const books = new Map<string, SearchableBook>();
 
   if (bookId) {
     const bookSnapshot = await db.collection("books").doc(bookId).get();
@@ -1015,6 +1042,9 @@ async function collectSearchableBooks(userId: string, bookId: string) {
           typeof bookSnapshot.get("displayTitle") === "string" && bookSnapshot.get("displayTitle")
             ? String(bookSnapshot.get("displayTitle"))
             : createDisplayTitle(assertString(bookSnapshot.get("title"), "title")),
+        scope: resolveBookScope(userId, bookSnapshot),
+        pineconeIndexedChunkCount: Number(bookSnapshot.get("pineconeIndexedChunkCount")) || 0,
+        pineconeMissingChunkCount: Number(bookSnapshot.get("pineconeMissingChunkCount")) || 0,
       });
     }
     return books;
@@ -1032,10 +1062,99 @@ async function collectSearchableBooks(userId: string, bookId: string) {
         typeof bookSnapshot.get("displayTitle") === "string" && bookSnapshot.get("displayTitle")
           ? String(bookSnapshot.get("displayTitle"))
           : createDisplayTitle(assertString(bookSnapshot.get("title"), "title")),
+      scope: resolveBookScope(userId, bookSnapshot),
+      pineconeIndexedChunkCount: Number(bookSnapshot.get("pineconeIndexedChunkCount")) || 0,
+      pineconeMissingChunkCount: Number(bookSnapshot.get("pineconeMissingChunkCount")) || 0,
     });
   });
 
   return books;
+}
+
+async function runPineconeLibrarySearch(
+  userId: string,
+  queryText: string,
+  queryEmbedding: number[],
+  books: Map<string, SearchableBook>
+): Promise<LibrarySearchResult[]> {
+  const apiKey = getPineconeApiKey();
+  if (!apiKey || queryEmbedding.length === 0 || books.size === 0) {
+    return [];
+  }
+
+  const bookEntries = Array.from(books.entries());
+  if (!bookEntries.every(([, book]) => hasCompletePineconeCoverage(book))) {
+    return [];
+  }
+
+  const firstScope = bookEntries[0][1].scope;
+  const sameScope = bookEntries.every(([, book]) =>
+    book.scope.tenantId === firstScope.tenantId &&
+    book.scope.workspaceId === firstScope.workspaceId &&
+    book.scope.libraryId === firstScope.libraryId
+  );
+  if (!sameScope) {
+    return [];
+  }
+
+  const backend = new PineconeBookRetrievalBackend({
+    apiKey,
+    firestore: db,
+    indexName: process.env.PINECONE_INDEX_NAME || DEFAULT_VECTOR_INDEX_NAME,
+    indexHost: process.env.PINECONE_INDEX_HOST || "",
+    embeddingModel: OPENAI_EMBEDDING_MODEL,
+    chunkerVersion: CHUNKER_VERSION,
+    extractorVersion: EXTRACTOR_VERSION,
+  });
+  const terms = tokenizeSearchQuery(queryText);
+  const chunks = await backend.search({
+    scope: {
+      userId,
+      tenantId: firstScope.tenantId,
+      workspaceId: firstScope.workspaceId,
+      libraryId: firstScope.libraryId,
+      bookIds: bookEntries.map(([currentBookId]) => currentBookId),
+    },
+    queryText,
+    queryEmbedding,
+    topK: PINECONE_SEARCH_CANDIDATE_COUNT,
+    mode: bookEntries.length > 1 ? "library" : "book",
+  });
+
+  return chunks
+    .map((chunk: RetrievedBookChunk) => {
+      const book = books.get(chunk.bookId);
+      if (!book) {
+        return null;
+      }
+
+      const vectorSimilarity = chunk.score;
+      const lexicalScore = scoreChunk(chunk.text, terms) + scorePhrase(chunk.text, queryText);
+      const score = lexicalScore + Math.max(0, vectorSimilarity) * 12;
+
+      if (score <= 0 || (lexicalScore <= 0 && vectorSimilarity < 0.18)) {
+        return null;
+      }
+
+      const result: LibrarySearchResult = {
+        bookId: chunk.bookId,
+        bookTitle: book.title,
+        chunkIndex: chunk.chunkIndex,
+        score,
+        excerpt: createExcerpt(chunk.text, terms),
+      };
+
+      if (typeof chunk.charStart === "number") {
+        result.charStart = chunk.charStart;
+      }
+      if (typeof chunk.charEnd === "number") {
+        result.charEnd = chunk.charEnd;
+      }
+
+      return result;
+    })
+    .filter((result): result is LibrarySearchResult => result !== null)
+    .sort((left, right) => right.score - left.score);
 }
 
 async function runLibrarySearch(userId: string, queryText: string, bookId = "") {
@@ -1051,6 +1170,13 @@ async function runLibrarySearch(userId: string, queryText: string, bookId = "") 
 
   if (books.size === 0) {
     return [];
+  }
+
+  if (isPineconeSearchEnabledForUser(userId)) {
+    const pineconeResults = await runPineconeLibrarySearch(userId, queryText, queryEmbedding, books);
+    if (pineconeResults.length > 0) {
+      return selectDistinctResults(pineconeResults);
+    }
   }
 
   const chunkSnapshots = await Promise.all(
@@ -2779,7 +2905,7 @@ export const processQueuedIngestionJob = onDocumentCreated(
 );
 
 export const searchLibrary = onCall(
-  { region: "us-central1", timeoutSeconds: 60, memory: "512MiB", secrets: [openAiApiKey] },
+  { region: "us-central1", timeoutSeconds: 60, memory: "512MiB", secrets: [openAiApiKey, pineconeApiKey] },
   async (request) => {
     const auth = requireAuth(request.auth?.token
       ? {
@@ -2808,7 +2934,7 @@ export const searchLibrary = onCall(
 );
 
 export const askLibrary = onCall(
-  { region: "us-central1", timeoutSeconds: 60, memory: "512MiB", secrets: [openAiApiKey] },
+  { region: "us-central1", timeoutSeconds: 60, memory: "512MiB", secrets: [openAiApiKey, pineconeApiKey] },
   async (request) => {
     const auth = requireAuth(request.auth?.token
       ? {
