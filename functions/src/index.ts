@@ -240,6 +240,29 @@ async function requireVerifiedEmail(auth: AuthContext) {
   }
 }
 
+async function requireActiveSession(auth: AuthContext, rawSessionId: unknown) {
+  const sessionId = sanitizeClientLabel(rawSessionId);
+  if (!sessionId || sessionId.length < 16) {
+    throw new HttpsError("failed-precondition", "Active device session is required.");
+  }
+
+  const sessionRef = db.collection("userSessions").doc(`${auth.uid}_${sessionId}`);
+  const sessionSnapshot = await sessionRef.get();
+  if (!sessionSnapshot.exists || sessionSnapshot.get("userId") !== auth.uid) {
+    throw new HttpsError("permission-denied", "This device session is not registered.");
+  }
+
+  const status = sessionSnapshot.get("status") || "";
+  if (status !== "active") {
+    throw new HttpsError("permission-denied", "This device session is no longer active.");
+  }
+
+  await sessionRef.update({
+    lastSeenAt: FieldValue.serverTimestamp(),
+    updatedAt: FieldValue.serverTimestamp(),
+  });
+}
+
 function normalizePlan(plan: unknown): UserPlan {
   return plan === "plus" || plan === "pro" ? plan : "free";
 }
@@ -2470,7 +2493,7 @@ export const getAccountSecurity = onCall(
           email: request.auth.token.email,
           name: request.auth.token.name,
           picture: request.auth.token.picture,
-        }
+      }
       : undefined);
     await ensureUserProfile(auth);
 
@@ -2519,6 +2542,7 @@ export const exportAccountData = onCall(
           picture: request.auth.token.picture,
         }
       : undefined);
+    await requireActiveSession(auth, request.data?.sessionId);
 
     await ensureUserProfile(auth);
 
@@ -2566,6 +2590,7 @@ export const getBookDetail = onCall(
         }
       : undefined);
     const bookId = assertString(request.data?.bookId, "bookId");
+    await requireActiveSession(auth, request.data?.sessionId);
     await requireVerifiedEmail(auth);
     const bookSnapshot = await db.collection("books").doc(bookId).get();
 
@@ -2621,6 +2646,7 @@ export const getBookReader = onCall(
         }
       : undefined);
     const bookId = assertString(request.data?.bookId, "bookId");
+    await requireActiveSession(auth, request.data?.sessionId);
     const page = Math.max(0, Math.floor(Number(request.data?.page) || 0));
     const pageSize = Math.min(12, Math.max(4, Math.floor(Number(request.data?.pageSize) || 8)));
     const bookSnapshot = await db.collection("books").doc(bookId).get();
@@ -2704,9 +2730,10 @@ export const getConversationDetail = onCall(
           email: request.auth.token.email,
           name: request.auth.token.name,
           picture: request.auth.token.picture,
-        }
+      }
       : undefined);
     const conversationId = assertString(request.data?.conversationId, "conversationId");
+    await requireActiveSession(auth, request.data?.sessionId);
     const conversationSnapshot = await db.collection("conversations").doc(conversationId).get();
 
     if (!conversationSnapshot.exists || conversationSnapshot.get("userId") !== auth.uid) {
@@ -2757,8 +2784,9 @@ export const createUploadReservation = onCall(
           email: request.auth.token.email,
           name: request.auth.token.name,
           picture: request.auth.token.picture,
-        }
+      }
       : undefined);
+    await requireActiveSession(auth, request.data?.sessionId);
     const fileName = sanitizeFileName(assertString(request.data?.fileName, "fileName"));
     const rawContentType =
       typeof request.data?.contentType === "string" ? request.data.contentType.trim() : "";
@@ -2858,9 +2886,10 @@ export const finalizeUploadReservation = onCall(
           email: request.auth.token.email,
           name: request.auth.token.name,
           picture: request.auth.token.picture,
-        }
+      }
       : undefined);
     const bookId = assertString(request.data?.bookId, "bookId");
+    await requireActiveSession(auth, request.data?.sessionId);
     await requireVerifiedEmail(auth);
 
     const bookRef = db.collection("books").doc(bookId);
@@ -2969,9 +2998,10 @@ export const deleteBook = onCall(
           email: request.auth.token.email,
           name: request.auth.token.name,
           picture: request.auth.token.picture,
-        }
+      }
       : undefined);
     const bookId = assertString(request.data?.bookId, "bookId");
+    await requireActiveSession(auth, request.data?.sessionId);
     const bookRef = db.collection("books").doc(bookId);
     const bookSnapshot = await bookRef.get();
 
@@ -3054,9 +3084,10 @@ export const processIngestionJob = onCall(
           email: request.auth.token.email,
           name: request.auth.token.name,
           picture: request.auth.token.picture,
-        }
+      }
       : undefined);
     const jobId = assertString(request.data?.jobId, "jobId");
+    await requireActiveSession(auth, request.data?.sessionId);
     await requireVerifiedEmail(auth);
     const jobSnapshot = await db.collection("ingestionJobs").doc(jobId).get();
 
@@ -3097,8 +3128,9 @@ export const searchLibrary = onCall(
           email: request.auth.token.email,
           name: request.auth.token.name,
           picture: request.auth.token.picture,
-        }
+      }
       : undefined);
+    await requireActiveSession(auth, request.data?.sessionId);
     await requireVerifiedEmail(auth);
     const queryText = assertString(request.data?.query, "query").slice(0, MAX_SEARCH_QUERY_LENGTH);
     const bookId =
@@ -3638,8 +3670,9 @@ export const askLibrary = onCall(
           email: request.auth.token.email,
           name: request.auth.token.name,
           picture: request.auth.token.picture,
-        }
+      }
       : undefined);
+    await requireActiveSession(auth, request.data?.sessionId);
     await requireVerifiedEmail(auth);
     const queryText = assertString(request.data?.query, "query").slice(0, MAX_SEARCH_QUERY_LENGTH);
     const locale =
@@ -3811,6 +3844,7 @@ export const deleteConversation = onCall(
         }
       : undefined);
     const conversationId = assertString(request.data?.conversationId, "conversationId");
+    await requireActiveSession(auth, request.data?.sessionId);
     const conversationRef = db.collection("conversations").doc(conversationId);
     const conversationSnapshot = await conversationRef.get();
 
@@ -3844,8 +3878,9 @@ export const deleteAccountData = onCall(
           email: request.auth.token.email,
           name: request.auth.token.name,
           picture: request.auth.token.picture,
-        }
+      }
       : undefined);
+    await requireActiveSession(auth, request.data?.sessionId);
     const confirmationPhrase = sanitizeClientLabel(request.data?.confirmationPhrase);
     if (confirmationPhrase !== DELETE_CONFIRMATION_PHRASE) {
       throw new HttpsError(
@@ -3879,9 +3914,10 @@ export const backfillBookEmbeddings = onCall(
           email: request.auth.token.email,
           name: request.auth.token.name,
           picture: request.auth.token.picture,
-        }
+      }
       : undefined);
     const bookId = assertString(request.data?.bookId, "bookId");
+    await requireActiveSession(auth, request.data?.sessionId);
     const bookSnapshot = await db.collection("books").doc(bookId).get();
 
     if (!bookSnapshot.exists || bookSnapshot.get("userId") !== auth.uid) {
@@ -3995,8 +4031,9 @@ export const backfillBookToPineconeTest = onCall(
           email: request.auth.token.email,
           name: request.auth.token.name,
           picture: request.auth.token.picture,
-        }
+      }
       : undefined);
+    await requireActiveSession(auth, request.data?.sessionId);
     requirePineconeTestUser(auth);
 
     const confirmation = assertString(request.data?.confirmation, "confirmation");
@@ -4128,8 +4165,9 @@ export const deleteBookFromPineconeTest = onCall(
           email: request.auth.token.email,
           name: request.auth.token.name,
           picture: request.auth.token.picture,
-        }
+      }
       : undefined);
+    await requireActiveSession(auth, request.data?.sessionId);
     requirePineconeTestUser(auth);
 
     const confirmation = assertString(request.data?.confirmation, "confirmation");

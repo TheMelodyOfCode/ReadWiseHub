@@ -7,6 +7,7 @@ const CALLABLE_BASE_URL = `https://${REGION}-${PROJECT_ID}.cloudfunctions.net`;
 const runId = `readwisehub-regression-${Date.now()}`;
 const email = `${runId}@example.invalid`;
 const password = `Rwh-${Date.now()}-regression`;
+const sessionId = `${runId}-session`;
 const failures = [];
 let uid = "";
 let idToken = "";
@@ -57,6 +58,7 @@ async function createRegressionAuthUser() {
 
   uid = payload.localId;
   idToken = payload.idToken;
+  globalThis.readWiseHubRegressionIdToken = idToken;
   await auth.updateUser(uid, { emailVerified: true });
   primaryBookId = `${uid}-book`;
   accountDeleteBookId = `${uid}-account-delete-book`;
@@ -64,13 +66,17 @@ async function createRegressionAuthUser() {
 }
 
 async function callFunction(name, data, idToken) {
+  const payloadData =
+    idToken === globalThis.readWiseHubRegressionIdToken && data && typeof data === "object" && !("sessionId" in data)
+      ? { ...data, sessionId }
+      : data;
   const response = await fetch(`${CALLABLE_BASE_URL}/${name}`, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${idToken}`,
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({ data }),
+    body: JSON.stringify({ data: payloadData }),
   });
   const payload = await response.json().catch(() => ({}));
 
@@ -82,13 +88,17 @@ async function callFunction(name, data, idToken) {
 }
 
 async function callFunctionExpectFailure(name, data, idToken) {
+  const payloadData =
+    idToken === globalThis.readWiseHubRegressionIdToken && data && typeof data === "object" && !("sessionId" in data)
+      ? { ...data, sessionId }
+      : data;
   const response = await fetch(`${CALLABLE_BASE_URL}/${name}`, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${idToken}`,
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({ data }),
+    body: JSON.stringify({ data: payloadData }),
   });
   const payload = await response.json().catch(() => ({}));
 
@@ -222,6 +232,14 @@ async function cleanup() {
     }).catch(() => undefined);
   });
   if (unverifiedUid) {
+    const unverifiedSessions = await db
+      .collection("userSessions")
+      .where("userId", "==", unverifiedUid)
+      .get();
+    for (const session of unverifiedSessions.docs) {
+      await session.ref.delete();
+    }
+    await db.collection("users").doc(unverifiedUid).delete().catch(() => undefined);
     await auth.deleteUser(unverifiedUid).catch(() => undefined);
   }
 }
@@ -343,6 +361,18 @@ async function run() {
   await createRegressionAuthUser();
   await seedUser();
   await seedBook(primaryBookId, "Callable Regression Book");
+  const registeredSession = await callFunction(
+    "registerLoginSession",
+    {
+      sessionId,
+      browser: "Regression",
+      os: "Node",
+      device: "Callable regression",
+      userAgent: "readwisehub-callable-regression",
+    },
+    idToken
+  );
+  check(registeredSession.ok === true, "registerLoginSession did not activate regression session.");
 
   const unverified = await fetch(
     `https://identitytoolkit.googleapis.com/v1/accounts:signUp?key=${API_KEY}`,
@@ -361,9 +391,21 @@ async function run() {
   const unverifiedPayload = await unverified.json();
   assert(unverified.ok, "Unverified regression user creation failed.");
   unverifiedUid = unverifiedPayload.localId;
+  const unverifiedSessionId = `${runId}-unverified-session`;
+  await callFunction(
+    "registerLoginSession",
+    {
+      sessionId: unverifiedSessionId,
+      browser: "Regression",
+      os: "Node",
+      device: "Unverified callable regression",
+      userAgent: "readwisehub-callable-regression",
+    },
+    unverifiedPayload.idToken
+  );
   const unverifiedSearch = await callFunctionExpectFailure(
     "searchLibrary",
-    { query: "blocked before verification", bookId: primaryBookId },
+    { query: "blocked before verification", bookId: primaryBookId, sessionId: unverifiedSessionId },
     unverifiedPayload.idToken
   );
   check(

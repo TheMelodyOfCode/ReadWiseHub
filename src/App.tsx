@@ -423,6 +423,13 @@ function getSessionId() {
   return next;
 }
 
+function withSession<T extends Record<string, unknown>>(data: T): T & { sessionId: string } {
+  return {
+    ...data,
+    sessionId: getSessionId(),
+  };
+}
+
 function getSourceLabel(source: LibrarySearchResult, t: Record<string, string>) {
   return source.chunkIndex < 0
     ? t.sourceOutline
@@ -1347,11 +1354,11 @@ export function App() {
         { bookId: string; jobId: string; status: string }
       >(functions, "finalizeUploadReservation");
 
-      const reservation = await createReservation({
+      const reservation = await createReservation(withSession({
         fileName: selectedFile.name,
         contentType: selectedFile.type || "application/octet-stream",
         sizeBytes: selectedFile.size,
-      });
+      }));
       const uploadRef = ref(storage, reservation.data.storagePath);
       const uploadTask = uploadBytesResumable(uploadRef, selectedFile, {
         contentType: selectedFile.type || "application/octet-stream",
@@ -1371,7 +1378,7 @@ export function App() {
         );
       });
 
-      await finalizeReservation({ bookId: reservation.data.bookId });
+      await finalizeReservation(withSession({ bookId: reservation.data.bookId }));
       setUploadProgress(100);
       setSelectedFile(null);
       setLastUploadedBookId(reservation.data.bookId);
@@ -1415,7 +1422,7 @@ export function App() {
 
       const snapshot = await getDocs(jobsQuery);
       for (const jobDoc of snapshot.docs) {
-        await processJob({ jobId: jobDoc.id });
+        await processJob(withSession({ jobId: jobDoc.id }));
       }
 
       setUploadMessage(t.processQueuedDone);
@@ -1448,7 +1455,7 @@ export function App() {
         functions,
         "processIngestionJob"
       );
-      await processJob({ jobId: job.id });
+      await processJob(withSession({ jobId: job.id }));
       setUploadMessage(t.processQueuedDone);
     } catch (error) {
       setUploadMessage(getErrorMessage(error, "Processing failed"));
@@ -1499,10 +1506,10 @@ export function App() {
         { query: string; bookId?: string },
         { ok: boolean; results: LibrarySearchResult[] }
       >(functions, "searchLibrary");
-      const response = await searchLibrary({
+      const response = await searchLibrary(withSession({
         query: searchQuestion.trim(),
         bookId: selectedBookScope || undefined,
-      });
+      }));
       const results = response.data.results ?? [];
       setSearchResults(results);
       setSearchMessage(results.length === 0 ? t.noSearchResults : "");
@@ -1538,11 +1545,11 @@ export function App() {
         { query: string; locale: Locale; bookId?: string },
         AskLibraryResponse
       >(functions, "askLibrary");
-      const response = await askLibrary({
+      const response = await askLibrary(withSession({
         query: askQuestion.trim(),
         locale,
         bookId: selectedBookScope || undefined,
-      });
+      }));
       setAskAnswer(response.data.answer);
       setAskMode(response.data.mode);
       setAskSources(response.data.results ?? []);
@@ -1589,7 +1596,7 @@ export function App() {
         functions,
         "deleteBook"
       );
-      await deleteBook({ bookId: book.id });
+      await deleteBook(withSession({ bookId: book.id }));
       if (selectedBookScope === book.id) {
         setSelectedBookScope("");
       }
@@ -1625,7 +1632,7 @@ export function App() {
         { conversationId: string },
         { ok: boolean }
       >(functions, "deleteConversation");
-      await deleteConversation({ conversationId });
+      await deleteConversation(withSession({ conversationId }));
       setAskMessage(t.questionDeleted);
     } catch (error) {
       setAskMessage(getErrorMessage(error, "Delete failed"));
@@ -1644,7 +1651,7 @@ export function App() {
         { bookId: string },
         { ok: boolean; chunks: BookChunkPreview[] }
       >(functions, "getBookDetail");
-      const response = await getBookDetail({ bookId: book.id });
+      const response = await getBookDetail(withSession({ bookId: book.id }));
       setBookChunkPreviews(
         (response.data.chunks ?? [])
           .sort((left, right) => left.chunkIndex - right.chunkIndex)
@@ -1743,11 +1750,11 @@ export function App() {
         { bookId: string; page: number; pageSize: number },
         { ok: boolean; chunks: ReaderChunk[]; totalChunks: number }
       >(functions, "getBookReader");
-      const response = await getBookReader({
+      const response = await getBookReader(withSession({
         bookId: book.id,
         page: targetPage,
         pageSize: readerPageSize,
-      });
+      }));
       setReaderChunks(response.data.chunks ?? []);
       setReaderTotalChunks(response.data.totalChunks ?? 0);
       if (progressKey) {
@@ -2031,7 +2038,7 @@ export function App() {
         unknown,
         { ok: boolean; activeSessionLimit: number; sessions: AccountSession[] }
       >(functions, "getAccountSecurity");
-      const response = await getAccountSecurity({});
+      const response = await getAccountSecurity(withSession({}));
       setAccountSessions(response.data.sessions ?? []);
       setSecurityMessage("");
     } catch (error) {
@@ -2167,11 +2174,11 @@ export function App() {
         { query: string; locale: Locale; bookId?: string },
         AskLibraryResponse
       >(functions, "askLibrary");
-      const response = await askLibrary({
+      const response = await askLibrary(withSession({
         query: question,
         locale,
         bookId: readerBook.id,
-      });
+      }));
       setReaderAskAnswer(response.data.answer);
       setReaderAskMode(response.data.mode);
       setReaderAskSources(response.data.results ?? []);
@@ -2219,7 +2226,7 @@ export function App() {
         { conversationId: string },
         { ok: boolean; conversation: { id: string; title: string; mode: string }; messages: ConversationMessage[] }
       >(functions, "getConversationDetail");
-      const response = await getConversationDetail({ conversationId });
+      const response = await getConversationDetail(withSession({ conversationId }));
       setConversationDetail({
         id: response.data.conversation.id,
         title: response.data.conversation.title,
@@ -2245,7 +2252,7 @@ export function App() {
         functions,
         "exportAccountData"
       );
-      const response = await exportAccountData({});
+      const response = await exportAccountData(withSession({}));
       const blob = new Blob([JSON.stringify(response.data, null, 2)], {
         type: "application/json",
       });
@@ -2271,7 +2278,7 @@ export function App() {
         functions,
         "deleteAccountData"
       );
-      await deleteAccountData({ confirmationPhrase: deleteConfirmationText });
+      await deleteAccountData(withSession({ confirmationPhrase: deleteConfirmationText }));
       signingOutRef.current = true;
       await signOut(auth).catch(() => undefined);
     } catch (error) {
@@ -2516,7 +2523,8 @@ export function App() {
                 ["AI ask/source lookup", "Auth, verified email, ownership/book scope, and message limit enforced server-side."],
                 ["Delete/export account data", "Auth and ownership enforced; account deletion requires confirmation phrase."],
                 ["Admin diagnostics", "Auth plus ADMIN_ALLOWED_UIDS; access is audit-logged."],
-                ["Open audit item", "Hard session/device validity is tracked, but not yet enforced across every callable path."],
+                ["Session/device enforcement", "User-facing authenticated callables require an active registered device session."],
+                ["Open audit item", "Admin callables are UID-gated and audit-logged; add session checks there later if admin workflows need stricter device binding."],
               ].map(([title, body]) => (
                 <article className="admin-card admin-audit-card" key={title}>
                   <strong>{title}</strong>
