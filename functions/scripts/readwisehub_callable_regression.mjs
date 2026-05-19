@@ -784,11 +784,12 @@ async function run() {
     : null;
   const structuredTitles = structuredArtifact?.get("sections")?.map((section) => section.title) || [];
   check(
-    structuredTitles.includes("Quantum Gravity") && structuredTitles.includes("Arrow of Time"),
+    structuredTitles.some((title) => /quantum gravity/i.test(title)) &&
+      structuredTitles.some((title) => /arrow of time/i.test(title)),
     `structured section-map titles were not heading-aware: ${structuredTitles.join(", ")}`
   );
   check(
-    !structuredTitles.some((title) => /^Section \d+$/i.test(title)),
+    !structuredTitles.some((title) => /^(Chapter|Section|Part) \d+$/i.test(title)),
     `structured section-map included placeholder titles: ${structuredTitles.join(", ")}`
   );
   const structuredSummaries = structuredArtifact?.get("sections")?.map((section) => section.summary || "") || [];

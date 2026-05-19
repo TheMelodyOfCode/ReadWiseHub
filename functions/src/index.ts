@@ -1743,7 +1743,9 @@ async function createBookSectionMapArtifact(userId: string, bookId: string, targ
   const displayTitle =
     bookSnapshot.get("displayTitle") ||
     createDisplayTitle(String(bookSnapshot.get("title") || "Untitled"));
-  const mapEntries = createSectionMapEntries(sectionSources, targetSectionCount);
+  const deterministicMapEntries = createSectionMapEntries(sectionSources, targetSectionCount);
+  const polishedMap = await polishSectionMapEntriesWithAi(String(displayTitle), deterministicMapEntries);
+  const mapEntries = polishedMap.entries;
   const artifactRef = db.collection("bookArtifacts").doc();
   const now = FieldValue.serverTimestamp();
   const artifact = {
@@ -1757,7 +1759,10 @@ async function createBookSectionMapArtifact(userId: string, bookId: string, targ
     type: "section_map",
     title: `${displayTitle} section map`,
     status: "ready",
-    generatedBy: "readwisehub_section_map_v1",
+    generatedBy: polishedMap.polished
+      ? "readwisehub_section_map_v1_ai_polished"
+      : "readwisehub_section_map_v1",
+    aiPolishedTitles: polishedMap.polished,
     targetSectionCount,
     sourceSectionCount: sectionSources.length,
     sections: mapEntries,
@@ -2937,6 +2942,119 @@ function createSectionMapEntries(
   });
 }
 
+function extractJsonArray(text: string): unknown[] | null {
+  const start = text.indexOf("[");
+  const end = text.lastIndexOf("]");
+  if (start < 0 || end <= start) {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(text.slice(start, end + 1));
+    return Array.isArray(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function cleanAiSectionTitle(title: string): string {
+  return title
+    .replace(/^[\s"'`*_#-]+|[\s"'`*_#-]+$/g, "")
+    .replace(/^(?:section|chapter|part)\s*\d+\s*[:.\-]?\s*/i, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 90);
+}
+
+async function polishSectionMapEntriesWithAi(
+  bookTitle: string,
+  entries: SectionMapEntry[]
+): Promise<{ entries: SectionMapEntry[]; polished: boolean }> {
+  const apiKey = getOpenAiApiKey();
+  if (!apiKey || entries.length === 0 || entries.length > 12) {
+    return { entries, polished: false };
+  }
+
+  const sectionPayload = entries.map((entry) => ({
+    sectionNumber: entry.sectionNumber,
+    currentTitle: entry.title,
+    summary: entry.summary.slice(0, 700),
+    sourceSectionStart: entry.sourceSectionStart + 1,
+    sourceSectionEnd: entry.sourceSectionEnd + 1,
+  }));
+
+  const response = await fetch("https://api.openai.com/v1/responses", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      model: OPENAI_MODEL,
+      instructions:
+        "You create concise, user-facing reading-map titles from provided book excerpts. Return only valid JSON. Do not use generic labels like Chapter 2, Section 2, Part 2. Do not invent facts beyond the excerpt. Titles should be 2-7 words and summaries should be one short sentence.",
+      input: [
+        `Book: ${bookTitle}`,
+        "Rewrite these section titles and summaries for a reader-facing book map.",
+        "Return JSON array items with sectionNumber, title, summary.",
+        JSON.stringify(sectionPayload),
+      ].join("\n\n"),
+      max_output_tokens: 900,
+    }),
+  });
+
+  if (!response.ok) {
+    console.error("OpenAI section map polish failed", {
+      status: response.status,
+      statusText: response.statusText,
+    });
+    return { entries, polished: false };
+  }
+
+  const payload = await response.json();
+  const suggestions = extractJsonArray(extractOpenAiText(payload));
+  if (!suggestions) {
+    return { entries, polished: false };
+  }
+
+  const suggestionsByNumber = new Map<number, { title: string; summary: string }>();
+  suggestions.forEach((suggestion) => {
+    if (!suggestion || typeof suggestion !== "object") {
+      return;
+    }
+    const sectionNumber = Number((suggestion as { sectionNumber?: unknown }).sectionNumber);
+    const rawTitle = (suggestion as { title?: unknown }).title;
+    const rawSummary = (suggestion as { summary?: unknown }).summary;
+    if (!Number.isInteger(sectionNumber) || typeof rawTitle !== "string" || typeof rawSummary !== "string") {
+      return;
+    }
+    const title = cleanAiSectionTitle(rawTitle);
+    const summary = rawSummary.replace(/\s+/g, " ").trim().slice(0, 420);
+    if (title.length < 3 || isGenericSectionTitle(title) || summary.length < 10) {
+      return;
+    }
+    suggestionsByNumber.set(sectionNumber, { title, summary });
+  });
+
+  if (suggestionsByNumber.size < Math.ceil(entries.length * 0.6)) {
+    return { entries, polished: false };
+  }
+
+  return {
+    entries: entries.map((entry) => {
+      const suggestion = suggestionsByNumber.get(entry.sectionNumber);
+      return suggestion
+        ? {
+            ...entry,
+            title: suggestion.title,
+            summary: suggestion.summary,
+          }
+        : entry;
+    }),
+    polished: true,
+  };
+}
+
 function isGenericSectionTitle(title: string): boolean {
   return /^(chapter|section|part)\s+\d+$/i.test(title.trim());
 }
@@ -3761,7 +3879,7 @@ export const listBookArtifacts = onCall(
 );
 
 export const generateBookSectionMap = onCall(
-  { region: "us-central1", timeoutSeconds: 60, memory: "512MiB", invoker: "public" },
+  { region: "us-central1", timeoutSeconds: 60, memory: "512MiB", secrets: [openAiApiKey], invoker: "public" },
   async (request) => {
     const auth = requireAuth(request.auth?.token
       ? {
