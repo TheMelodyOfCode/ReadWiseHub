@@ -430,7 +430,7 @@ async function seedChapterOnlyBook() {
 
   const chapterTexts = [
     "## Chapter 1\n\nArthur tries to get tea from the Nutrimatic machine while the Heart of Gold drifts through danger.",
-    "## Chapter 2\n\nZaphod argues with ghostly advisers about stolen ships and dangerous missions.",
+    "## Chapter 2\n\nWhere's Zaphod? Arthur and Trillian search the ship while Ford studies the damage and tries to understand the danger.",
     "## Chapter 3\n\nMarvin stands in a corridor while a massive tank threatens the building.",
     "## Chapter 4\n\nMilliways appears as travelers arrive at the restaurant near the end of time.",
     "## Chapter 5\n\nHotblack Desiato and Disaster Area become part of Ford's chaotic restaurant evening.",
@@ -821,8 +821,8 @@ async function run() {
     : null;
   const chapterOnlyTitles = chapterOnlyArtifact?.get("sections")?.map((section) => section.title) || [];
   check(
-    chapterOnlyTitles.every((title) => !/^Chapter \d+$/i.test(title)),
-    `chapter-only section map returned generic chapter titles: ${chapterOnlyTitles.join(", ")}`
+    chapterOnlyTitles.every((title) => !/^(Chapter|Section) \d+$/i.test(title)),
+    `chapter-only section map returned generic titles: ${chapterOnlyTitles.join(", ")}`
   );
 
   await writeReaderSettingsViaClient(primaryBookId);
@@ -866,6 +866,21 @@ async function run() {
     const deletedRouteTrace = await db.collection("routeTraces").doc(routeTraceId).get();
     check(!deletedRouteTrace.exists, "deleteConversation left route trace document behind.");
   }
+
+  const deleteAllConversations = await callFunction(
+    "deleteAllConversations",
+    { confirmation: "delete complete history" },
+    idToken
+  );
+  check(deleteAllConversations.ok === true, "deleteAllConversations did not return ok.");
+  const remainingUserConversationsAfterHistoryDelete = await db
+    .collection("conversations")
+    .where("userId", "==", uid)
+    .get();
+  check(
+    remainingUserConversationsAfterHistoryDelete.empty,
+    "deleteAllConversations left conversations behind."
+  );
 
   const deleteBook = await callFunction("deleteBook", { bookId: primaryBookId }, idToken);
   check(deleteBook.ok === true, "deleteBook did not return ok.");

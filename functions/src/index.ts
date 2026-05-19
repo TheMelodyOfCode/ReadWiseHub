@@ -2917,7 +2917,8 @@ function createTopicTitleFromText(text: string, fallback: string): string {
     .replace(/\b(chapter|section|part)\s+\d+\b/gi, " ")
     .replace(/\s+/g, " ")
     .trim();
-  const sentence = cleaned.split(/[.!?]\s+/)[0] || cleaned;
+  const sentences = cleaned.split(/[.!?]\s+/).map((sentence) => sentence.trim()).filter(Boolean);
+  const sentence = sentences.find((candidate) => candidate.split(/\s+/).length >= 6) || cleaned;
   const words = sentence
     .split(" ")
     .map((word) => word.replace(/^[^A-Za-z0-9]+|[^A-Za-z0-9]+$/g, ""))
@@ -5016,6 +5017,31 @@ export const deleteConversation = onCall(
     return {
       ok: true,
       conversationId,
+    };
+  }
+);
+
+export const deleteAllConversations = onCall(
+  { region: "us-central1", timeoutSeconds: 120, memory: "256MiB" },
+  async (request) => {
+    const auth = requireAuth(request.auth?.token
+      ? {
+          uid: request.auth.uid,
+          email: request.auth.token.email,
+          name: request.auth.token.name,
+          picture: request.auth.token.picture,
+        }
+      : undefined);
+    await requireActiveSession(auth, request.data?.sessionId);
+    const confirmation = assertString(request.data?.confirmation, "confirmation");
+    if (confirmation.trim().toLowerCase() !== "delete complete history") {
+      throw new HttpsError("failed-precondition", "Type the exact confirmation phrase to delete history.");
+    }
+
+    await clearUserConversations(auth.uid);
+
+    return {
+      ok: true,
     };
   }
 );

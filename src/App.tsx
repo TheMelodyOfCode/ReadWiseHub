@@ -570,9 +570,11 @@ async function ensureUserRecord(user: User, locale: Locale, theme: Theme) {
 
 function getErrorMessage(error: unknown, fallback: string) {
   if (error instanceof FirebaseError) {
-    return error.message
-      ? `${fallback}: ${error.message} (${error.code})`
-      : `${fallback} (${error.code})`;
+    const cleanMessage = error.message
+      .replace(/^Firebase:\s*/i, "")
+      .replace(/\s*\((?:functions|auth|storage|firestore)\/[^)]+\)\.?/gi, "")
+      .trim();
+    return cleanMessage ? `${fallback}: ${cleanMessage}` : fallback;
   }
 
   if (error instanceof Error && error.message) {
@@ -621,6 +623,9 @@ export function App() {
   const [bookDeleteProgress, setBookDeleteProgress] = useState<Record<string, { label: string; progress: number }>>({});
   const [confirmDeleteBookId, setConfirmDeleteBookId] = useState("");
   const [deleteConversationBusyId, setDeleteConversationBusyId] = useState("");
+  const [deleteAllHistoryConfirmOpen, setDeleteAllHistoryConfirmOpen] = useState(false);
+  const [deleteAllHistoryText, setDeleteAllHistoryText] = useState("");
+  const [deleteAllHistoryBusy, setDeleteAllHistoryBusy] = useState(false);
   const [lastUploadedBookId, setLastUploadedBookId] = useState("");
   const [uploadTrackingBookId, setUploadTrackingBookId] = useState("");
   const [workspaceTab, setWorkspaceTab] = useState<WorkspaceTab>("ask");
@@ -1757,6 +1762,27 @@ export function App() {
       setAskMessage(getErrorMessage(error, "Delete failed"));
     } finally {
       setDeleteConversationBusyId("");
+    }
+  }
+
+  async function deleteAllHistory() {
+    setDeleteAllHistoryBusy(true);
+    setAskMessage("");
+
+    try {
+      const deleteAllConversations = httpsCallable<
+        { confirmation: string },
+        { ok: boolean }
+      >(functions, "deleteAllConversations");
+      await deleteAllConversations(withSession({ confirmation: deleteAllHistoryText }));
+      setDeleteAllHistoryConfirmOpen(false);
+      setDeleteAllHistoryText("");
+      setConversationDetail(null);
+      setAskMessage(t.historyDeleted);
+    } catch (error) {
+      setAskMessage(getErrorMessage(error, "Delete failed"));
+    } finally {
+      setDeleteAllHistoryBusy(false);
     }
   }
 
@@ -4120,10 +4146,54 @@ export function App() {
             {workspaceTab === "history" ? (
               <div className="workspace-tab-panel">
             <section className="history-panel">
-              <div>
-                <h3>{t.historyTitle}</h3>
-                <p>{t.historyCopy}</p>
+              <div className="history-header">
+                <div>
+                  <h3>{t.historyTitle}</h3>
+                  <p>{t.historyCopy}</p>
+                </div>
+                {conversations.length > 0 ? (
+                  <button
+                    className="button compact danger"
+                    type="button"
+                    onClick={() => setDeleteAllHistoryConfirmOpen(true)}
+                  >
+                    {t.deleteAllHistory}
+                  </button>
+                ) : null}
               </div>
+              {deleteAllHistoryConfirmOpen ? (
+                <div className="danger-confirm-panel">
+                  <p>{t.deleteAllHistoryCopy}</p>
+                  <label htmlFor="delete-all-history-confirm">{t.deleteAllHistoryPrompt}</label>
+                  <input
+                    id="delete-all-history-confirm"
+                    value={deleteAllHistoryText}
+                    onChange={(event) => setDeleteAllHistoryText(event.target.value)}
+                    placeholder={t.deleteAllHistoryPhrase}
+                  />
+                  <div className="inline-actions">
+                    <button
+                      className="button danger"
+                      type="button"
+                      disabled={deleteAllHistoryBusy || deleteAllHistoryText !== t.deleteAllHistoryPhrase}
+                      onClick={() => void deleteAllHistory()}
+                    >
+                      {deleteAllHistoryBusy ? t.deletingHistory : t.deleteAllHistory}
+                    </button>
+                    <button
+                      className="button secondary"
+                      type="button"
+                      disabled={deleteAllHistoryBusy}
+                      onClick={() => {
+                        setDeleteAllHistoryConfirmOpen(false);
+                        setDeleteAllHistoryText("");
+                      }}
+                    >
+                      {t.cancel}
+                    </button>
+                  </div>
+                </div>
+              ) : null}
               {!conversationsReady ? (
                 <p>Loading...</p>
               ) : conversations.length === 0 ? (

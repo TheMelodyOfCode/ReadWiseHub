@@ -793,6 +793,46 @@ select {
   flex-wrap: wrap;
 }
 
+.history-header {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  justify-content: space-between;
+  flex-wrap: wrap;
+}
+
+.history-header h3,
+.history-header p {
+  margin-top: 0;
+}
+
+.danger-confirm-panel {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid color-mix(in srgb, var(--danger) 48%, var(--border));
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--danger) 7%, transparent);
+}
+
+.danger-confirm-panel p {
+  margin: 0;
+}
+
+.danger-confirm-panel label {
+  display: grid;
+  gap: 8px;
+  color: var(--muted);
+  font-weight: 800;
+}
+
+.inline-actions {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
 .answer-box p {
   margin: 0;
   white-space: pre-line;
