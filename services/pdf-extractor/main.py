@@ -173,6 +173,78 @@ def render_pdf_pages(
     return pages
 
 
+def section_for_page(sections: list[dict[str, Any]], page_number: int) -> int:
+    for section in sections:
+        start = int(section.get("pageStart") or 0)
+        end = int(section.get("pageEnd") or start)
+        if start <= page_number <= end:
+            return int(section.get("sectionIndex") or 0)
+    return 0
+
+
+def extract_inline_media(
+    document: fitz.Document,
+    bucket_name: str,
+    output_prefix: str,
+    render_dpi: int,
+    sections: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    if not output_prefix:
+        return []
+
+    safe_dpi = min(max(render_dpi, 96), 180)
+    bucket = storage_client.bucket(bucket_name)
+    media: list[dict[str, Any]] = []
+
+    for page_index, page in enumerate(document):
+        page_number = page_index + 1
+        page_area = float(page.rect.width * page.rect.height)
+        page_dict = page.get_text("dict", sort=True)
+        media_on_page = 0
+
+        for block in page_dict.get("blocks", []):
+            if block.get("type") != 1:
+                continue
+
+            bbox = block.get("bbox", [0, 0, 0, 0])
+            rect = fitz.Rect(float(bbox[0]), float(bbox[1]), float(bbox[2]), float(bbox[3]))
+            if rect.is_empty or rect.width < 48 or rect.height < 48:
+                continue
+            if page_area > 0 and rect.get_area() / page_area < 0.01:
+                continue
+
+            media_on_page += 1
+            storage_path = (
+                f"{output_prefix.rstrip('/')}/inline/"
+                f"page-{page_number:04d}-image-{media_on_page:02d}.jpg"
+            )
+            pix = page.get_pixmap(dpi=safe_dpi, colorspace=fitz.csRGB, alpha=False, clip=rect)
+            image_bytes = pix.tobytes("jpg")
+            blob = bucket.blob(storage_path)
+            blob.upload_from_string(image_bytes, content_type="image/jpeg")
+            media.append(
+                {
+                    "pageNumber": page_number,
+                    "sectionIndex": section_for_page(sections, page_number),
+                    "mediaIndex": media_on_page,
+                    "kind": "image",
+                    "storagePath": storage_path,
+                    "width": pix.width,
+                    "height": pix.height,
+                    "contentType": "image/jpeg",
+                    "sizeBytes": len(image_bytes),
+                    "renderDpi": safe_dpi,
+                    "bbox": [rect.x0, rect.y0, rect.x1, rect.y1],
+                    "confidence": "image_block",
+                }
+            )
+
+            if media_on_page >= 8:
+                break
+
+    return media[:500]
+
+
 @app.post("/extract")
 def extract_pdf(request: ExtractRequest) -> dict[str, Any]:
     blob = storage_client.bucket(request.bucket).blob(request.storagePath)
@@ -239,6 +311,17 @@ def extract_pdf(request: ExtractRequest) -> dict[str, Any]:
             if request.renderPages
             else []
         )
+        inline_media = (
+            extract_inline_media(
+                document,
+                request.bucket,
+                request.outputPrefix,
+                request.renderDpi,
+                sections,
+            )
+            if request.renderPages
+            else []
+        )
 
         return {
             "ok": True,
@@ -248,6 +331,7 @@ def extract_pdf(request: ExtractRequest) -> dict[str, Any]:
             "outline": outline,
             "quality": "layout",
             "renderedPages": rendered_pages,
+            "inlineMedia": inline_media,
         }
     finally:
         document.close()

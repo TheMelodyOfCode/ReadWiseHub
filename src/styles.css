@@ -1716,6 +1716,53 @@ select {
   padding: 8px 10px;
 }
 
+.reader-paragraph-group {
+  display: grid;
+  gap: 14px;
+}
+
+.reader-inline-media {
+  display: grid;
+  gap: 10px;
+  margin: 8px 0 18px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--surface-strong) 78%, transparent);
+}
+
+.reader-inline-media img {
+  display: block;
+  width: min(100%, 720px);
+  height: auto;
+  max-height: 72vh;
+  object-fit: contain;
+  margin: 0 auto;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: #fff;
+}
+
+.reader-inline-media-placeholder {
+  display: grid;
+  min-height: 140px;
+  place-items: center;
+  border: 1px dashed var(--border);
+  border-radius: 6px;
+  color: var(--muted);
+}
+
+.reader-inline-media figcaption {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  color: var(--muted);
+  font-size: 0.9rem;
+  font-weight: 800;
+}
+
 .reader-paragraph p,
 .book-page > p {
   margin: 0;

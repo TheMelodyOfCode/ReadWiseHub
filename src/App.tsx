@@ -102,6 +102,8 @@ type ReaderChunk = {
   id: string;
   chunkIndex: number;
   text: string;
+  pageStart?: number;
+  pageEnd?: number;
 };
 
 type ReaderParagraph = {
@@ -136,6 +138,19 @@ type ReaderOriginalPage = {
   width: number;
   height: number;
   contentType: string;
+};
+
+type ReaderInlineMedia = {
+  id: string;
+  pageNumber: number;
+  sectionIndex: number;
+  mediaIndex: number;
+  kind: string;
+  storagePath: string;
+  width: number;
+  height: number;
+  contentType: string;
+  bbox: number[];
 };
 
 type ReaderMode = "text" | "original";
@@ -704,6 +719,8 @@ export function App() {
   const [readerOriginalPage, setReaderOriginalPage] = useState<ReaderOriginalPage | null>(null);
   const [readerOriginalPageCount, setReaderOriginalPageCount] = useState(0);
   const [readerOriginalPageUrl, setReaderOriginalPageUrl] = useState("");
+  const [readerInlineMedia, setReaderInlineMedia] = useState<ReaderInlineMedia[]>([]);
+  const [readerInlineMediaUrls, setReaderInlineMediaUrls] = useState<Record<string, string>>({});
   const [readerMode, setReaderMode] = useState<ReaderMode>("text");
   const [readerBusy, setReaderBusy] = useState(false);
   const [readerMessage, setReaderMessage] = useState("");
@@ -751,6 +768,7 @@ export function App() {
   const [articleCurrentDraft, setArticleCurrentDraft] = useState<ArticleDraftRecord | null>(null);
   const [articleCurrentVersion, setArticleCurrentVersion] =
     useState<ArticleVersionRecord | null>(null);
+  const [adminAccess, setAdminAccess] = useState(false);
   const [adminDashboard, setAdminDashboard] = useState<AdminDashboardPayload | null>(null);
   const [adminConversations, setAdminConversations] = useState<AdminConversationSummary[]>([]);
   const [adminConversationDebug, setAdminConversationDebug] =
@@ -1127,6 +1145,21 @@ export function App() {
 
   useEffect(() => {
     if (!user) {
+      setAdminAccess(false);
+      return;
+    }
+
+    const getCapabilities = httpsCallable<
+      Record<string, never>,
+      { ok: boolean; admin: boolean }
+    >(functions, "getUserCapabilities");
+    getCapabilities({})
+      .then((response) => setAdminAccess(response.data.admin === true))
+      .catch(() => setAdminAccess(false));
+  }, [user]);
+
+  useEffect(() => {
+    if (!user) {
       return;
     }
 
@@ -1302,6 +1335,37 @@ export function App() {
       cancelled = true;
     };
   }, [readerOriginalPage?.storagePath]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setReaderInlineMediaUrls({});
+
+    const mediaWithPaths = readerInlineMedia.filter((media) => media.storagePath);
+    if (mediaWithPaths.length === 0) {
+      return;
+    }
+
+    Promise.all(
+      mediaWithPaths.map(async (media) => {
+        const url = await getDownloadURL(ref(storage, media.storagePath));
+        return [media.id, url] as const;
+      })
+    )
+      .then((entries) => {
+        if (!cancelled) {
+          setReaderInlineMediaUrls(Object.fromEntries(entries));
+        }
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          setReaderMessage(getErrorMessage(error, "Inline image failed"));
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [readerInlineMedia]);
 
   useEffect(() => {
     if (!readerBook || activeReaderPageCount <= 0 || readerPage < activeReaderPageCount) {
@@ -1986,10 +2050,8 @@ export function App() {
     }
   }
 
-  async function createArticleDraft(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const trimmedPrompt = articlePrompt.trim();
-    const bookId = articleReadyBookId;
+  async function writeArticleDraftFromPrompt(prompt: string, bookId: string) {
+    const trimmedPrompt = prompt.trim();
     if (!trimmedPrompt || !bookId || articleBusy) {
       return;
     }
@@ -2026,6 +2088,60 @@ export function App() {
     } finally {
       window.clearInterval(progressTimer);
       setArticleBusy(false);
+    }
+  }
+
+  async function createArticleDraft(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    await writeArticleDraftFromPrompt(articlePrompt, articleReadyBookId);
+  }
+
+  function writeArticleFromCurrentAnswer() {
+    const bookId = selectedBookScope || askSources[0]?.bookId || defaultSuggestionBook?.id || "";
+    const prompt =
+      askAnswer && askQuestion
+        ? `${t.articleFromAnswerPrompt}\n\n${askQuestion}\n\n${askAnswer.slice(0, 1200)}`
+        : t.articlePromptPlaceholder;
+
+    setArticleBookId(bookId);
+    setArticlePrompt(prompt);
+    setWorkspaceTab("articles");
+    window.requestAnimationFrame(() => {
+      document.getElementById("library")?.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+    if (bookId && articleStudioVisible) {
+      void writeArticleDraftFromPrompt(prompt, bookId);
+    }
+  }
+
+  function writeArticleFromReaderSelection() {
+    const prompt = readerSelection
+      ? `${t.articleFromPassagePrompt}\n\n${readerSelection.text}`
+      : t.articlePromptPlaceholder;
+    setArticleBookId(readerBookId);
+    setArticlePrompt(prompt);
+    setWorkspaceTab("articles");
+    window.requestAnimationFrame(() => {
+      document.getElementById("library")?.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+    if (readerBookId && articleStudioVisible) {
+      void writeArticleDraftFromPrompt(prompt, readerBookId);
+    }
+  }
+
+  function writeArticleFromSectionMap(artifact: BookArtifact) {
+    const sectionList = artifact.sections
+      .map((section) => `${section.sectionNumber}. ${section.title}: ${section.summary}`)
+      .join("\n");
+    const prompt = `${t.articleFromMapPrompt}\n\n${artifact.title}\n${sectionList}`.slice(0, 1800);
+    setArticleBookId(artifact.bookId);
+    setArticlePrompt(prompt);
+    setWorkspaceTab("articles");
+    window.requestAnimationFrame(() => {
+      document.getElementById("library")?.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+    if (artifact.bookId && articleStudioVisible) {
+      void writeArticleDraftFromPrompt(prompt, artifact.bookId);
     }
   }
 
@@ -2317,6 +2433,8 @@ export function App() {
     setReaderChunks([]);
     setReaderOriginalPage(null);
     setReaderOriginalPageUrl("");
+    setReaderInlineMedia([]);
+    setReaderInlineMediaUrls({});
     setReaderSelection(null);
     setReaderAskAnswer("");
     setReaderAskMode("");
@@ -2332,6 +2450,7 @@ export function App() {
         {
           ok: boolean;
           chunks: ReaderChunk[];
+          inlineMedia: ReaderInlineMedia[];
           totalChunks: number;
           originalPage: ReaderOriginalPage | null;
           totalPageImages: number;
@@ -2343,6 +2462,7 @@ export function App() {
         pageSize: readerPageSize,
       }));
       setReaderChunks(response.data.chunks ?? []);
+      setReaderInlineMedia(response.data.inlineMedia ?? []);
       setReaderTotalChunks(response.data.totalChunks ?? 0);
       setReaderOriginalPage(response.data.originalPage ?? null);
       setReaderOriginalPageCount(response.data.totalPageImages ?? 0);
@@ -2655,6 +2775,8 @@ export function App() {
     setReaderOriginalPage(null);
     setReaderOriginalPageCount(0);
     setReaderOriginalPageUrl("");
+    setReaderInlineMedia([]);
+    setReaderInlineMediaUrls({});
     setReaderMode("text");
     setReaderBookmarkMenuOpen(false);
     setReaderBookPickerOpen(false);
@@ -3707,6 +3829,11 @@ export function App() {
                     {t.tabArticles}
                   </a>
                 ) : null}
+                {adminAccess ? (
+                  <a href="/admin" onClick={closeMenu}>
+                    {t.adminSwitch}
+                  </a>
+                ) : null}
                 <a href="#account" onClick={closeMenu}>
                   {t.navAccount}
                 </a>
@@ -4219,6 +4346,16 @@ export function App() {
                               >
                                 Delete map
                               </button>
+                              {articleStudioVisible ? (
+                                <button
+                                  className="button secondary compact"
+                                  type="button"
+                                  disabled={articleBusy}
+                                  onClick={() => writeArticleFromSectionMap(artifact)}
+                                >
+                                  {articleBusy ? t.articleWriting : t.articleFromThis}
+                                </button>
+                              ) : null}
                               <ol>
                                 {artifact.sections.map((section) => (
                                   <li key={section.sectionNumber}>
@@ -4542,6 +4679,16 @@ export function App() {
                           >
                             {readerAskBusy ? t.asking : t.askAboutSelection}
                           </button>
+                          {articleStudioVisible ? (
+                            <button
+                              className="button secondary compact"
+                              type="button"
+                              disabled={!emailVerified || articleBusy}
+                              onClick={writeArticleFromReaderSelection}
+                            >
+                              {articleBusy ? t.articleWriting : t.articleFromThis}
+                            </button>
+                          ) : null}
                         </div>
                       ) : null}
                       {readerAskAnswer || readerAskBusy ? (
@@ -4652,24 +4799,61 @@ export function App() {
                                 (highlight) =>
                                   paragraph.text.toLowerCase().includes(highlight.text.toLowerCase())
                               );
+                              const paragraphMedia = readerInlineMedia.filter((media) =>
+                                paragraph.chunkIndexes.includes(media.sectionIndex)
+                              );
 
                               return (
-                                <article
-                                  key={paragraph.id}
-                                  id={`reader-passage-${paragraph.id}`}
-                                  className="reader-paragraph"
-                                >
-                                  <p>
-                                    {getHighlightedParts(paragraph.text, paragraphHighlights.map((highlight) => highlight.text)).map(
-                                      (part, index) =>
-                                        part.highlighted ? (
-                                          <mark key={index}>{part.text}</mark>
+                                <div key={paragraph.id} className="reader-paragraph-group">
+                                  <article
+                                    id={`reader-passage-${paragraph.id}`}
+                                    className="reader-paragraph"
+                                  >
+                                    <p>
+                                      {getHighlightedParts(paragraph.text, paragraphHighlights.map((highlight) => highlight.text)).map(
+                                        (part, index) =>
+                                          part.highlighted ? (
+                                            <mark key={index}>{part.text}</mark>
+                                          ) : (
+                                            <span key={index}>{part.text}</span>
+                                          )
+                                      )}
+                                    </p>
+                                  </article>
+                                  {paragraphMedia.map((media) => {
+                                    const mediaUrl = readerInlineMediaUrls[media.id];
+                                    return (
+                                      <figure className="reader-inline-media" key={media.id}>
+                                        {mediaUrl ? (
+                                          <img
+                                            src={mediaUrl}
+                                            alt={`${t.readerImageAlt} ${t.page} ${media.pageNumber}`}
+                                            loading="lazy"
+                                            width={media.width || undefined}
+                                            height={media.height || undefined}
+                                          />
                                         ) : (
-                                          <span key={index}>{part.text}</span>
-                                        )
-                                    )}
-                                  </p>
-                                </article>
+                                          <div className="reader-inline-media-placeholder">
+                                            {t.loadingOriginalPage}
+                                          </div>
+                                        )}
+                                        <figcaption>
+                                          <span>{t.readerImageCaption} {media.pageNumber}</span>
+                                          <button
+                                            className="button secondary compact"
+                                            type="button"
+                                            onClick={() => {
+                                              setReaderMode("original");
+                                              goToReaderPage(Math.max(0, media.pageNumber - 1));
+                                            }}
+                                          >
+                                            {t.openOriginalPage}
+                                          </button>
+                                        </figcaption>
+                                      </figure>
+                                    );
+                                  })}
+                                </div>
                               );
                             })}
                           </>
@@ -4845,6 +5029,18 @@ export function App() {
                   </div>
                   <p>{askAnswer}</p>
                   {renderSuggestionChips(t.followUpTitle, answerFollowUpSuggestions, "ask")}
+                  {articleStudioVisible ? (
+                    <div className="inline-actions">
+                      <button
+                        className="button secondary compact"
+                        type="button"
+                        disabled={articleBusy}
+                        onClick={writeArticleFromCurrentAnswer}
+                      >
+                        {articleBusy ? t.articleWriting : t.articleFromThis}
+                      </button>
+                    </div>
+                  ) : null}
                   {askSources.length > 0 ? (
                     <div className="source-pills">
                       {askSources.slice(0, 3).map((source) => (

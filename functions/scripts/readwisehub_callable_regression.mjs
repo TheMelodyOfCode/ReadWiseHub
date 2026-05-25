@@ -117,11 +117,13 @@ async function clearBook(bookId) {
   const chunks = await db.collection("bookChunks").where("bookId", "==", bookId).get();
   const sections = await db.collection("bookSections").where("bookId", "==", bookId).get();
   const pages = await db.collection("bookPages").where("bookId", "==", bookId).get();
+  const inlineMedia = await db.collection("bookInlineMedia").where("bookId", "==", bookId).get();
   const jobs = await db.collection("ingestionJobs").where("bookId", "==", bookId).get();
   const batch = db.batch();
   chunks.docs.forEach((doc) => batch.delete(doc.ref));
   sections.docs.forEach((doc) => batch.delete(doc.ref));
   pages.docs.forEach((doc) => batch.delete(doc.ref));
+  inlineMedia.docs.forEach((doc) => batch.delete(doc.ref));
   jobs.docs.forEach((doc) => batch.delete(doc.ref));
   batch.delete(db.collection("books").doc(bookId));
   await batch.commit();
@@ -359,6 +361,23 @@ async function seedBook(bookId, title) {
         contentType: "image/jpeg",
         sizeBytes: 12345,
         renderDpi: 144,
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+      batch.set(db.collection("bookInlineMedia").doc(`${bookId}_0001_01`), {
+        userId: uid,
+        bookId,
+        pageNumber: 1,
+        sectionIndex: 0,
+        mediaIndex: 1,
+        kind: "image",
+        storagePath: `userDerived/${uid}/${bookId}/pages/inline/page-0001-image-01.jpg`,
+        width: 640,
+        height: 360,
+        contentType: "image/jpeg",
+        sizeBytes: 23456,
+        renderDpi: 144,
+        bbox: [80, 120, 420, 320],
+        confidence: "regression",
         createdAt: admin.firestore.FieldValue.serverTimestamp(),
       });
     }
@@ -687,6 +706,14 @@ async function run() {
     bookReader.originalPage?.storagePath === `userDerived/${uid}/${primaryBookId}/pages/page-0001.jpg`,
     "getBookReader did not return owner-scoped original page metadata."
   );
+  check(
+    bookReader.inlineMedia?.some(
+      (media) =>
+        media.storagePath ===
+        `userDerived/${uid}/${primaryBookId}/pages/inline/page-0001-image-01.jpg`
+    ),
+    "getBookReader did not return owner-scoped inline media metadata."
+  );
 
   const sectionMap = await callFunction(
     "generateBookSectionMap",
@@ -998,6 +1025,10 @@ async function run() {
   const deletedChunks = await db.collection("bookChunks").where("bookId", "==", primaryBookId).get();
   const deletedSections = await db.collection("bookSections").where("bookId", "==", primaryBookId).get();
   const deletedPages = await db.collection("bookPages").where("bookId", "==", primaryBookId).get();
+  const deletedInlineMedia = await db
+    .collection("bookInlineMedia")
+    .where("bookId", "==", primaryBookId)
+    .get();
   const deletedArtifacts = await db.collection("bookArtifacts").where("bookId", "==", primaryBookId).get();
   const deletedArticleDrafts = await db
     .collection("articleDrafts")
@@ -1017,6 +1048,7 @@ async function run() {
   check(deletedChunks.empty, "deleteBook left chunk documents behind.");
   check(deletedSections.empty, "deleteBook left section documents behind.");
   check(deletedPages.empty, "deleteBook left page documents behind.");
+  check(deletedInlineMedia.empty, "deleteBook left inline media documents behind.");
   check(deletedArtifacts.empty, "deleteBook left generated artifacts behind.");
   check(deletedArticleDrafts.empty, "deleteBook left article drafts behind.");
   check(deletedArticleVersions.empty, "deleteBook left article versions behind.");
@@ -1043,6 +1075,7 @@ async function run() {
   const remainingChunks = await db.collection("bookChunks").where("userId", "==", uid).get();
   const remainingSections = await db.collection("bookSections").where("userId", "==", uid).get();
   const remainingPages = await db.collection("bookPages").where("userId", "==", uid).get();
+  const remainingInlineMedia = await db.collection("bookInlineMedia").where("userId", "==", uid).get();
   const remainingArtifacts = await db.collection("bookArtifacts").where("userId", "==", uid).get();
   const remainingArticleDrafts = await db.collection("articleDrafts").where("userId", "==", uid).get();
   const remainingArticleVersions = await db.collection("articleVersions").where("userId", "==", uid).get();
@@ -1059,6 +1092,7 @@ async function run() {
   check(remainingChunks.empty, "deleteAccountData left chunks behind.");
   check(remainingSections.empty, "deleteAccountData left sections behind.");
   check(remainingPages.empty, "deleteAccountData left page documents behind.");
+  check(remainingInlineMedia.empty, "deleteAccountData left inline media documents behind.");
   check(remainingArtifacts.empty, "deleteAccountData left generated artifacts behind.");
   check(remainingArticleDrafts.empty, "deleteAccountData left article drafts behind.");
   check(remainingArticleVersions.empty, "deleteAccountData left article versions behind.");
