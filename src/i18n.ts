@@ -42,6 +42,7 @@ export const dictionaries: Record<Locale, Dictionary> = {
     tabAsk: "Ask",
     tabLibrary: "Library",
     tabRead: "Read",
+    tabArticles: "Articles",
     tabHistory: "History",
     tabHelp: "Help",
     libraryTitle: "Library",
@@ -302,6 +303,20 @@ export const dictionaries: Record<Locale, Dictionary> = {
     historyTipTitle: "Questions about parts of a book",
     historyTipCopy:
       "You can ask about sections, halves, or the final quarter. If no saved map exists, ReadWiseHub will use the extracted book order as a fallback.",
+    articleBetaEyebrow: "Closed beta",
+    articleTitle: "Article Studio",
+    articleCopy:
+      "Draft a source-based article from one book. This test feature only writes from passages ReadWiseHub can find in your library.",
+    articleUsedThisMonth: "article drafts this month",
+    articleBookLabel: "Source book",
+    articlePromptLabel: "Article request",
+    articlePromptPlaceholder: "Write a thoughtful short article about the main warning in this book.",
+    articleWriteButton: "Write article",
+    articleWriting: "Writing with your sources...",
+    articleReady: "Article draft ready.",
+    articleDraftBadge: "Draft",
+    articleRecentTitle: "Recent drafts",
+    articleNoDrafts: "No article drafts yet.",
   },
   de: {
     brandTagline: "Mit deinen Büchern im Dialog.",
@@ -342,6 +357,7 @@ export const dictionaries: Record<Locale, Dictionary> = {
     tabAsk: "Fragen",
     tabLibrary: "Bibliothek",
     tabRead: "Lesen",
+    tabArticles: "Artikel",
     tabHistory: "Verlauf",
     tabHelp: "Hilfe",
     libraryTitle: "Bibliothek",
@@ -602,6 +618,20 @@ export const dictionaries: Record<Locale, Dictionary> = {
     historyTipTitle: "Fragen zu Buchteilen",
     historyTipCopy:
       "Du kannst nach Abschnitten, Hälften oder dem letzten Viertel fragen. Wenn keine gespeicherte Karte existiert, nutzt ReadWiseHub die extrahierte Buchreihenfolge als Fallback.",
+    articleBetaEyebrow: "Geschlossene Beta",
+    articleTitle: "Artikel Studio",
+    articleCopy:
+      "Schreibe einen quellennahen Artikel aus einem Buch. Diese Testfunktion nutzt nur Stellen, die ReadWiseHub in deiner Bibliothek findet.",
+    articleUsedThisMonth: "Artikelentwürfe diesen Monat",
+    articleBookLabel: "Quellbuch",
+    articlePromptLabel: "Artikelwunsch",
+    articlePromptPlaceholder: "Schreibe einen kurzen, durchdachten Artikel über die wichtigste Warnung in diesem Buch.",
+    articleWriteButton: "Artikel schreiben",
+    articleWriting: "Schreibt mit deinen Quellen...",
+    articleReady: "Artikelentwurf bereit.",
+    articleDraftBadge: "Entwurf",
+    articleRecentTitle: "Letzte Entwürfe",
+    articleNoDrafts: "Noch keine Artikelentwürfe.",
   },
 };
 

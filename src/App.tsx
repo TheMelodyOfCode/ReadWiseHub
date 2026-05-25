@@ -30,7 +30,7 @@ import readWiseHubIcon from "./assets/readwisehub-icon.png";
 import { UAParser } from "ua-parser-js";
 
 type Theme = "light" | "dark";
-type WorkspaceTab = "ask" | "library" | "read" | "history" | "help";
+type WorkspaceTab = "ask" | "library" | "read" | "articles" | "history" | "help";
 const DELETE_CONFIRMATION_PHRASE = "ReadWiseHub 2026";
 
 type BookRecord = {
@@ -196,6 +196,36 @@ type AskLibraryResponse = {
   results: LibrarySearchResult[];
 };
 
+type ArticleSource = LibrarySearchResult & {
+  sourceNumber: number;
+};
+
+type ArticleDraftRecord = {
+  id: string;
+  bookId: string;
+  bookTitle: string;
+  title: string;
+  prompt: string;
+  status: string;
+  latestVersionId: string;
+  createdAt?: string;
+  updatedAt?: string;
+};
+
+type ArticleVersionRecord = {
+  id: string;
+  title: string;
+  body: string;
+  versionNumber: number;
+  sources: ArticleSource[];
+};
+
+type ArticleDraftResponse = {
+  ok: boolean;
+  draft: ArticleDraftRecord;
+  version: ArticleVersionRecord;
+};
+
 type SuggestionChip = {
   label: string;
   question: string;
@@ -243,8 +273,10 @@ type AccountSession = {
 };
 
 type UserUsage = {
+  plan: string;
   messages: number;
   monthlyMessages: number;
+  articleGenerations: number;
   books: number;
   maxBooks: number;
   storageBytes: number;
@@ -701,13 +733,24 @@ export function App() {
   const [accountSessions, setAccountSessions] = useState<AccountSession[]>([]);
   const [securityMessage, setSecurityMessage] = useState("");
   const [usage, setUsage] = useState<UserUsage>({
+    plan: "free",
     messages: 0,
     monthlyMessages: 20,
+    articleGenerations: 0,
     books: 0,
     maxBooks: 2,
     storageBytes: 0,
     maxStorageBytes: 20 * 1024 * 1024,
   });
+  const [articleBookId, setArticleBookId] = useState("");
+  const [articlePrompt, setArticlePrompt] = useState("");
+  const [articleBusy, setArticleBusy] = useState(false);
+  const [articleProgress, setArticleProgress] = useState(0);
+  const [articleMessage, setArticleMessage] = useState("");
+  const [articleDrafts, setArticleDrafts] = useState<ArticleDraftRecord[]>([]);
+  const [articleCurrentDraft, setArticleCurrentDraft] = useState<ArticleDraftRecord | null>(null);
+  const [articleCurrentVersion, setArticleCurrentVersion] =
+    useState<ArticleVersionRecord | null>(null);
   const [adminDashboard, setAdminDashboard] = useState<AdminDashboardPayload | null>(null);
   const [adminConversations, setAdminConversations] = useState<AdminConversationSummary[]>([]);
   const [adminConversationDebug, setAdminConversationDebug] =
@@ -727,6 +770,8 @@ export function App() {
     () => books.filter((book) => book.status === "text_ready"),
     [books]
   );
+  const articleStudioVisible = usage.plan === "plus" || usage.plan === "pro";
+  const articleReadyBookId = articleBookId || textReadyBooks[0]?.id || "";
   const activeBookIds = useMemo(() => new Set(books.map((book) => book.id)), [books]);
   const jobsByBookId = useMemo(() => {
     const jobs = new Map<string, IngestionJobRecord>();
@@ -1093,9 +1138,12 @@ export function App() {
         const limits = data?.limits ?? {};
 
         setUsage({
+          plan: typeof data?.plan === "string" ? data.plan : "free",
           messages: typeof current.messages === "number" ? current.messages : 0,
           monthlyMessages:
             typeof limits.monthlyMessages === "number" ? limits.monthlyMessages : 20,
+          articleGenerations:
+            typeof current.articleGenerations === "number" ? current.articleGenerations : 0,
           books:
             typeof current.books === "number"
               ? Math.max(current.books, books.length)
@@ -1174,6 +1222,12 @@ export function App() {
       }
     );
   }, [t.untitledQuestion, user]);
+
+  useEffect(() => {
+    if (workspaceTab === "articles") {
+      void loadArticleDrafts();
+    }
+  }, [workspaceTab, user, articleStudioVisible, emailVerified]);
 
   useEffect(() => {
     if (!user || !isAdminPath) {
@@ -1912,6 +1966,67 @@ export function App() {
     }
     setWorkspaceTab("ask");
     void submitAskQuestion(suggestion.question, suggestion.bookId || selectedBookScope);
+  }
+
+  async function loadArticleDrafts() {
+    if (!user || !articleStudioVisible || !emailVerified) {
+      setArticleDrafts([]);
+      return;
+    }
+
+    try {
+      const listArticleDrafts = httpsCallable<
+        { sessionId: string },
+        { ok: boolean; drafts: ArticleDraftRecord[] }
+      >(functions, "listArticleDrafts");
+      const response = await listArticleDrafts(withSession({}));
+      setArticleDrafts(response.data.drafts ?? []);
+    } catch (error) {
+      setArticleMessage(getErrorMessage(error, "Article drafts could not be loaded"));
+    }
+  }
+
+  async function createArticleDraft(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const trimmedPrompt = articlePrompt.trim();
+    const bookId = articleReadyBookId;
+    if (!trimmedPrompt || !bookId || articleBusy) {
+      return;
+    }
+    if (!requireVerifiedUi(setArticleMessage)) {
+      return;
+    }
+
+    setArticleBusy(true);
+    setArticleMessage("");
+    setArticleCurrentDraft(null);
+    setArticleCurrentVersion(null);
+    setArticleProgress(10);
+    const progressTimer = window.setInterval(() => {
+      setArticleProgress((progress) => Math.min(90, progress + (progress < 50 ? 10 : 5)));
+    }, 900);
+
+    try {
+      const createArticle = httpsCallable<
+        { bookId: string; prompt: string; locale: Locale },
+        ArticleDraftResponse
+      >(functions, "createArticleDraftTest");
+      const response = await createArticle(withSession({
+        bookId,
+        prompt: trimmedPrompt,
+        locale,
+      }));
+      setArticleCurrentDraft(response.data.draft);
+      setArticleCurrentVersion(response.data.version);
+      setArticleDrafts((current) => [response.data.draft, ...current.filter((draft) => draft.id !== response.data.draft.id)]);
+      setArticleMessage(t.articleReady);
+      setArticleProgress(100);
+    } catch (error) {
+      setArticleMessage(getErrorMessage(error, "Article writing failed"));
+    } finally {
+      window.clearInterval(progressTimer);
+      setArticleBusy(false);
+    }
   }
 
   function renderSuggestionChips(
@@ -3587,6 +3702,11 @@ export function App() {
                 <a href="#library" onClick={() => openMenuTab("read")}>
                   {t.tabRead}
                 </a>
+                {articleStudioVisible ? (
+                  <a href="#library" onClick={() => openMenuTab("articles")}>
+                    {t.tabArticles}
+                  </a>
+                ) : null}
                 <a href="#account" onClick={closeMenu}>
                   {t.navAccount}
                 </a>
@@ -3670,7 +3790,11 @@ export function App() {
             </div>
 
             <div className="workspace-tabs" aria-label={t.workspaceToolsTitle}>
-              {(["ask", "library", "read", "history", "help"] as WorkspaceTab[]).map((tab) => (
+              {(
+                articleStudioVisible
+                  ? (["ask", "library", "read", "articles", "history", "help"] as WorkspaceTab[])
+                  : (["ask", "library", "read", "history", "help"] as WorkspaceTab[])
+              ).map((tab) => (
                 <button
                   key={tab}
                   type="button"
@@ -3684,9 +3808,11 @@ export function App() {
                       ? t.tabLibrary
                       : tab === "read"
                         ? t.tabRead
-                        : tab === "history"
-                          ? t.tabHistory
-                          : t.tabHelp}
+                        : tab === "articles"
+                          ? t.tabArticles
+                          : tab === "history"
+                            ? t.tabHistory
+                            : t.tabHelp}
                 </button>
               ))}
             </div>
@@ -4731,6 +4857,115 @@ export function App() {
                 </div>
               ) : null}
             </form>
+              </div>
+            ) : null}
+
+            {workspaceTab === "articles" && articleStudioVisible ? (
+              <div className="workspace-tab-panel">
+                <section className="article-studio-panel">
+                  <div className="article-studio-heading">
+                    <div>
+                      <p className="eyebrow">{t.articleBetaEyebrow}</p>
+                      <h3>{t.articleTitle}</h3>
+                      <p>{t.articleCopy}</p>
+                    </div>
+                    <span>{usage.articleGenerations} {t.articleUsedThisMonth}</span>
+                  </div>
+                  <form className="article-studio-form" onSubmit={createArticleDraft}>
+                    <label>
+                      {t.articleBookLabel}
+                      <select
+                        value={articleReadyBookId}
+                        onChange={(event) => setArticleBookId(event.target.value)}
+                        disabled={articleBusy || textReadyBooks.length === 0}
+                      >
+                        {textReadyBooks.map((book) => (
+                          <option key={book.id} value={book.id}>
+                            {book.displayTitle}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label>
+                      {t.articlePromptLabel}
+                      <textarea
+                        value={articlePrompt}
+                        onChange={(event) => setArticlePrompt(event.target.value)}
+                        placeholder={t.articlePromptPlaceholder}
+                        disabled={articleBusy || textReadyBooks.length === 0}
+                        rows={4}
+                      />
+                    </label>
+                    <button
+                      className="button primary"
+                      type="submit"
+                      disabled={
+                        !emailVerified ||
+                        articleBusy ||
+                        textReadyBooks.length === 0 ||
+                        !articlePrompt.trim()
+                      }
+                    >
+                      {articleBusy ? t.articleWriting : t.articleWriteButton}
+                    </button>
+                    {articleBusy || articleProgress === 100 ? (
+                      <div className="task-progress" role="status" aria-live="polite">
+                        <div>
+                          <strong>{articleProgress === 100 ? t.articleReady : t.articleWriting}</strong>
+                          <span>{articleProgress}%</span>
+                        </div>
+                        <progress value={articleProgress} max="100" />
+                      </div>
+                    ) : null}
+                    {textReadyBooks.length === 0 ? (
+                      <p className="small-note">{t.searchNeedsText}</p>
+                    ) : null}
+                    {articleMessage ? (
+                      <p className={articleCurrentVersion ? "success-text" : "error-text"}>
+                        {articleMessage}
+                      </p>
+                    ) : null}
+                  </form>
+                  {articleCurrentDraft && articleCurrentVersion ? (
+                    <article className="article-output">
+                      <div className="answer-heading">
+                        <h4>{articleCurrentDraft.title}</h4>
+                        <span className="mode-badge">{t.articleDraftBadge}</span>
+                      </div>
+                      <p className="small-note">
+                        {articleCurrentDraft.bookTitle}
+                      </p>
+                      <pre>{articleCurrentVersion.body}</pre>
+                      {articleCurrentVersion.sources.length > 0 ? (
+                        <div className="search-results article-sources">
+                          <h4>{t.sourcePassagesTitle}</h4>
+                          {articleCurrentVersion.sources.slice(0, 5).map((source) => (
+                            <article key={`${source.bookId}-${source.chunkIndex}-${source.sourceNumber}`}>
+                              <h4>
+                                [{source.sourceNumber}] {source.bookTitle}
+                              </h4>
+                              <p>{source.excerpt}</p>
+                              <span>{getSourceLabel(source, t)}</span>
+                            </article>
+                          ))}
+                        </div>
+                      ) : null}
+                    </article>
+                  ) : null}
+                  <div className="article-draft-list">
+                    <h4>{t.articleRecentTitle}</h4>
+                    {articleDrafts.length === 0 ? (
+                      <p className="small-note">{t.articleNoDrafts}</p>
+                    ) : (
+                      articleDrafts.map((draft) => (
+                        <article key={draft.id}>
+                          <strong>{draft.title}</strong>
+                          <span>{draft.bookTitle}</span>
+                        </article>
+                      ))
+                    )}
+                  </div>
+                </section>
               </div>
             ) : null}
 

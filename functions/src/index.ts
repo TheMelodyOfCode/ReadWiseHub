@@ -77,6 +77,8 @@ const SECTION_SIZE = 1800;
 const MAX_EXTRACTED_TEXT_BYTES = 2_500_000;
 const MAX_SEARCH_QUERY_LENGTH = 240;
 const MAX_SEARCH_RESULTS = 5;
+const MAX_ARTICLE_PROMPT_LENGTH = 700;
+const ARTICLE_SOURCE_RESULTS = 8;
 const PINECONE_SEARCH_CANDIDATE_COUNT = 30;
 const MAX_ACTIVE_SESSIONS = 3;
 const DELETE_CONFIRMATION_PHRASE = "ReadWiseHub 2026";
@@ -986,6 +988,45 @@ function requirePineconeTestUser(auth: AuthContext) {
     throw new HttpsError(
       "permission-denied",
       "Pinecone prototype indexing is limited to configured test users."
+    );
+  }
+}
+
+function getArticleTestUserIds(): string[] {
+  return Array.from(
+    new Set([
+      ...parseUidAllowlist(process.env.ARTICLE_TEST_USER_IDS),
+      ...parseUidAllowlist(process.env.PINECONE_TEST_USER_IDS),
+      ...parseUidAllowlist(process.env.ADMIN_ALLOWED_UIDS),
+    ])
+  );
+}
+
+function getMonthlyArticleLimit(plan: UserPlan): number {
+  if (plan === "pro") {
+    return 100;
+  }
+
+  if (plan === "plus") {
+    return 20;
+  }
+
+  return 0;
+}
+
+function requireArticleStudioAccess(userId: string, plan: UserPlan) {
+  const allowedUserIds = getArticleTestUserIds();
+  if (allowedUserIds.length > 0 && !allowedUserIds.includes(userId)) {
+    throw new HttpsError(
+      "permission-denied",
+      "Article Studio is currently limited to configured test accounts."
+    );
+  }
+
+  if (getMonthlyArticleLimit(plan) <= 0) {
+    throw new HttpsError(
+      "permission-denied",
+      "Article Studio is available for Plus and Pro test accounts."
     );
   }
 }
@@ -2446,6 +2487,92 @@ async function createAiGroundedAnswer(
   return extractOpenAiText(payload) || null;
 }
 
+function buildArticleSourceContext(results: LibrarySearchResult[]) {
+  return results
+    .slice(0, ARTICLE_SOURCE_RESULTS)
+    .map(
+      (result, index) =>
+        `[${index + 1}] ${result.bookTitle}, ${
+          result.chunkIndex >= 0 ? `source passage ${result.chunkIndex + 1}` : "book outline"
+        }\n${result.excerpt}`
+    )
+    .join("\n\n");
+}
+
+function extractArticleTitle(text: string, fallbackTitle: string) {
+  const firstLine = text
+    .split("\n")
+    .map((line) => line.trim())
+    .find(Boolean);
+  const cleaned = (firstLine || fallbackTitle)
+    .replace(/^#+\s*/, "")
+    .replace(/^title:\s*/i, "")
+    .trim();
+  return cleaned.slice(0, 120) || fallbackTitle.slice(0, 120) || "Article draft";
+}
+
+async function createArticleDraftText(
+  promptText: string,
+  results: LibrarySearchResult[],
+  locale: string
+): Promise<string | null> {
+  const apiKey = getOpenAiApiKey();
+  if (!apiKey || results.length === 0) {
+    return null;
+  }
+
+  const systemInstruction =
+    locale === "de"
+      ? [
+          "Du bist ReadWiseHub Article Studio.",
+          "Schreibe einen klaren, angenehm lesbaren Artikel auf Deutsch.",
+          "Nutze ausschließlich die bereitgestellten Quellenstellen.",
+          "Erfinde keine Fakten, Beispiele, Zitate oder Buchinhalte.",
+          "Wenn die Quellen nicht ausreichen, erkläre knapp, was fehlt.",
+          "Beginne mit einem Titel, danach der Artikeltext.",
+          "Zitiere Quellen kurz mit [1], [2] usw., wenn eine konkrete Aussage aus einer Quelle stammt.",
+        ].join(" ")
+      : [
+          "You are ReadWiseHub Article Studio.",
+          "Write a clear, readable article in English.",
+          "Use only the provided source passages.",
+          "Do not invent facts, examples, quotes, or book content.",
+          "If the sources are insufficient, say what is missing briefly.",
+          "Start with a title, then the article body.",
+          "Cite sources briefly as [1], [2], and so on when a concrete claim comes from a source.",
+        ].join(" ");
+
+  const response = await fetch("https://api.openai.com/v1/responses", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      model: OPENAI_MODEL,
+      instructions: systemInstruction,
+      input: [
+        `Article request: ${promptText}`,
+        "",
+        "Source passages:",
+        buildArticleSourceContext(results),
+      ].join("\n"),
+      max_output_tokens: 1800,
+    }),
+  });
+
+  if (!response.ok) {
+    console.error("OpenAI article generation failed", {
+      status: response.status,
+      statusText: response.statusText,
+    });
+    return null;
+  }
+
+  const payload = await response.json();
+  return extractOpenAiText(payload) || null;
+}
+
 async function ensureUserProfile(auth: AuthContext) {
   const userRef = db.collection("users").doc(auth.uid);
   const snapshot = await userRef.get();
@@ -2874,6 +3001,69 @@ async function clearUserArtifacts(userId: string) {
   }
 }
 
+async function clearArticleDraftVersionsByDraftId(draftId: string) {
+  const snapshot = await db
+    .collection("articleVersions")
+    .where("draftId", "==", draftId)
+    .limit(100)
+    .get();
+
+  if (snapshot.empty) {
+    return;
+  }
+
+  const batch = db.batch();
+  snapshot.docs.forEach((docSnapshot) => batch.delete(docSnapshot.ref));
+  await batch.commit();
+
+  if (snapshot.size === 100) {
+    await clearArticleDraftVersionsByDraftId(draftId);
+  }
+}
+
+async function clearUserArticleDrafts(userId: string) {
+  const snapshot = await db
+    .collection("articleDrafts")
+    .where("userId", "==", userId)
+    .limit(100)
+    .get();
+
+  if (snapshot.empty) {
+    return;
+  }
+
+  for (const draftSnapshot of snapshot.docs) {
+    await clearArticleDraftVersionsByDraftId(draftSnapshot.id);
+    await draftSnapshot.ref.delete();
+  }
+
+  if (snapshot.size === 100) {
+    await clearUserArticleDrafts(userId);
+  }
+}
+
+async function clearBookArticleDrafts(userId: string, bookId: string) {
+  const snapshot = await db
+    .collection("articleDrafts")
+    .where("userId", "==", userId)
+    .where("bookId", "==", bookId)
+    .limit(100)
+    .get();
+
+  if (snapshot.empty) {
+    return;
+  }
+
+  for (const draftSnapshot of snapshot.docs) {
+    await clearArticleDraftVersionsByDraftId(draftSnapshot.id);
+    await draftSnapshot.ref.delete();
+  }
+
+  if (snapshot.size === 100) {
+    await clearBookArticleDrafts(userId, bookId);
+  }
+}
+
 async function clearUserBooks(userId: string) {
   const snapshot = await db
     .collection("books")
@@ -2896,6 +3086,7 @@ async function clearUserBooks(userId: string) {
     await clearBookPages(bookSnapshot.id);
     await clearIngestionJobs(bookSnapshot.id);
     await clearBookArtifacts(bookSnapshot.id);
+    await clearBookArticleDrafts(userId, bookSnapshot.id);
     await deleteStoragePrefix(`userDerived/${userId}/${bookSnapshot.id}/`);
     await bookSnapshot.ref.delete();
   }
@@ -3937,11 +4128,20 @@ export const exportAccountData = onCall(
 
     await ensureUserProfile(auth);
 
-    const [userSnapshot, booksSnapshot, conversationsSnapshot, artifactsSnapshot] = await Promise.all([
+    const [
+      userSnapshot,
+      booksSnapshot,
+      conversationsSnapshot,
+      artifactsSnapshot,
+      articleDraftsSnapshot,
+      articleVersionsSnapshot,
+    ] = await Promise.all([
       db.collection("users").doc(auth.uid).get(),
       db.collection("books").where("userId", "==", auth.uid).get(),
       db.collection("conversations").where("userId", "==", auth.uid).get(),
       db.collection("bookArtifacts").where("userId", "==", auth.uid).get(),
+      db.collection("articleDrafts").where("userId", "==", auth.uid).get(),
+      db.collection("articleVersions").where("userId", "==", auth.uid).get(),
     ]);
     const conversations = await Promise.all(
       conversationsSnapshot.docs.map(async (conversationSnapshot) => {
@@ -3968,6 +4168,14 @@ export const exportAccountData = onCall(
       artifacts: artifactsSnapshot.docs.map((artifactSnapshot) => ({
         id: artifactSnapshot.id,
         ...artifactSnapshot.data(),
+      })),
+      articleDrafts: articleDraftsSnapshot.docs.map((draftSnapshot) => ({
+        id: draftSnapshot.id,
+        ...draftSnapshot.data(),
+      })),
+      articleVersions: articleVersionsSnapshot.docs.map((versionSnapshot) => ({
+        id: versionSnapshot.id,
+        ...versionSnapshot.data(),
       })),
       conversations,
     };
@@ -4615,6 +4823,7 @@ export const deleteBook = onCall(
     await clearNestedBookSections(bookId);
     await clearIngestionJobs(bookId);
     await clearBookArtifacts(bookId);
+    await clearBookArticleDrafts(auth.uid, bookId);
     await deleteStoragePrefix(`userDerived/${auth.uid}/${bookId}/`);
     await db
       .collection("users")
@@ -5610,6 +5819,228 @@ export const askLibrary = onCall(
   }
 );
 
+export const createArticleDraftTest = onCall(
+  {
+    region: "us-central1",
+    timeoutSeconds: 120,
+    memory: "512MiB",
+    secrets: [openAiApiKey, pineconeApiKey],
+    invoker: "public",
+  },
+  async (request) => {
+    const auth = requireAuth(request.auth?.token
+      ? {
+          uid: request.auth.uid,
+          email: request.auth.token.email,
+          name: request.auth.token.name,
+          picture: request.auth.token.picture,
+      }
+      : undefined);
+    await requireActiveSession(auth, request.data?.sessionId);
+    await requireVerifiedEmail(auth);
+    await ensureUserProfile(auth);
+
+    const promptText = assertString(request.data?.prompt, "prompt").slice(0, MAX_ARTICLE_PROMPT_LENGTH);
+    const bookId = assertString(request.data?.bookId, "bookId");
+    const locale =
+      typeof request.data?.locale === "string" && request.data.locale === "de" ? "de" : "en";
+    const userRef = db.collection("users").doc(auth.uid);
+    const userSnapshot = await userRef.get();
+    const plan = normalizePlan(userSnapshot.get("plan"));
+    const monthlyArticleLimit = getMonthlyArticleLimit(plan);
+    requireArticleStudioAccess(auth.uid, plan);
+
+    const bookSnapshot = await db.collection("books").doc(bookId).get();
+    if (!bookSnapshot.exists || bookSnapshot.get("userId") !== auth.uid) {
+      throw new HttpsError("not-found", "Book was not found.");
+    }
+    if (bookSnapshot.get("status") !== "text_ready") {
+      throw new HttpsError("failed-precondition", "This book is not ready for article writing yet.");
+    }
+
+    const search = await runLibrarySearch(auth.uid, promptText, bookId);
+    const results = search.results.slice(0, ARTICLE_SOURCE_RESULTS);
+    if (results.length === 0) {
+      throw new HttpsError(
+        "failed-precondition",
+        "I could not find enough source passages in this book to draft an article."
+      );
+    }
+
+    const articleText = await createArticleDraftText(promptText, results, locale);
+    if (!articleText) {
+      throw new HttpsError(
+        "unavailable",
+        "Article writing is temporarily unavailable. Please try again later."
+      );
+    }
+
+    const bookTitle =
+      typeof bookSnapshot.get("displayTitle") === "string" && bookSnapshot.get("displayTitle")
+        ? bookSnapshot.get("displayTitle")
+        : assertString(bookSnapshot.get("title"), "title");
+    const title = extractArticleTitle(articleText, `${bookTitle} article`);
+    const now = FieldValue.serverTimestamp();
+    const scope = buildDefaultBookScope(auth.uid);
+    const draftRef = db.collection("articleDrafts").doc();
+    const versionRef = db.collection("articleVersions").doc();
+    const routeTraceRef = db.collection("routeTraces").doc();
+    const sourceSnapshots = results.map((result, index) => ({
+      sourceNumber: index + 1,
+      chunkId: result.chunkId || "",
+      bookId: result.bookId,
+      bookTitle: result.bookTitle,
+      chunkIndex: result.chunkIndex,
+      excerpt: result.excerpt,
+      score: result.score,
+    }));
+
+    await db.runTransaction(async (transaction) => {
+      const latestUserSnapshot = await transaction.get(userRef);
+      const latestPlan = normalizePlan(latestUserSnapshot.get("plan"));
+      const latestMonthlyArticleLimit = getMonthlyArticleLimit(latestPlan);
+      requireArticleStudioAccess(auth.uid, latestPlan);
+      const currentArticleGenerations =
+        Number(latestUserSnapshot.get("usageCurrentPeriod.articleGenerations")) || 0;
+
+      if (currentArticleGenerations >= latestMonthlyArticleLimit) {
+        throw new HttpsError(
+          "resource-exhausted",
+          "Your current plan article limit has been reached."
+        );
+      }
+
+      transaction.set(draftRef, {
+        userId: auth.uid,
+        tenantId: scope.tenantId,
+        workspaceId: scope.workspaceId,
+        libraryId: scope.libraryId,
+        bookId,
+        bookTitle,
+        title,
+        prompt: promptText,
+        status: "draft",
+        locale,
+        sourceCount: sourceSnapshots.length,
+        latestVersionId: versionRef.id,
+        versionCount: 1,
+        articleMode: "closed_beta",
+        createdAt: now,
+        updatedAt: now,
+      });
+      transaction.set(versionRef, {
+        userId: auth.uid,
+        tenantId: scope.tenantId,
+        workspaceId: scope.workspaceId,
+        libraryId: scope.libraryId,
+        draftId: draftRef.id,
+        bookId,
+        bookTitle,
+        title,
+        prompt: promptText,
+        body: articleText,
+        versionNumber: 1,
+        sourceSnapshots,
+        createdAt: now,
+      });
+      transaction.set(routeTraceRef, {
+        userId: auth.uid,
+        tenantId: scope.tenantId,
+        workspaceId: scope.workspaceId,
+        libraryId: scope.libraryId,
+        callable: "createArticleDraftTest",
+        routeIntent: "article_generation",
+        scopedBookId: bookId,
+        queryPreview: promptText.slice(0, 180),
+        queryLength: promptText.length,
+        answerMode: "article_draft",
+        sourceCount: sourceSnapshots.length,
+        sourceBookIds: [bookId],
+        sourceChunkIds: results.map((result) => result.chunkId || "").filter(Boolean),
+        retrievalDiagnostics: search.diagnostics,
+        articleDraftId: draftRef.id,
+        articleVersionId: versionRef.id,
+        usageIncremented: true,
+        errors: [],
+        createdAt: now,
+      });
+      transaction.update(userRef, {
+        "usageCurrentPeriod.articleGenerations": FieldValue.increment(1),
+        updatedAt: now,
+      });
+    });
+
+    return {
+      ok: true,
+      draft: {
+        id: draftRef.id,
+        bookId,
+        bookTitle,
+        title,
+        prompt: promptText,
+        status: "draft",
+        latestVersionId: versionRef.id,
+      },
+      version: {
+        id: versionRef.id,
+        title,
+        body: articleText,
+        versionNumber: 1,
+        sources: sourceSnapshots,
+      },
+      usage: {
+        articleGenerationsLimit: monthlyArticleLimit,
+      },
+    };
+  }
+);
+
+export const listArticleDrafts = onCall(
+  { region: "us-central1", timeoutSeconds: 60, memory: "256MiB", invoker: "public" },
+  async (request) => {
+    const auth = requireAuth(request.auth?.token
+      ? {
+          uid: request.auth.uid,
+          email: request.auth.token.email,
+          name: request.auth.token.name,
+          picture: request.auth.token.picture,
+      }
+      : undefined);
+    await requireActiveSession(auth, request.data?.sessionId);
+    await requireVerifiedEmail(auth);
+    await ensureUserProfile(auth);
+
+    const userSnapshot = await db.collection("users").doc(auth.uid).get();
+    const plan = normalizePlan(userSnapshot.get("plan"));
+    requireArticleStudioAccess(auth.uid, plan);
+
+    const draftsSnapshot = await db
+      .collection("articleDrafts")
+      .where("userId", "==", auth.uid)
+      .limit(50)
+      .get();
+
+    const drafts = draftsSnapshot.docs
+      .map((draftSnapshot): Record<string, unknown> => ({
+        id: draftSnapshot.id,
+        ...(normalizeFirestoreValue(draftSnapshot.data()) as Record<string, unknown>),
+      }))
+      .sort((left, right) => {
+        const leftUpdatedAt = left["updatedAt"];
+        const rightUpdatedAt = right["updatedAt"];
+        const leftDate = typeof leftUpdatedAt === "string" ? Date.parse(leftUpdatedAt) : 0;
+        const rightDate = typeof rightUpdatedAt === "string" ? Date.parse(rightUpdatedAt) : 0;
+        return rightDate - leftDate;
+      })
+      .slice(0, 20);
+
+    return {
+      ok: true,
+      drafts,
+    };
+  }
+);
+
 export const deleteConversation = onCall(
   { region: "us-central1", timeoutSeconds: 60, memory: "256MiB" },
   async (request) => {
@@ -5697,6 +6128,7 @@ export const deleteAccountData = onCall(
     await clearUserConversations(auth.uid);
     await clearUserRouteTraces(auth.uid);
     await clearUserArtifacts(auth.uid);
+    await clearUserArticleDrafts(auth.uid);
     await clearUserReaderSettings(auth.uid);
     await clearUserSessions(auth.uid);
     await db.collection("users").doc(auth.uid).delete();

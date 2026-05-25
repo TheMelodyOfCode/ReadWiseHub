@@ -204,6 +204,16 @@ async function cleanup() {
     await artifact.ref.delete();
   }
 
+  const articleVersions = await db.collection("articleVersions").where("userId", "==", uid).get();
+  for (const version of articleVersions.docs) {
+    await version.ref.delete();
+  }
+
+  const articleDrafts = await db.collection("articleDrafts").where("userId", "==", uid).get();
+  for (const draft of articleDrafts.docs) {
+    await draft.ref.delete();
+  }
+
   const conversations = await db.collection("conversations").where("userId", "==", uid).get();
   for (const conversation of conversations.docs) {
     await clearConversation(conversation.id);
@@ -488,6 +498,7 @@ async function seedChapterOnlyBook() {
 
 async function seedAccountDeleteData() {
   await seedBook(accountDeleteBookId, "Account Delete Regression Book");
+  await seedArticleData(accountDeleteBookId, "account-delete");
   await db.collection("conversations").doc(accountDeleteConversationId).set({
     userId: uid,
     title: "Account delete regression conversation",
@@ -513,6 +524,35 @@ async function seedAccountDeleteData() {
       text: "safe account deletion regression message",
       createdAt: admin.firestore.FieldValue.serverTimestamp(),
     });
+}
+
+async function seedArticleData(bookId, suffix = "primary") {
+  const draftId = `${uid}-article-${suffix}`;
+  const versionId = `${uid}-article-${suffix}-v1`;
+  await db.collection("articleDrafts").doc(draftId).set({
+    userId: uid,
+    bookId,
+    bookTitle: "Callable Regression Book",
+    title: "Regression Article Draft",
+    prompt: "Write a short regression article.",
+    status: "draft",
+    latestVersionId: versionId,
+    versionCount: 1,
+    createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+  });
+  await db.collection("articleVersions").doc(versionId).set({
+    userId: uid,
+    draftId,
+    bookId,
+    bookTitle: "Callable Regression Book",
+    title: "Regression Article Draft",
+    body: "Regression article body with source grounding.",
+    versionNumber: 1,
+    sourceSnapshots: [],
+    createdAt: admin.firestore.FieldValue.serverTimestamp(),
+  });
+  return { draftId, versionId };
 }
 
 async function run() {
@@ -895,6 +935,7 @@ async function run() {
     .get();
   check(readerSettings.exists, "Client reader settings write was not stored.");
   check(readerSettings.get("lastPage") === 1, "Client reader settings lastPage was not stored.");
+  const seededArticle = await seedArticleData(primaryBookId);
 
   const conversationDetail = await callFunction(
     "getConversationDetail",
@@ -913,6 +954,14 @@ async function run() {
   check(
     exportData.conversations?.some((conversation) => conversation.id === ask.conversationId),
     "exportAccountData missed conversation."
+  );
+  check(
+    exportData.articleDrafts?.some((draft) => draft.id === seededArticle.draftId),
+    "exportAccountData missed article draft."
+  );
+  check(
+    exportData.articleVersions?.some((version) => version.id === seededArticle.versionId),
+    "exportAccountData missed article version."
   );
 
   const deleteConversation = await callFunction(
@@ -950,6 +999,14 @@ async function run() {
   const deletedSections = await db.collection("bookSections").where("bookId", "==", primaryBookId).get();
   const deletedPages = await db.collection("bookPages").where("bookId", "==", primaryBookId).get();
   const deletedArtifacts = await db.collection("bookArtifacts").where("bookId", "==", primaryBookId).get();
+  const deletedArticleDrafts = await db
+    .collection("articleDrafts")
+    .where("bookId", "==", primaryBookId)
+    .get();
+  const deletedArticleVersions = await db
+    .collection("articleVersions")
+    .where("draftId", "==", seededArticle.draftId)
+    .get();
   const deletedReaderSettings = await db
     .collection("users")
     .doc(uid)
@@ -961,6 +1018,8 @@ async function run() {
   check(deletedSections.empty, "deleteBook left section documents behind.");
   check(deletedPages.empty, "deleteBook left page documents behind.");
   check(deletedArtifacts.empty, "deleteBook left generated artifacts behind.");
+  check(deletedArticleDrafts.empty, "deleteBook left article drafts behind.");
+  check(deletedArticleVersions.empty, "deleteBook left article versions behind.");
   check(!deletedReaderSettings.exists, "deleteBook left reader settings behind.");
 
   await seedAccountDeleteData();
@@ -985,6 +1044,8 @@ async function run() {
   const remainingSections = await db.collection("bookSections").where("userId", "==", uid).get();
   const remainingPages = await db.collection("bookPages").where("userId", "==", uid).get();
   const remainingArtifacts = await db.collection("bookArtifacts").where("userId", "==", uid).get();
+  const remainingArticleDrafts = await db.collection("articleDrafts").where("userId", "==", uid).get();
+  const remainingArticleVersions = await db.collection("articleVersions").where("userId", "==", uid).get();
   const remainingSessions = await db.collection("userSessions").where("userId", "==", uid).get();
   const remainingRouteTraces = await db.collection("routeTraces").where("userId", "==", uid).get();
   const remainingReaderSettings = await db
@@ -999,6 +1060,8 @@ async function run() {
   check(remainingSections.empty, "deleteAccountData left sections behind.");
   check(remainingPages.empty, "deleteAccountData left page documents behind.");
   check(remainingArtifacts.empty, "deleteAccountData left generated artifacts behind.");
+  check(remainingArticleDrafts.empty, "deleteAccountData left article drafts behind.");
+  check(remainingArticleVersions.empty, "deleteAccountData left article versions behind.");
   check(remainingSessions.empty, "deleteAccountData left sessions behind.");
   check(remainingRouteTraces.empty, "deleteAccountData left route traces behind.");
   check(remainingReaderSettings.empty, "deleteAccountData left reader settings behind.");
