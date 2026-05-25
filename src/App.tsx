@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { FormEvent, TouchEvent, useEffect, useMemo, useRef, useState } from "react";
 import { FirebaseError } from "firebase/app";
 import {
   User,
@@ -23,7 +23,7 @@ import {
   where,
 } from "firebase/firestore";
 import { httpsCallable } from "firebase/functions";
-import { ref, uploadBytesResumable } from "firebase/storage";
+import { getDownloadURL, ref, uploadBytesResumable } from "firebase/storage";
 import { auth, db, functions, googleProvider, storage } from "./firebase";
 import { Locale, detectInitialLocale, dictionaries } from "./i18n";
 import readWiseHubIcon from "./assets/readwisehub-icon.png";
@@ -48,6 +48,8 @@ type BookRecord = {
   pineconeIndexedChunkCount: number;
   pineconeMissingChunkCount: number;
   vectorBackendCandidate: string;
+  renderedPageCount: number;
+  originalPageView: boolean;
   structureQuality: string;
   formatWarning: string;
   createdAtMs: number;
@@ -128,6 +130,16 @@ type ReaderBookmark = {
   createdAt: number;
 };
 
+type ReaderOriginalPage = {
+  pageNumber: number;
+  storagePath: string;
+  width: number;
+  height: number;
+  contentType: string;
+};
+
+type ReaderMode = "text" | "original";
+
 function getUploadTitle(fileName: string) {
   return fileName.replace(/\.[^.]+$/, "");
 }
@@ -182,6 +194,12 @@ type AskLibraryResponse = {
   mode: string;
   conversationId: string;
   results: LibrarySearchResult[];
+};
+
+type SuggestionChip = {
+  label: string;
+  question: string;
+  bookId?: string;
 };
 
 type ConversationRecord = {
@@ -648,6 +666,10 @@ export function App() {
   const [readerChunks, setReaderChunks] = useState<ReaderChunk[]>([]);
   const [readerPage, setReaderPage] = useState(0);
   const [readerTotalChunks, setReaderTotalChunks] = useState(0);
+  const [readerOriginalPage, setReaderOriginalPage] = useState<ReaderOriginalPage | null>(null);
+  const [readerOriginalPageCount, setReaderOriginalPageCount] = useState(0);
+  const [readerOriginalPageUrl, setReaderOriginalPageUrl] = useState("");
+  const [readerMode, setReaderMode] = useState<ReaderMode>("text");
   const [readerBusy, setReaderBusy] = useState(false);
   const [readerMessage, setReaderMessage] = useState("");
   const [readerHighlights, setReaderHighlights] = useState<Record<string, ReaderHighlight>>({});
@@ -718,6 +740,10 @@ export function App() {
     [readerChunks]
   );
   const readerPageCount = Math.max(1, Math.ceil(readerTotalChunks / readerPageSize));
+  const activeReaderPageCount =
+    readerMode === "original" && readerOriginalPageCount > 0
+      ? readerOriginalPageCount
+      : readerPageCount;
   const readerProgressKey = user && readerBookId
     ? `readwisehub_reader_progress_${user.uid}_${readerBookId}`
     : "";
@@ -749,6 +775,59 @@ export function App() {
           ? 5
           : 0
     : 0;
+  const selectedScopeBook = selectedBookScope
+    ? textReadyBooks.find((book) => book.id === selectedBookScope) ?? null
+    : null;
+  const defaultSuggestionBook = selectedScopeBook ?? textReadyBooks[0] ?? null;
+  const onboardingSuggestions = useMemo<SuggestionChip[]>(() => {
+    if (!defaultSuggestionBook) {
+      return [];
+    }
+
+    return [
+      {
+        label: t.suggestionSummarizeBook,
+        question: t.suggestionSummarizeBookQuestion,
+        bookId: defaultSuggestionBook.id,
+      },
+      {
+        label: t.suggestionMapBook,
+        question: t.suggestionMapBookQuestion,
+        bookId: defaultSuggestionBook.id,
+      },
+      {
+        label: t.suggestionKeyIdeas,
+        question: t.suggestionKeyIdeasQuestion,
+        bookId: defaultSuggestionBook.id,
+      },
+      {
+        label: t.suggestionFinalQuarter,
+        question: t.suggestionFinalQuarterQuestion,
+        bookId: defaultSuggestionBook.id,
+      },
+    ];
+  }, [defaultSuggestionBook, t]);
+  const answerFollowUpSuggestions = useMemo<SuggestionChip[]>(() => {
+    const scopedBookId = selectedBookScope || askSources[0]?.bookId || defaultSuggestionBook?.id || "";
+
+    return [
+      {
+        label: t.suggestionSimpler,
+        question: t.suggestionSimplerQuestion,
+        bookId: scopedBookId || undefined,
+      },
+      {
+        label: t.suggestionEvidence,
+        question: t.suggestionEvidenceQuestion,
+        bookId: scopedBookId || undefined,
+      },
+      {
+        label: t.suggestionNext,
+        question: t.suggestionNextQuestion,
+        bookId: scopedBookId || undefined,
+      },
+    ];
+  }, [askSources, defaultSuggestionBook, selectedBookScope, t]);
   const bookPageRef = useRef<HTMLDivElement | null>(null);
   const readerAnswerRef = useRef<HTMLDivElement | null>(null);
   const conversationDetailRef = useRef<HTMLElement | null>(null);
@@ -758,8 +837,10 @@ export function App() {
   const highlightMenuRef = useRef<HTMLDivElement | null>(null);
   const bookDetailRef = useRef<HTMLElement | null>(null);
   const readerScrollTimeoutRef = useRef<number | null>(null);
+  const readerTouchStartRef = useRef<{ x: number; y: number; time: number } | null>(null);
   const signingOutRef = useRef(false);
   const bookCardRefs = useRef(new Map<string, HTMLElement>());
+  const askInputRef = useRef<HTMLTextAreaElement | null>(null);
   const activeStorageBytes = useMemo(
     () => books.reduce((total, book) => total + book.sizeBytes, 0),
     [books]
@@ -878,6 +959,9 @@ export function App() {
                   typeof data.vectorBackendCandidate === "string"
                     ? data.vectorBackendCandidate
                     : "",
+                renderedPageCount:
+                  typeof data.renderedPageCount === "number" ? data.renderedPageCount : 0,
+                originalPageView: data.originalPageView === true,
                 structureQuality:
                   typeof data.structureQuality === "string" ? data.structureQuality : "",
                 formatWarning:
@@ -1095,6 +1179,39 @@ export function App() {
       setReaderHighlights({});
     }
   }, [readerBookId]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setReaderOriginalPageUrl("");
+
+    if (!readerOriginalPage?.storagePath) {
+      return;
+    }
+
+    getDownloadURL(ref(storage, readerOriginalPage.storagePath))
+      .then((url) => {
+        if (!cancelled) {
+          setReaderOriginalPageUrl(url);
+        }
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          setReaderMessage(getErrorMessage(error, "Original page failed"));
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [readerOriginalPage?.storagePath]);
+
+  useEffect(() => {
+    if (!readerBook || activeReaderPageCount <= 0 || readerPage < activeReaderPageCount) {
+      return;
+    }
+
+    void openBookReader(readerBook, activeReaderPageCount - 1);
+  }, [activeReaderPageCount, readerBook, readerPage]);
 
   useEffect(() => {
     if (!readerPickerScrollPending || readerBookId || workspaceTab !== "read") {
@@ -1661,10 +1778,9 @@ export function App() {
     }
   }
 
-  async function askLibraryQuestion(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-
-    if (!askQuestion.trim() || textReadyBooks.length === 0) {
+  async function submitAskQuestion(question: string, bookId: string) {
+    const trimmedQuestion = question.trim();
+    if (!trimmedQuestion || textReadyBooks.length === 0) {
       return;
     }
     if (!requireVerifiedUi(setAskMessage)) {
@@ -1687,9 +1803,9 @@ export function App() {
         AskLibraryResponse
       >(functions, "askLibrary");
       const response = await askLibrary(withSession({
-        query: askQuestion.trim(),
+        query: trimmedQuestion,
         locale,
-        bookId: selectedBookScope || undefined,
+        bookId: bookId || undefined,
       }));
       setAskAnswer(response.data.answer);
       setAskMode(response.data.mode);
@@ -1702,6 +1818,63 @@ export function App() {
       window.clearInterval(progressTimer);
       setAskBusy(false);
     }
+  }
+
+  async function askLibraryQuestion(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    await submitAskQuestion(askQuestion, selectedBookScope);
+  }
+
+  function useSuggestion(suggestion: SuggestionChip) {
+    setAskQuestion(suggestion.question);
+    if (suggestion.bookId) {
+      setSelectedBookScope(suggestion.bookId);
+    }
+    setWorkspaceTab("ask");
+    window.requestAnimationFrame(() => {
+      askInputRef.current?.focus();
+      document.getElementById("library")?.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+  }
+
+  function askSuggestion(suggestion: SuggestionChip) {
+    setAskQuestion(suggestion.question);
+    if (suggestion.bookId) {
+      setSelectedBookScope(suggestion.bookId);
+    }
+    setWorkspaceTab("ask");
+    void submitAskQuestion(suggestion.question, suggestion.bookId || selectedBookScope);
+  }
+
+  function renderSuggestionChips(
+    title: string,
+    suggestions: SuggestionChip[],
+    action: "fill" | "ask" = "fill"
+  ) {
+    if (suggestions.length === 0) {
+      return null;
+    }
+
+    return (
+      <div className="suggestion-panel">
+        <strong>{title}</strong>
+        <div className="suggestion-chips">
+          {suggestions.map((suggestion) => (
+            <button
+              className="suggestion-chip"
+              type="button"
+              key={`${suggestion.bookId || "library"}-${suggestion.question}`}
+              disabled={askBusy}
+              onClick={() =>
+                action === "ask" ? askSuggestion(suggestion) : useSuggestion(suggestion)
+              }
+            >
+              {suggestion.label}
+            </button>
+          ))}
+        </div>
+      </div>
+    );
   }
 
   async function deleteLibraryBook(book: BookRecord) {
@@ -1955,6 +2128,8 @@ export function App() {
     setReaderBusy(true);
     setReaderMessage("");
     setReaderChunks([]);
+    setReaderOriginalPage(null);
+    setReaderOriginalPageUrl("");
     setReaderSelection(null);
     setReaderAskAnswer("");
     setReaderAskMode("");
@@ -1967,7 +2142,13 @@ export function App() {
     try {
       const getBookReader = httpsCallable<
         { bookId: string; page: number; pageSize: number },
-        { ok: boolean; chunks: ReaderChunk[]; totalChunks: number }
+        {
+          ok: boolean;
+          chunks: ReaderChunk[];
+          totalChunks: number;
+          originalPage: ReaderOriginalPage | null;
+          totalPageImages: number;
+        }
       >(functions, "getBookReader");
       const response = await getBookReader(withSession({
         bookId: book.id,
@@ -1976,6 +2157,8 @@ export function App() {
       }));
       setReaderChunks(response.data.chunks ?? []);
       setReaderTotalChunks(response.data.totalChunks ?? 0);
+      setReaderOriginalPage(response.data.originalPage ?? null);
+      setReaderOriginalPageCount(response.data.totalPageImages ?? 0);
       if (progressKey) {
         window.localStorage.setItem(progressKey, String(targetPage));
       }
@@ -1997,11 +2180,58 @@ export function App() {
     }
 
     const nextPage = readerPage + direction;
-    if (nextPage < 0 || nextPage * readerPageSize >= readerTotalChunks) {
+    const maxPage =
+      readerMode === "original" && readerOriginalPageCount > 0
+        ? readerOriginalPageCount
+        : Math.ceil(readerTotalChunks / readerPageSize);
+    if (nextPage < 0 || nextPage >= maxPage) {
       return;
     }
 
     void openBookReader(readerBook, nextPage);
+  }
+
+  function startReaderSwipe(event: TouchEvent<HTMLDivElement>) {
+    if (event.touches.length !== 1 || readerSelection || readerAskBusy) {
+      readerTouchStartRef.current = null;
+      return;
+    }
+
+    const touch = event.touches[0];
+    readerTouchStartRef.current = {
+      x: touch.clientX,
+      y: touch.clientY,
+      time: Date.now(),
+    };
+  }
+
+  function finishReaderSwipe(event: TouchEvent<HTMLDivElement>) {
+    const start = readerTouchStartRef.current;
+    readerTouchStartRef.current = null;
+    if (!start || !readerBook || readerSelection || readerAskBusy) {
+      captureReaderSelectionSoon();
+      return;
+    }
+
+    const touch = event.changedTouches[0];
+    if (!touch) {
+      captureReaderSelectionSoon();
+      return;
+    }
+
+    const dx = touch.clientX - start.x;
+    const dy = touch.clientY - start.y;
+    const elapsed = Date.now() - start.time;
+    const horizontal = Math.abs(dx);
+    const vertical = Math.abs(dy);
+
+    if (elapsed < 700 && horizontal > 70 && horizontal > vertical * 1.4) {
+      turnReaderPage(dx < 0 ? 1 : -1);
+      window.getSelection()?.removeAllRanges();
+      return;
+    }
+
+    captureReaderSelectionSoon();
   }
 
   function bookmarkReaderPage() {
@@ -2218,7 +2448,7 @@ export function App() {
       return;
     }
 
-    const nextPage = Math.min(Math.max(0, page), readerPageCount - 1);
+    const nextPage = Math.min(Math.max(0, page), activeReaderPageCount - 1);
     void openBookReader(readerBook, nextPage);
   }
 
@@ -2235,6 +2465,10 @@ export function App() {
     setReaderReturnParagraphId("");
     setReaderBookmarkMessage("");
     setReaderBookmarks([]);
+    setReaderOriginalPage(null);
+    setReaderOriginalPageCount(0);
+    setReaderOriginalPageUrl("");
+    setReaderMode("text");
     setReaderBookmarkMenuOpen(false);
     setReaderBookPickerOpen(false);
     setReaderScrollNavVisible(false);
@@ -2364,6 +2598,11 @@ export function App() {
   }
 
   function captureReaderSelection() {
+    if (readerMode === "original") {
+      setReaderSelection(null);
+      return;
+    }
+
     const selection = window.getSelection();
     const text = selection?.toString().replace(/\s+/g, " ").trim() ?? "";
 
@@ -3267,6 +3506,9 @@ export function App() {
               className={`workspace-menu ${menuOpen ? "open" : ""}`}
             >
               <nav className="workspace-nav" aria-label="Workspace navigation">
+                <a href="#library" onClick={() => openMenuTab("ask")}>
+                  {t.tabAsk}
+                </a>
                 <a href="#library" onClick={() => openMenuTab("library")}>
                   {t.navLibrary}
                 </a>
@@ -3421,6 +3663,29 @@ export function App() {
                   <progress value={processingProgress} max="100" />
                 </div>
               ) : null}
+              {uploadTrackingBook?.status === "text_ready"
+                ? renderSuggestionChips(
+                    t.tryNextTitle,
+                    [
+                      {
+                        label: t.suggestionSummarizeBook,
+                        question: t.suggestionSummarizeBookQuestion,
+                        bookId: uploadTrackingBook.id,
+                      },
+                      {
+                        label: t.suggestionMapBook,
+                        question: t.suggestionMapBookQuestion,
+                        bookId: uploadTrackingBook.id,
+                      },
+                      {
+                        label: t.suggestionFinalQuarter,
+                        question: t.suggestionFinalQuarterQuestion,
+                        bookId: uploadTrackingBook.id,
+                      },
+                    ],
+                    "fill"
+                  )
+                : null}
               <button
                 className="button primary"
                 type="button"
@@ -3692,6 +3957,34 @@ export function App() {
                           </>
                         ) : null}
                       </div>
+                      {book.status === "text_ready"
+                        ? renderSuggestionChips(
+                            t.bookGuideTitle,
+                            [
+                              {
+                                label: t.suggestionSummarizeBook,
+                                question: t.suggestionSummarizeBookQuestion,
+                                bookId: book.id,
+                              },
+                              {
+                                label: t.suggestionMapBook,
+                                question: t.suggestionMapBookQuestion,
+                                bookId: book.id,
+                              },
+                              {
+                                label: t.suggestionKeyIdeas,
+                                question: t.suggestionKeyIdeasQuestion,
+                                bookId: book.id,
+                              },
+                              {
+                                label: t.suggestionFinalQuarter,
+                                question: t.suggestionFinalQuarterQuestion,
+                                bookId: book.id,
+                              },
+                            ],
+                            "fill"
+                          )
+                        : null}
                       {bookDetailMessage ? <p className="error-text">{bookDetailMessage}</p> : null}
                       {bookArtifacts.length > 0 ? (
                         <div className="artifact-list">
@@ -3792,9 +4085,29 @@ export function App() {
                       <h3>{readerBook ? readerBook.displayTitle : t.readerTitle}</h3>
                       <p>
                         {readerBook
-                          ? `${t.page} ${readerPage + 1} / ${readerPageCount}`
+                          ? `${t.page} ${readerPage + 1} / ${activeReaderPageCount}`
                           : t.readerCopy}
                       </p>
+                      {readerBook && readerOriginalPageCount > 0 ? (
+                        <div className="reader-view-toggle" aria-label={t.readerViewMode}>
+                          <button
+                            type="button"
+                            className={readerMode === "text" ? "active" : ""}
+                            aria-pressed={readerMode === "text"}
+                            onClick={() => setReaderMode("text")}
+                          >
+                            {t.textView}
+                          </button>
+                          <button
+                            type="button"
+                            className={readerMode === "original" ? "active" : ""}
+                            aria-pressed={readerMode === "original"}
+                            onClick={() => setReaderMode("original")}
+                          >
+                            {t.originalView}
+                          </button>
+                        </div>
+                      ) : null}
                     </div>
                     {readerBook ? (
                       <div className="reader-controls">
@@ -3813,11 +4126,11 @@ export function App() {
                           <select
                             value={readerPage}
                             onChange={(event) => goToReaderPage(Number(event.target.value))}
-                            disabled={readerBusy || readerTotalChunks === 0}
+                            disabled={readerBusy || activeReaderPageCount === 0}
                           >
-                            {Array.from({ length: readerPageCount }, (_, index) => (
+                            {Array.from({ length: activeReaderPageCount }, (_, index) => (
                               <option key={index} value={index}>
-                                {t.chapter} {index + 1}
+                                {readerMode === "original" ? t.page : t.chapter} {index + 1}
                               </option>
                             ))}
                           </select>
@@ -3828,7 +4141,7 @@ export function App() {
                               currentPageBookmarked ? "active" : ""
                             }`}
                             type="button"
-                            disabled={readerBusy || readerTotalChunks === 0}
+                            disabled={readerBusy || activeReaderPageCount === 0}
                             onClick={() => setReaderBookmarkMenuOpen((open) => !open)}
                             aria-expanded={readerBookmarkMenuOpen}
                             aria-label={t.bookmarks}
@@ -3889,7 +4202,7 @@ export function App() {
                               readerHighlightList.length > 0 ? "active" : ""
                             }`}
                             type="button"
-                            disabled={readerBusy || readerTotalChunks === 0}
+                            disabled={readerBusy || readerMode === "original" || readerTotalChunks === 0}
                             onClick={() => setReaderHighlightMenuOpen((open) => !open)}
                             aria-expanded={readerHighlightMenuOpen}
                             aria-label={t.highlights}
@@ -3942,8 +4255,8 @@ export function App() {
                           type="button"
                           disabled={
                             readerBusy ||
-                            readerTotalChunks === 0 ||
-                            (readerPage + 1) * readerPageSize >= readerTotalChunks
+                            activeReaderPageCount === 0 ||
+                            readerPage + 1 >= activeReaderPageCount
                           }
                           onClick={() => turnReaderPage(1)}
                           aria-label={t.nextPage}
@@ -4105,7 +4418,8 @@ export function App() {
                         className="book-page"
                         ref={bookPageRef}
                         onMouseUp={captureReaderSelection}
-                        onTouchEnd={captureReaderSelectionSoon}
+                        onTouchStart={startReaderSwipe}
+                        onTouchEnd={finishReaderSwipe}
                       >
                         <div className="book-page-top">
                           <span>{readerBook.displayTitle}</span>
@@ -4115,34 +4429,53 @@ export function App() {
                         </div>
                         {readerBusy ? <p>{t.loading}</p> : null}
                         {readerMessage ? <p className="error-text">{readerMessage}</p> : null}
-                        {!readerBusy && readerParagraphs.length === 0 && !readerMessage ? (
-                          <p className="small-note">{t.readerEmpty}</p>
-                        ) : null}
-                        {readerParagraphs.map((paragraph) => {
-                          const paragraphHighlights = Object.values(readerHighlights).filter(
-                            (highlight) =>
-                              paragraph.text.toLowerCase().includes(highlight.text.toLowerCase())
-                          );
-
-                          return (
-                            <article
-                              key={paragraph.id}
-                              id={`reader-passage-${paragraph.id}`}
-                              className="reader-paragraph"
-                            >
-                              <p>
-                                {getHighlightedParts(paragraph.text, paragraphHighlights.map((highlight) => highlight.text)).map(
-                                  (part, index) =>
-                                    part.highlighted ? (
-                                      <mark key={index}>{part.text}</mark>
-                                    ) : (
-                                      <span key={index}>{part.text}</span>
-                                    )
-                                )}
+                        {readerMode === "original" ? (
+                          <div className="original-page-frame">
+                            {readerOriginalPageUrl ? (
+                              <img
+                                src={readerOriginalPageUrl}
+                                alt={`${readerBook.displayTitle} ${t.page} ${readerPage + 1}`}
+                                width={readerOriginalPage?.width || undefined}
+                                height={readerOriginalPage?.height || undefined}
+                              />
+                            ) : (
+                              <p className="small-note">
+                                {readerOriginalPage ? t.loadingOriginalPage : t.originalPageUnavailable}
                               </p>
-                            </article>
-                          );
-                        })}
+                            )}
+                          </div>
+                        ) : (
+                          <>
+                            {!readerBusy && readerParagraphs.length === 0 && !readerMessage ? (
+                              <p className="small-note">{t.readerEmpty}</p>
+                            ) : null}
+                            {readerParagraphs.map((paragraph) => {
+                              const paragraphHighlights = Object.values(readerHighlights).filter(
+                                (highlight) =>
+                                  paragraph.text.toLowerCase().includes(highlight.text.toLowerCase())
+                              );
+
+                              return (
+                                <article
+                                  key={paragraph.id}
+                                  id={`reader-passage-${paragraph.id}`}
+                                  className="reader-paragraph"
+                                >
+                                  <p>
+                                    {getHighlightedParts(paragraph.text, paragraphHighlights.map((highlight) => highlight.text)).map(
+                                      (part, index) =>
+                                        part.highlighted ? (
+                                          <mark key={index}>{part.text}</mark>
+                                        ) : (
+                                          <span key={index}>{part.text}</span>
+                                        )
+                                    )}
+                                  </p>
+                                </article>
+                              );
+                            })}
+                          </>
+                        )}
                       </div>
                       <div className="reader-footer">
                         <button
@@ -4163,17 +4496,20 @@ export function App() {
                           <span aria-hidden="true">←</span>
                         </button>
                         <span>
-                          {Math.min(readerTotalChunks, readerPage * readerPageSize + 1)}-
-                          {Math.min(readerTotalChunks, (readerPage + 1) * readerPageSize)} /
-                          {readerTotalChunks} {t.chunks}
+                          {readerMode === "original"
+                            ? `${t.page} ${readerPage + 1} / ${activeReaderPageCount}`
+                            : `${Math.min(readerTotalChunks, readerPage * readerPageSize + 1)}-${Math.min(
+                                readerTotalChunks,
+                                (readerPage + 1) * readerPageSize
+                              )} / ${readerTotalChunks} ${t.chunks}`}
                         </span>
                         <button
                           className="reader-icon-button"
                           type="button"
                           disabled={
                             readerBusy ||
-                            readerTotalChunks === 0 ||
-                            (readerPage + 1) * readerPageSize >= readerTotalChunks
+                            activeReaderPageCount === 0 ||
+                            readerPage + 1 >= activeReaderPageCount
                           }
                           onClick={() => turnReaderPage(1)}
                           aria-label={t.nextPage}
@@ -4247,14 +4583,16 @@ export function App() {
               </label>
               <label>
                 {t.askLabel}
-                <input
-                  type="search"
+                <textarea
+                  ref={askInputRef}
                   value={askQuestion}
                   onChange={(event) => setAskQuestion(event.target.value)}
                   placeholder={t.askPlaceholder}
                   disabled={textReadyBooks.length === 0}
+                  rows={3}
                 />
               </label>
+              {!askAnswer ? renderSuggestionChips(t.askExamplesTitle, onboardingSuggestions, "fill") : null}
               <button
                 className="button primary"
                 type="submit"
@@ -4300,6 +4638,7 @@ export function App() {
                       ))}
                     </div>
                   ) : null}
+                  {renderSuggestionChips(t.followUpTitle, answerFollowUpSuggestions, "ask")}
                 </div>
               ) : null}
             </form>
@@ -4323,6 +4662,10 @@ export function App() {
                     {t.deleteAllHistory}
                   </button>
                 ) : null}
+              </div>
+              <div className="history-tip">
+                <strong>{t.historyTipTitle}</strong>
+                <p>{t.historyTipCopy}</p>
               </div>
               {deleteAllHistoryConfirmOpen ? (
                 <div className="danger-confirm-panel">
@@ -4631,6 +4974,10 @@ export function App() {
               )}
             </section>
             <div className="privacy-actions">
+              <div className="privacy-actions-copy">
+                <h3>{t.privacyDataTitle}</h3>
+                <p>{t.privacyDataCopy}</p>
+              </div>
               <button
                 className="button secondary"
                 type="button"

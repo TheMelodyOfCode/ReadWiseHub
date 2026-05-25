@@ -18,6 +18,10 @@ class ExtractRequest(BaseModel):
     bucket: str
     storagePath: str
     maxBytes: int = 20 * 1024 * 1024
+    renderPages: bool = False
+    outputPrefix: str = ""
+    renderDpi: int = 144
+    maxRenderedPages: int = 250
 
 
 def clean_text(value: str) -> str:
@@ -133,6 +137,42 @@ def build_sections(paragraphs: list[dict[str, Any]], target_size: int = 1800) ->
     return sections
 
 
+def render_pdf_pages(
+    document: fitz.Document,
+    bucket_name: str,
+    output_prefix: str,
+    render_dpi: int,
+    max_pages: int,
+) -> list[dict[str, Any]]:
+    if not output_prefix:
+        return []
+
+    safe_dpi = min(max(render_dpi, 96), 180)
+    safe_max_pages = min(max(max_pages, 1), 300)
+    bucket = storage_client.bucket(bucket_name)
+    pages: list[dict[str, Any]] = []
+
+    for page_index, page in enumerate(document[:safe_max_pages]):
+        pix = page.get_pixmap(dpi=safe_dpi, colorspace=fitz.csRGB, alpha=False)
+        image_bytes = pix.tobytes("jpg")
+        storage_path = f"{output_prefix.rstrip('/')}/page-{page_index + 1:04d}.jpg"
+        blob = bucket.blob(storage_path)
+        blob.upload_from_string(image_bytes, content_type="image/jpeg")
+        pages.append(
+            {
+                "pageNumber": page_index + 1,
+                "storagePath": storage_path,
+                "width": pix.width,
+                "height": pix.height,
+                "contentType": "image/jpeg",
+                "sizeBytes": len(image_bytes),
+                "renderDpi": safe_dpi,
+            }
+        )
+
+    return pages
+
+
 @app.post("/extract")
 def extract_pdf(request: ExtractRequest) -> dict[str, Any]:
     blob = storage_client.bucket(request.bucket).blob(request.storagePath)
@@ -188,6 +228,18 @@ def extract_pdf(request: ExtractRequest) -> dict[str, Any]:
             if section["title"]
         ][:80]
 
+        rendered_pages = (
+            render_pdf_pages(
+                document,
+                request.bucket,
+                request.outputPrefix,
+                request.renderDpi,
+                request.maxRenderedPages,
+            )
+            if request.renderPages
+            else []
+        )
+
         return {
             "ok": True,
             "text": text,
@@ -195,6 +247,7 @@ def extract_pdf(request: ExtractRequest) -> dict[str, Any]:
             "sections": sections,
             "outline": outline,
             "quality": "layout",
+            "renderedPages": rendered_pages,
         }
     finally:
         document.close()

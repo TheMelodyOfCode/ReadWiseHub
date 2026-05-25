@@ -60,6 +60,7 @@ a {
 
 button,
 input,
+textarea,
 select {
   font: inherit;
 }
@@ -452,7 +453,8 @@ p {
 }
 
 select,
-input {
+input,
+textarea {
   width: 100%;
   min-height: 48px;
   border: 1px solid var(--border);
@@ -460,6 +462,12 @@ input {
   padding: 10px 12px;
   background: var(--surface-strong);
   color: var(--text);
+}
+
+textarea {
+  min-height: 96px;
+  resize: vertical;
+  line-height: 1.45;
 }
 
 .content-section,
@@ -770,6 +778,49 @@ select {
   font-weight: 800;
 }
 
+.suggestion-panel {
+  display: grid;
+  gap: 10px;
+  border: 1px solid color-mix(in srgb, var(--primary) 28%, var(--border));
+  border-radius: 8px;
+  padding: 12px;
+  background: color-mix(in srgb, var(--primary) 7%, var(--surface));
+}
+
+.suggestion-panel strong {
+  color: var(--text);
+  font-size: 0.96rem;
+}
+
+.suggestion-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.suggestion-chip {
+  min-height: 38px;
+  border: 1px solid color-mix(in srgb, var(--primary) 36%, var(--border));
+  border-radius: 999px;
+  padding: 8px 12px;
+  background: var(--surface);
+  color: var(--text);
+  cursor: pointer;
+  font-size: 0.9rem;
+  font-weight: 850;
+}
+
+.suggestion-chip:hover,
+.suggestion-chip:focus-visible {
+  background: var(--primary);
+  color: #fff;
+}
+
+.suggestion-chip:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
 .answer-box {
   display: grid;
   gap: 12px;
@@ -817,6 +868,28 @@ select {
 
 .danger-confirm-panel p {
   margin: 0;
+}
+
+.history-tip {
+  display: grid;
+  gap: 4px;
+  border: 1px solid color-mix(in srgb, var(--accent) 38%, var(--border));
+  border-radius: 8px;
+  padding: 12px;
+  background: color-mix(in srgb, var(--accent) 8%, var(--surface));
+}
+
+.history-tip strong,
+.privacy-actions-copy h3 {
+  margin: 0;
+  color: var(--text);
+  font-size: 1rem;
+}
+
+.history-tip p,
+.privacy-actions-copy p {
+  margin: 0;
+  font-size: 0.95rem;
 }
 
 .danger-confirm-panel label {
@@ -1000,6 +1073,36 @@ select {
   font-size: clamp(1.08rem, 5vw, 1.45rem);
   line-height: 1.2;
   overflow-wrap: anywhere;
+}
+
+.reader-view-toggle {
+  display: inline-flex;
+  width: fit-content;
+  max-width: 100%;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--surface-strong);
+}
+
+.reader-view-toggle button {
+  min-height: 36px;
+  border: 0;
+  padding: 7px 11px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 0.88rem;
+  font-weight: 900;
+}
+
+.reader-view-toggle button + button {
+  border-left: 1px solid var(--border);
+}
+
+.reader-view-toggle button.active {
+  background: var(--primary);
+  color: #fff;
 }
 
 .reader-book-picker {
@@ -1455,6 +1558,7 @@ select {
     inset -8px 0 18px rgba(112, 84, 47, 0.07),
     0 18px 44px rgba(49, 38, 22, 0.18);
   font-family: Georgia, "Times New Roman", serif;
+  touch-action: pan-y;
 }
 
 :root[data-theme="dark"] .book-page {
@@ -1484,6 +1588,23 @@ select {
   font-size: 0.82rem;
   font-weight: 800;
   text-transform: uppercase;
+}
+
+.original-page-frame {
+  display: grid;
+  justify-items: center;
+  gap: 10px;
+}
+
+.original-page-frame img {
+  display: block;
+  width: min(100%, 720px);
+  height: auto;
+  border-radius: 4px;
+  background: #fff;
+  box-shadow: 0 12px 28px rgba(49, 38, 22, 0.18);
+  user-select: none;
+  -webkit-user-drag: none;
 }
 
 .reader-paragraph {
@@ -1567,8 +1688,8 @@ select {
     position: fixed;
     right: max(10px, env(safe-area-inset-right));
     left: max(10px, env(safe-area-inset-left));
-    top: calc(92px + env(safe-area-inset-top));
-    z-index: 12;
+    top: calc(8px + env(safe-area-inset-top));
+    z-index: 40;
     width: auto;
     justify-content: space-between;
     gap: 8px;
@@ -1600,6 +1721,21 @@ select {
     flex: 1 1 0;
     min-height: 44px;
     padding-inline: 8px;
+  }
+
+  .suggestion-panel {
+    padding: 10px;
+  }
+
+  .suggestion-chips {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .suggestion-chip {
+    width: 100%;
+    border-radius: 8px;
+    text-align: left;
   }
 }
 
@@ -1803,6 +1939,15 @@ select {
 .privacy-actions {
   display: grid;
   gap: 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 14px;
+  background: var(--surface);
+}
+
+.privacy-actions-copy {
+  display: grid;
+  gap: 4px;
 }
 
 .history-list {
@@ -2243,6 +2388,7 @@ select {
   .upload-panel .error-text,
   .ask-panel .error-text,
   .ask-panel .small-note,
+  .ask-panel .suggestion-panel,
   .answer-box,
   .history-list,
   .history-panel .small-note,
@@ -2335,6 +2481,7 @@ h2 {
 
 .button,
 input,
+textarea,
 select {
   min-height: 52px;
 }
@@ -2356,6 +2503,7 @@ select {
 }
 
 input:focus,
+textarea:focus,
 select:focus,
 .button:focus-visible,
 a:focus-visible {

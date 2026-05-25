@@ -124,6 +124,11 @@ service cloud.firestore {
       allow write: if false;
     }
 
+    match /bookPages/{pageId} {
+      allow read: if signedIn() && resource.data.userId == request.auth.uid;
+      allow write: if false;
+    }
+
     match /userSessions/{sessionId} {
       allow read, write: if false;
     }

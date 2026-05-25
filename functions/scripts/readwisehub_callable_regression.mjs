@@ -116,10 +116,12 @@ async function callFunctionExpectFailure(name, data, idToken) {
 async function clearBook(bookId) {
   const chunks = await db.collection("bookChunks").where("bookId", "==", bookId).get();
   const sections = await db.collection("bookSections").where("bookId", "==", bookId).get();
+  const pages = await db.collection("bookPages").where("bookId", "==", bookId).get();
   const jobs = await db.collection("ingestionJobs").where("bookId", "==", bookId).get();
   const batch = db.batch();
   chunks.docs.forEach((doc) => batch.delete(doc.ref));
   sections.docs.forEach((doc) => batch.delete(doc.ref));
+  pages.docs.forEach((doc) => batch.delete(doc.ref));
   jobs.docs.forEach((doc) => batch.delete(doc.ref));
   batch.delete(db.collection("books").doc(bookId));
   await batch.commit();
@@ -295,6 +297,9 @@ async function seedBook(bookId, title) {
     mimeType: "text/plain",
     sizeBytes: 4096,
     pageCount: 0,
+    renderedPageCount: 1,
+    originalPageView: true,
+    derivedPageImagePrefix: `userDerived/${uid}/${bookId}/pages`,
     textLength: 1500,
     chunkCount: 2,
     sectionCount: 2,
@@ -333,6 +338,20 @@ async function seedBook(bookId, title) {
       paragraphEnd: index,
       createdAt: admin.firestore.FieldValue.serverTimestamp(),
     });
+    if (index === 0) {
+      batch.set(db.collection("bookPages").doc(`${bookId}_0001`), {
+        userId: uid,
+        bookId,
+        pageNumber: 1,
+        storagePath: `userDerived/${uid}/${bookId}/pages/page-0001.jpg`,
+        width: 900,
+        height: 1200,
+        contentType: "image/jpeg",
+        sizeBytes: 12345,
+        renderDpi: 144,
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+    }
   });
   await batch.commit();
 }
@@ -623,6 +642,11 @@ async function run() {
     bookReader.chunks?.some((chunk) => chunk.text?.includes("lighthouse archive")),
     "getBookReader did not return readable chunk text."
   );
+  check(bookReader.totalPageImages === 1, "getBookReader returned the wrong original page count.");
+  check(
+    bookReader.originalPage?.storagePath === `userDerived/${uid}/${primaryBookId}/pages/page-0001.jpg`,
+    "getBookReader did not return owner-scoped original page metadata."
+  );
 
   const sectionMap = await callFunction(
     "generateBookSectionMap",
@@ -801,7 +825,7 @@ async function run() {
   const structuredTitles = structuredArtifact?.get("sections")?.map((section) => section.title) || [];
   check(
     structuredTitles.some((title) => /quantum gravity/i.test(title)) &&
-      structuredTitles.some((title) => /arrow of time/i.test(title)),
+      structuredTitles.some((title) => /(arrow|direction)\s+of\s+time/i.test(title)),
     `structured section-map titles were not heading-aware: ${structuredTitles.join(", ")}`
   );
   check(
@@ -924,6 +948,7 @@ async function run() {
   const deletedBook = await db.collection("books").doc(primaryBookId).get();
   const deletedChunks = await db.collection("bookChunks").where("bookId", "==", primaryBookId).get();
   const deletedSections = await db.collection("bookSections").where("bookId", "==", primaryBookId).get();
+  const deletedPages = await db.collection("bookPages").where("bookId", "==", primaryBookId).get();
   const deletedArtifacts = await db.collection("bookArtifacts").where("bookId", "==", primaryBookId).get();
   const deletedReaderSettings = await db
     .collection("users")
@@ -934,6 +959,7 @@ async function run() {
   check(!deletedBook.exists, "deleteBook left book document behind.");
   check(deletedChunks.empty, "deleteBook left chunk documents behind.");
   check(deletedSections.empty, "deleteBook left section documents behind.");
+  check(deletedPages.empty, "deleteBook left page documents behind.");
   check(deletedArtifacts.empty, "deleteBook left generated artifacts behind.");
   check(!deletedReaderSettings.exists, "deleteBook left reader settings behind.");
 
@@ -957,6 +983,7 @@ async function run() {
   const remainingConversations = await db.collection("conversations").where("userId", "==", uid).get();
   const remainingChunks = await db.collection("bookChunks").where("userId", "==", uid).get();
   const remainingSections = await db.collection("bookSections").where("userId", "==", uid).get();
+  const remainingPages = await db.collection("bookPages").where("userId", "==", uid).get();
   const remainingArtifacts = await db.collection("bookArtifacts").where("userId", "==", uid).get();
   const remainingSessions = await db.collection("userSessions").where("userId", "==", uid).get();
   const remainingRouteTraces = await db.collection("routeTraces").where("userId", "==", uid).get();
@@ -970,6 +997,7 @@ async function run() {
   check(remainingConversations.empty, "deleteAccountData left conversations behind.");
   check(remainingChunks.empty, "deleteAccountData left chunks behind.");
   check(remainingSections.empty, "deleteAccountData left sections behind.");
+  check(remainingPages.empty, "deleteAccountData left page documents behind.");
   check(remainingArtifacts.empty, "deleteAccountData left generated artifacts behind.");
   check(remainingSessions.empty, "deleteAccountData left sessions behind.");
   check(remainingRouteTraces.empty, "deleteAccountData left route traces behind.");

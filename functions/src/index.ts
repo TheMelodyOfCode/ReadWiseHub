@@ -194,6 +194,11 @@ type SectionSourceForMap = {
   pageStart: number;
   pageEnd: number;
 };
+type StructuralRangeRequest = {
+  label: string;
+  startRatio: number;
+  endRatio: number;
+};
 type NumberedHeadingCandidate = {
   number: number;
   title: string;
@@ -210,6 +215,16 @@ type TextExtractionResult = {
   sections?: BookSection[];
   outline?: Array<{ sectionIndex: number; title: string }>;
   quality?: string;
+  renderedPages?: RenderedBookPage[];
+};
+type RenderedBookPage = {
+  pageNumber: number;
+  storagePath: string;
+  width: number;
+  height: number;
+  contentType: string;
+  sizeBytes: number;
+  renderDpi: number;
 };
 type StructureAssessment = {
   structureQuality: string;
@@ -729,10 +744,35 @@ function normalizeOutline(value: unknown): Array<{ sectionIndex: number; title: 
     .slice(0, 80);
 }
 
+function normalizeRenderedPages(value: unknown): RenderedBookPage[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value
+    .filter((page) => page && typeof page === "object")
+    .map((page) => {
+      const record = page as Record<string, unknown>;
+      return {
+        pageNumber: Math.max(1, Math.floor(Number(record.pageNumber) || 0)),
+        storagePath: typeof record.storagePath === "string" ? record.storagePath.slice(0, 500) : "",
+        width: Math.max(0, Math.floor(Number(record.width) || 0)),
+        height: Math.max(0, Math.floor(Number(record.height) || 0)),
+        contentType: typeof record.contentType === "string" ? record.contentType.slice(0, 80) : "image/jpeg",
+        sizeBytes: Math.max(0, Math.floor(Number(record.sizeBytes) || 0)),
+        renderDpi: Math.max(0, Math.floor(Number(record.renderDpi) || 0)),
+      };
+    })
+    .filter((page) => page.pageNumber > 0 && page.storagePath && page.width > 0 && page.height > 0)
+    .sort((left, right) => left.pageNumber - right.pageNumber)
+    .slice(0, 300);
+}
+
 async function extractPdfWithLayoutService(
   bucket: string,
   storagePath: string,
-  maxBytes: number
+  maxBytes: number,
+  outputPrefix = ""
 ): Promise<TextExtractionResult | null> {
   if (!PDF_EXTRACTOR_URL) {
     return null;
@@ -750,6 +790,10 @@ async function extractPdfWithLayoutService(
         bucket,
         storagePath,
         maxBytes,
+        renderPages: Boolean(outputPrefix),
+        outputPrefix,
+        renderDpi: 144,
+        maxRenderedPages: 250,
       }),
     });
 
@@ -773,6 +817,7 @@ async function extractPdfWithLayoutService(
       sections: normalizeLayoutSections(payload.sections),
       outline: normalizeOutline(payload.outline),
       quality: typeof payload.quality === "string" ? payload.quality : "layout",
+      renderedPages: normalizeRenderedPages(payload.renderedPages),
     };
   } catch (error) {
     console.error("PDF layout extraction unavailable", createSafeError(error));
@@ -1632,6 +1677,62 @@ function parseRequestedStructureCount(queryText: string): number {
   return 0;
 }
 
+function parseStructuralRangeRequest(queryText: string): StructuralRangeRequest | null {
+  const normalized = queryText.toLowerCase();
+
+  if (
+    /\b(last|final)\s+(quarter|fourth|25\s*%)\b/.test(normalized) ||
+    /\b(end|ending|finale|schluss|ende)\b/.test(normalized) ||
+    /\b(letzte[snrm]?|abschlie(?:ss|ß)ende[snrm]?)\s+(viertel|teil|abschnitt)\b/.test(normalized)
+  ) {
+    return {
+      label: "final quarter",
+      startRatio: 0.75,
+      endRatio: 1,
+    };
+  }
+
+  if (
+    /\b(first|opening)\s+(quarter|fourth|25\s*%)\b/.test(normalized) ||
+    /\b(erste[snrm]?|anfang|beginn)\s+(viertel|teil|abschnitt)\b/.test(normalized)
+  ) {
+    return {
+      label: "first quarter",
+      startRatio: 0,
+      endRatio: 0.25,
+    };
+  }
+
+  if (
+    /\b(second|last|final)\s+half\b/.test(normalized) ||
+    /\b(zweite|letzte[snrm]?)\s+h(?:a|ä)lfte\b/.test(normalized)
+  ) {
+    return {
+      label: "second half",
+      startRatio: 0.5,
+      endRatio: 1,
+    };
+  }
+
+  if (/\b(first|opening)\s+half\b/.test(normalized) || /\b(erste[snrm]?)\s+h(?:a|ä)lfte\b/.test(normalized)) {
+    return {
+      label: "first half",
+      startRatio: 0,
+      endRatio: 0.5,
+    };
+  }
+
+  if (/\b(middle|midpoint|mittlere[snrm]?|mitte)\b/.test(normalized)) {
+    return {
+      label: "middle",
+      startRatio: 0.35,
+      endRatio: 0.65,
+    };
+  }
+
+  return null;
+}
+
 function normalizeSectionMapEntry(value: unknown): SectionMapEntry | null {
   if (!value || typeof value !== "object") {
     return null;
@@ -2122,6 +2223,97 @@ async function resolveArtifactSectionSearch(
   };
 }
 
+async function resolveStructuralRangeSearch(
+  userId: string,
+  queryText: string,
+  bookId: string
+): Promise<LibrarySearchResponse | null> {
+  const range = parseStructuralRangeRequest(queryText);
+  if (!bookId || !range) {
+    return null;
+  }
+
+  const bookSnapshot = await db.collection("books").doc(bookId).get();
+  if (!bookSnapshot.exists || bookSnapshot.get("userId") !== userId) {
+    return null;
+  }
+
+  const sectionsSnapshot = await db
+    .collection("bookSections")
+    .where("bookId", "==", bookId)
+    .limit(900)
+    .get();
+  const sectionSources = sectionsSnapshot.docs
+    .filter((sectionSnapshot) => sectionSnapshot.get("userId") === userId)
+    .map((sectionSnapshot) => ({
+      snapshot: sectionSnapshot,
+      sectionIndex: Number(sectionSnapshot.get("sectionIndex")) || 0,
+    }))
+    .sort((left, right) => left.sectionIndex - right.sectionIndex);
+
+  if (sectionSources.length === 0) {
+    return null;
+  }
+
+  const startIndex = Math.max(0, Math.floor(sectionSources.length * range.startRatio));
+  const endIndexExclusive = Math.max(
+    startIndex + 1,
+    Math.min(sectionSources.length, Math.ceil(sectionSources.length * range.endRatio))
+  );
+  const selectedSections = sectionSources.slice(startIndex, endIndexExclusive).slice(0, 10);
+  const bookTitle =
+    String(bookSnapshot.get("displayTitle") || "") ||
+    createDisplayTitle(String(bookSnapshot.get("title") || "Untitled"));
+  const terms = tokenizeSearchQuery(queryText);
+  const results = selectedSections.map(({ snapshot, sectionIndex }, index) => {
+    const title = String(snapshot.get("title") || "").trim();
+    const text = String(snapshot.get("text") || snapshot.get("textPreview") || "").replace(/\s+/g, " ").trim();
+    const excerptParts = [
+      `Structural range: ${range.label}`,
+      title ? `Source section: ${title}` : "",
+      createExcerpt(text, terms) || text.slice(0, 2400),
+    ].filter(Boolean);
+
+    return {
+      chunkId: snapshot.id,
+      bookId,
+      bookTitle,
+      chunkIndex: sectionIndex,
+      score: 110 - index,
+      excerpt: excerptParts.join("\n"),
+    };
+  });
+
+  if (results.length === 0) {
+    return null;
+  }
+
+  const diagnostics = createRetrievalDiagnostics({
+    userId,
+    bookId,
+    books: new Map([
+      [
+        bookId,
+        {
+          title: bookTitle,
+          scope: resolveBookScope(userId, bookSnapshot),
+          pineconeIndexedChunkCount: Number(bookSnapshot.get("pineconeIndexedChunkCount")) || 0,
+          pineconeMissingChunkCount: Number(bookSnapshot.get("pineconeMissingChunkCount")) || 0,
+        },
+      ],
+    ]),
+  });
+  diagnostics.backend = "firestore";
+  diagnostics.fallbackReason = `structural_range_${range.label.replace(/\s+/g, "_")}`;
+  diagnostics.candidateCount = selectedSections.length;
+  diagnostics.resultCount = results.length;
+
+  return {
+    results,
+    diagnostics,
+  };
+}
+
 function createGroundedDraft(queryText: string, results: LibrarySearchResult[], locale: string) {
   if (results.length === 0) {
     return locale === "de"
@@ -2403,7 +2595,9 @@ async function assertNoDuplicateActiveBook(userId: string, title: string) {
 async function extractTextFromStorageFile(
   storagePath: string,
   contentType: string,
-  limits: PlanLimits
+  limits: PlanLimits,
+  userId = "",
+  bookId = ""
 ): Promise<TextExtractionResult> {
   const bucket = getStorage().bucket();
   const [buffer] = await bucket.file(storagePath).download();
@@ -2417,7 +2611,8 @@ async function extractTextFromStorageFile(
     const layoutExtraction = await extractPdfWithLayoutService(
       bucket.name,
       storagePath,
-      limits.maxFileBytes
+      limits.maxFileBytes,
+      userId && bookId ? `userDerived/${userId}/${bookId}/pages` : ""
     );
     if (layoutExtraction?.text) {
       return layoutExtraction;
@@ -2502,6 +2697,35 @@ async function clearExistingSections(bookId: string) {
   if (snapshot.size === 300) {
     await clearExistingSections(bookId);
   }
+}
+
+async function clearBookPages(bookId: string) {
+  const snapshot = await db
+    .collection("bookPages")
+    .where("bookId", "==", bookId)
+    .limit(300)
+    .get();
+
+  if (snapshot.empty) {
+    return;
+  }
+
+  const batch = db.batch();
+  snapshot.docs.forEach((docSnapshot) => batch.delete(docSnapshot.ref));
+  await batch.commit();
+
+  if (snapshot.size === 300) {
+    await clearBookPages(bookId);
+  }
+}
+
+async function deleteStoragePrefix(prefix: string) {
+  if (!prefix) {
+    return;
+  }
+
+  const bucket = getStorage().bucket();
+  await bucket.deleteFiles({ prefix, force: true });
 }
 
 async function clearNestedBookSections(bookId: string) {
@@ -2669,8 +2893,10 @@ async function clearUserBooks(userId: string) {
     }
     await clearExistingChunks(bookSnapshot.id);
     await clearExistingSections(bookSnapshot.id);
+    await clearBookPages(bookSnapshot.id);
     await clearIngestionJobs(bookSnapshot.id);
     await clearBookArtifacts(bookSnapshot.id);
+    await deleteStoragePrefix(`userDerived/${userId}/${bookSnapshot.id}/`);
     await bookSnapshot.ref.delete();
   }
 
@@ -2888,6 +3114,85 @@ async function writeSections(
   if (writes > 0) {
     await batch.commit();
   }
+}
+
+async function writeBookPages(
+  pages: RenderedBookPage[],
+  userId: string,
+  bookId: string,
+  scope: BookScope
+) {
+  let batch: WriteBatch = db.batch();
+  let writes = 0;
+
+  for (const page of pages) {
+    const pageRef = db.collection("bookPages").doc(`${bookId}_${String(page.pageNumber).padStart(4, "0")}`);
+    batch.set(pageRef, {
+      userId,
+      tenantId: scope.tenantId,
+      workspaceId: scope.workspaceId,
+      libraryId: scope.libraryId,
+      bookId,
+      pageNumber: page.pageNumber,
+      storagePath: page.storagePath,
+      width: page.width,
+      height: page.height,
+      contentType: page.contentType,
+      sizeBytes: page.sizeBytes,
+      renderDpi: page.renderDpi,
+      createdAt: FieldValue.serverTimestamp(),
+    });
+    writes += 1;
+
+    if (writes >= 300) {
+      await batch.commit();
+      batch = db.batch();
+      writes = 0;
+    }
+  }
+
+  if (writes > 0) {
+    await batch.commit();
+  }
+}
+
+async function backfillPdfPageImagesForBook(
+  userId: string,
+  bookId: string,
+  bookSnapshot: FirebaseFirestore.DocumentSnapshot
+) {
+  const storagePath = assertString(bookSnapshot.get("storagePath"), "storagePath");
+  const mimeType = assertString(bookSnapshot.get("mimeType"), "mimeType");
+
+  if (mimeType !== "application/pdf") {
+    throw new HttpsError("failed-precondition", "Only PDF books can use original page backfill.");
+  }
+
+  const bookScope = resolveBookScope(userId, bookSnapshot);
+  const prefix = `userDerived/${userId}/${bookId}/pages`;
+  const bucket = getStorage().bucket();
+  const extraction = await extractPdfWithLayoutService(
+    bucket.name,
+    storagePath,
+    Number(bookSnapshot.get("sizeBytes")) || PLAN_LIMITS.pro.maxFileBytes,
+    prefix
+  );
+
+  const renderedPages = extraction?.renderedPages || [];
+  if (renderedPages.length === 0) {
+    throw new HttpsError("failed-precondition", "No page images were generated for this PDF.");
+  }
+
+  await clearBookPages(bookId);
+  await writeBookPages(renderedPages, userId, bookId, bookScope);
+  await bookSnapshot.ref.update({
+    renderedPageCount: renderedPages.length,
+    originalPageView: true,
+    derivedPageImagePrefix: prefix,
+    updatedAt: FieldValue.serverTimestamp(),
+  });
+
+  return renderedPages.length;
 }
 
 function createSectionMapEntries(
@@ -3334,7 +3639,7 @@ async function processIngestionJobById(jobId: string) {
   });
 
   try {
-    const extraction = await extractTextFromStorageFile(storagePath, mimeType, limits);
+    const extraction = await extractTextFromStorageFile(storagePath, mimeType, limits, userId, bookId);
     const textBytes = Buffer.byteLength(extraction.text, "utf8");
 
     if (!extraction.text) {
@@ -3369,6 +3674,7 @@ async function processIngestionJobById(jobId: string) {
     const structureAssessment = assessDocumentStructure(mimeType, extraction, sections);
     const language = detectLanguage(extraction.text);
     const bookScope = resolveBookScope(userId, bookSnapshot);
+    const renderedPages = extraction.renderedPages ?? [];
 
     await jobRef.update({
       stage: "embedding_chunks",
@@ -3380,8 +3686,10 @@ async function processIngestionJobById(jobId: string) {
 
     await clearExistingChunks(bookId);
     await clearExistingSections(bookId);
+    await clearBookPages(bookId);
     await writeChunks(chunks, userId, bookId, bookScope, language, embeddingsByIndex);
     await writeSections(sections, userId, bookId, bookScope);
+    await writeBookPages(renderedPages, userId, bookId, bookScope);
 
     await db.runTransaction(async (transaction) => {
       transaction.update(bookRef, {
@@ -3395,6 +3703,9 @@ async function processIngestionJobById(jobId: string) {
         textBytes,
         chunkCount: chunks.length,
         sectionCount: sections.length,
+        renderedPageCount: renderedPages.length,
+        originalPageView: renderedPages.length > 0,
+        derivedPageImagePrefix: renderedPages.length > 0 ? `userDerived/${userId}/${bookId}/pages` : "",
         structureQuality: structureAssessment.structureQuality,
         formatWarning: structureAssessment.formatWarning,
         embeddedChunkCount: embeddingsByIndex.size,
@@ -3418,6 +3729,7 @@ async function processIngestionJobById(jobId: string) {
         progress: 100,
         chunkCount: chunks.length,
         sectionCount: sections.length,
+        renderedPageCount: renderedPages.length,
         embeddedChunkCount: embeddingsByIndex.size,
         textLength: extraction.text.length,
         textBytes,
@@ -3432,10 +3744,13 @@ async function processIngestionJobById(jobId: string) {
       jobId,
       chunkCount: chunks.length,
       sectionCount: sections.length,
+      renderedPageCount: renderedPages.length,
       status: "text_ready",
     };
   } catch (error) {
     const safeError = createSafeError(error);
+    await clearBookPages(bookId).catch(() => undefined);
+    await deleteStoragePrefix(`userDerived/${userId}/${bookId}/`).catch(() => undefined);
     await db.runTransaction(async (transaction) => {
       transaction.update(bookRef, {
         status: "failed",
@@ -3786,6 +4101,20 @@ export const getBookReader = onCall(
       : [];
     const readerItems = allSections.length > 0 ? allSections : fallbackChunks;
     const start = page * pageSize;
+    const pageSnapshot = await db
+      .collection("bookPages")
+      .doc(`${bookId}_${String(page + 1).padStart(4, "0")}`)
+      .get();
+    const totalPageImages = Number(bookSnapshot.get("renderedPageCount")) || 0;
+    const originalPage = pageSnapshot.exists && pageSnapshot.get("userId") === auth.uid
+      ? {
+          pageNumber: Number(pageSnapshot.get("pageNumber")) || page + 1,
+          storagePath: String(pageSnapshot.get("storagePath") || ""),
+          width: Number(pageSnapshot.get("width")) || 0,
+          height: Number(pageSnapshot.get("height")) || 0,
+          contentType: String(pageSnapshot.get("contentType") || "image/jpeg"),
+        }
+      : null;
 
     return {
       ok: true,
@@ -3793,11 +4122,14 @@ export const getBookReader = onCall(
         id: bookSnapshot.id,
         title: bookSnapshot.get("title") ?? "Untitled",
         chunkCount: Number(bookSnapshot.get("sectionCount")) || readerItems.length,
+        pageCount: Number(bookSnapshot.get("pageCount")) || 0,
       },
       page,
       pageSize,
       totalChunks: readerItems.length,
       chunks: readerItems.slice(start, start + pageSize),
+      originalPage,
+      totalPageImages,
     };
   }
 );
@@ -4279,9 +4611,11 @@ export const deleteBook = onCall(
 
     await clearExistingChunks(bookId);
     await clearExistingSections(bookId);
+    await clearBookPages(bookId);
     await clearNestedBookSections(bookId);
     await clearIngestionJobs(bookId);
     await clearBookArtifacts(bookId);
+    await deleteStoragePrefix(`userDerived/${auth.uid}/${bookId}/`);
     await db
       .collection("users")
       .doc(auth.uid)
@@ -4340,6 +4674,109 @@ export const processQueuedIngestionJob = onDocumentCreated(
     }
 
     await processIngestionJobById(jobId);
+  }
+);
+
+export const backfillPdfPageImagesTest = onCall(
+  { region: "us-central1", timeoutSeconds: 300, memory: "1GiB" },
+  async (request) => {
+    const viewer = requireAdmin(request.auth?.token
+      ? {
+          uid: request.auth.uid,
+          email: request.auth.token.email,
+          name: request.auth.token.name,
+          picture: request.auth.token.picture,
+      }
+      : undefined);
+
+    const confirmation = assertString(request.data?.confirmation, "confirmation");
+    if (confirmation !== "BACKFILL_PDF_PAGES_TEST") {
+      throw new HttpsError(
+        "failed-precondition",
+        "Use the confirmation phrase BACKFILL_PDF_PAGES_TEST."
+      );
+    }
+
+    const bookId = assertString(request.data?.bookId, "bookId");
+    const bookSnapshot = await db.collection("books").doc(bookId).get();
+    if (!bookSnapshot.exists) {
+      throw new HttpsError("not-found", "Book was not found.");
+    }
+
+    const userId = assertString(bookSnapshot.get("userId"), "userId");
+    const renderedPageCount = await backfillPdfPageImagesForBook(userId, bookId, bookSnapshot);
+    await writeAdminAuditEvent({
+      viewer,
+      action: "backfillPdfPageImagesTest",
+      targetUserId: userId,
+      targetBookId: bookId,
+      reason: `Rendered ${renderedPageCount} PDF page images.`,
+    });
+
+    return {
+      ok: true,
+      bookId,
+      userId,
+      renderedPageCount,
+    };
+  }
+);
+
+export const processPdfPageImageBackfillJob = onDocumentCreated(
+  {
+    document: "adminBackfillJobs/{jobId}",
+    region: "us-central1",
+    timeoutSeconds: 300,
+    memory: "1GiB",
+  },
+  async (event) => {
+    const jobSnapshot = event.data;
+    if (!jobSnapshot) {
+      return;
+    }
+
+    const kind = jobSnapshot.get("kind");
+    const status = jobSnapshot.get("status");
+    const confirmation = jobSnapshot.get("confirmation");
+    if (
+      kind !== "pdfPageImages" ||
+      status !== "queued" ||
+      confirmation !== "BACKFILL_PDF_PAGES_TEST"
+    ) {
+      return;
+    }
+
+    const bookId = assertString(jobSnapshot.get("bookId"), "bookId");
+    await jobSnapshot.ref.update({
+      status: "processing",
+      startedAt: FieldValue.serverTimestamp(),
+      updatedAt: FieldValue.serverTimestamp(),
+    });
+
+    try {
+      const bookSnapshot = await db.collection("books").doc(bookId).get();
+      if (!bookSnapshot.exists) {
+        throw new HttpsError("not-found", "Book was not found.");
+      }
+
+      const userId = assertString(bookSnapshot.get("userId"), "userId");
+      const renderedPageCount = await backfillPdfPageImagesForBook(userId, bookId, bookSnapshot);
+      await jobSnapshot.ref.update({
+        status: "done",
+        userId,
+        renderedPageCount,
+        completedAt: FieldValue.serverTimestamp(),
+        updatedAt: FieldValue.serverTimestamp(),
+      });
+    } catch (error) {
+      await jobSnapshot.ref.update({
+        status: "failed",
+        errorMessage: error instanceof Error ? error.message.slice(0, 500) : "Backfill failed.",
+        failedAt: FieldValue.serverTimestamp(),
+        updatedAt: FieldValue.serverTimestamp(),
+      });
+      throw error;
+    }
   }
 );
 
@@ -5004,7 +5441,9 @@ export const askLibrary = onCall(
       sectionMapCreationSearch ??
       inheritedSectionSearch ??
       (await resolveSectionMapSearch(auth.uid, queryText, bookId));
-    const search = sectionMapSearch ?? (await runLibrarySearch(auth.uid, queryText, bookId));
+    const structuralRangeSearch =
+      sectionMapSearch ? null : await resolveStructuralRangeSearch(auth.uid, queryText, bookId);
+    const search = sectionMapSearch ?? structuralRangeSearch ?? (await runLibrarySearch(auth.uid, queryText, bookId));
     const results = search.results;
     const generatedSectionMapAnswer = createdSectionMap
       ? createSectionMapAnswer(createdSectionMap.bookTitle, createdSectionMap.sections, locale)
