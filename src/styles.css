@@ -778,6 +778,46 @@ select {
   font-weight: 800;
 }
 
+.textarea-clear-wrap {
+  position: relative;
+  display: block;
+}
+
+.textarea-clear-wrap textarea {
+  padding-right: 48px;
+}
+
+.input-clear-button {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  display: inline-grid;
+  width: 34px;
+  min-width: 34px;
+  height: 34px;
+  place-items: center;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0;
+  background: var(--surface);
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 1.2rem;
+  font-weight: 900;
+  line-height: 1;
+}
+
+.input-clear-button:hover,
+.input-clear-button:focus-visible {
+  border-color: color-mix(in srgb, var(--primary) 44%, var(--border));
+  color: var(--primary);
+}
+
+.input-clear-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
 .suggestion-panel {
   display: grid;
   gap: 10px;

@@ -841,6 +841,7 @@ export function App() {
   const signingOutRef = useRef(false);
   const bookCardRefs = useRef(new Map<string, HTMLElement>());
   const askInputRef = useRef<HTMLTextAreaElement | null>(null);
+  const askProgressRef = useRef<HTMLDivElement | null>(null);
   const activeStorageBytes = useMemo(
     () => books.reduce((total, book) => total + book.sizeBytes, 0),
     [books]
@@ -1793,6 +1794,9 @@ export function App() {
     setAskMode("");
     setAskSources([]);
     setAskProgress(10);
+    window.requestAnimationFrame(() => {
+      askProgressRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+    });
     const progressTimer = window.setInterval(() => {
       setAskProgress((progress) => Math.min(90, progress + (progress < 45 ? 12 : 7)));
     }, 700);
@@ -1825,10 +1829,19 @@ export function App() {
     await submitAskQuestion(askQuestion, selectedBookScope);
   }
 
+  function changeAskBookScope(bookId: string) {
+    setSelectedBookScope(bookId);
+    setAskAnswer("");
+    setAskMode("");
+    setAskSources([]);
+    setAskMessage("");
+    setAskProgress(0);
+  }
+
   function useSuggestion(suggestion: SuggestionChip) {
     setAskQuestion(suggestion.question);
     if (suggestion.bookId) {
-      setSelectedBookScope(suggestion.bookId);
+      changeAskBookScope(suggestion.bookId);
     }
     setWorkspaceTab("ask");
     window.requestAnimationFrame(() => {
@@ -4570,7 +4583,7 @@ export function App() {
                 {t.bookScope}
                 <select
                   value={selectedBookScope}
-                  onChange={(event) => setSelectedBookScope(event.target.value)}
+                  onChange={(event) => changeAskBookScope(event.target.value)}
                   disabled={textReadyBooks.length === 0}
                 >
                   <option value="">{t.allReadyBooks}</option>
@@ -4583,16 +4596,32 @@ export function App() {
               </label>
               <label>
                 {t.askLabel}
-                <textarea
-                  ref={askInputRef}
-                  value={askQuestion}
-                  onChange={(event) => setAskQuestion(event.target.value)}
-                  placeholder={t.askPlaceholder}
-                  disabled={textReadyBooks.length === 0}
-                  rows={3}
-                />
+                <span className="textarea-clear-wrap">
+                  <textarea
+                    ref={askInputRef}
+                    value={askQuestion}
+                    onChange={(event) => setAskQuestion(event.target.value)}
+                    placeholder={t.askPlaceholder}
+                    disabled={textReadyBooks.length === 0}
+                    rows={3}
+                  />
+                  {askQuestion ? (
+                    <button
+                      className="input-clear-button"
+                      type="button"
+                      aria-label={t.clearQuestion}
+                      title={t.clearQuestion}
+                      disabled={askBusy}
+                      onClick={() => {
+                        setAskQuestion("");
+                        askInputRef.current?.focus();
+                      }}
+                    >
+                      <span aria-hidden="true">×</span>
+                    </button>
+                  ) : null}
+                </span>
               </label>
-              {!askAnswer ? renderSuggestionChips(t.askExamplesTitle, onboardingSuggestions, "fill") : null}
               <button
                 className="button primary"
                 type="submit"
@@ -4605,8 +4634,9 @@ export function App() {
               >
                 {askBusy ? t.asking : t.askButton}
               </button>
+              {!askAnswer ? renderSuggestionChips(t.askExamplesTitle, onboardingSuggestions, "fill") : null}
               {askBusy || askProgress === 100 ? (
-                <div className="task-progress" role="status" aria-live="polite">
+                <div className="task-progress" ref={askProgressRef} role="status" aria-live="polite">
                   <div>
                     <strong>{askProgress === 100 ? t.answerReady : t.asking}</strong>
                     <span>{askProgress}%</span>
@@ -4629,6 +4659,7 @@ export function App() {
                     ) : null}
                   </div>
                   <p>{askAnswer}</p>
+                  {renderSuggestionChips(t.followUpTitle, answerFollowUpSuggestions, "ask")}
                   {askSources.length > 0 ? (
                     <div className="source-pills">
                       {askSources.slice(0, 3).map((source) => (
@@ -4638,7 +4669,6 @@ export function App() {
                       ))}
                     </div>
                   ) : null}
-                  {renderSuggestionChips(t.followUpTitle, answerFollowUpSuggestions, "ask")}
                 </div>
               ) : null}
             </form>
