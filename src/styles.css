@@ -928,12 +928,29 @@ select {
 }
 
 .article-draft-list article {
-  display: grid;
+  display: flex;
   gap: 4px;
+  align-items: flex-start;
+  justify-content: space-between;
+  flex-wrap: wrap;
 }
 
 .article-draft-list span {
+  display: block;
   color: var(--muted);
+}
+
+.article-badges,
+.article-rewrite-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.article-scope-badge {
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  color: var(--text);
 }
 
 .answer-box h4 {

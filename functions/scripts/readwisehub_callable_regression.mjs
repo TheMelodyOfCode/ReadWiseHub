@@ -572,6 +572,13 @@ async function seedArticleData(bookId, suffix = "primary") {
     status: "draft",
     latestVersionId: versionId,
     versionCount: 1,
+    locale: "en",
+    articleContext: {
+      sourceType: "section",
+      activeBookId: bookId,
+      activeSectionNumber: 2,
+      titleHint: "Section 2",
+    },
     createdAt: admin.firestore.FieldValue.serverTimestamp(),
     updatedAt: admin.firestore.FieldValue.serverTimestamp(),
   });
@@ -583,7 +590,22 @@ async function seedArticleData(bookId, suffix = "primary") {
     title: "Regression Article Draft",
     body: "Regression article body with source grounding.",
     versionNumber: 1,
-    sourceSnapshots: [],
+    sourceSnapshots: [
+      {
+        chunkId: `${bookId}_0`,
+        bookId,
+        bookTitle: "Callable Regression Book",
+        chunkIndex: 0,
+        excerpt: "ReadWiseHub regression source says the lighthouse archive stores coral maps.",
+        score: 1,
+      },
+    ],
+    articleContext: {
+      sourceType: "section",
+      activeBookId: bookId,
+      activeSectionNumber: 2,
+      titleHint: "Section 2",
+    },
     createdAt: admin.firestore.FieldValue.serverTimestamp(),
   });
   return { draftId, versionId };
@@ -1005,6 +1027,29 @@ async function run() {
     exportData.articleVersions?.some((version) => version.id === seededArticle.versionId),
     "exportAccountData missed article version."
   );
+  const blockedRewriteArticle = await callFunctionExpectFailure(
+    "rewriteArticleDraftTest",
+    { draftId: seededArticle.draftId, rewriteKind: "shorter" },
+    idToken
+  );
+  check(
+    blockedRewriteArticle.status === "PERMISSION_DENIED" ||
+      blockedRewriteArticle.code === "permission-denied",
+    "rewriteArticleDraftTest did not block a non-allowlisted regression user."
+  );
+  const deleteSeededArticle = await callFunction(
+    "deleteArticleDraftTest",
+    { draftId: seededArticle.draftId },
+    idToken
+  );
+  check(deleteSeededArticle.ok === true, "deleteArticleDraftTest did not return ok.");
+  const deletedSeededArticleDraft = await db.collection("articleDrafts").doc(seededArticle.draftId).get();
+  const deletedSeededArticleVersions = await db
+    .collection("articleVersions")
+    .where("draftId", "==", seededArticle.draftId)
+    .get();
+  check(!deletedSeededArticleDraft.exists, "deleteArticleDraftTest left draft behind.");
+  check(deletedSeededArticleVersions.empty, "deleteArticleDraftTest left versions behind.");
 
   const deleteConversation = await callFunction(
     "deleteConversation",

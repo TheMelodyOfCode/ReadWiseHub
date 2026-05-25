@@ -227,6 +227,7 @@ type ArticleDraftRecord = {
   prompt: string;
   status: string;
   latestVersionId: string;
+  articleContext?: ArticleContext;
   createdAt?: string;
   updatedAt?: string;
 };
@@ -237,6 +238,7 @@ type ArticleVersionRecord = {
   body: string;
   versionNumber: number;
   sources: ArticleSource[];
+  articleContext?: ArticleContext;
 };
 
 type ArticleDraftResponse = {
@@ -783,6 +785,8 @@ export function App() {
   const [articleCurrentDraft, setArticleCurrentDraft] = useState<ArticleDraftRecord | null>(null);
   const [articleCurrentVersion, setArticleCurrentVersion] =
     useState<ArticleVersionRecord | null>(null);
+  const [articleRewriteBusy, setArticleRewriteBusy] = useState("");
+  const [articleDeleteBusyId, setArticleDeleteBusyId] = useState("");
   const [adminAccess, setAdminAccess] = useState(false);
   const [adminDashboard, setAdminDashboard] = useState<AdminDashboardPayload | null>(null);
   const [adminConversations, setAdminConversations] = useState<AdminConversationSummary[]>([]);
@@ -2134,6 +2138,74 @@ export function App() {
   async function createArticleDraft(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     await writeArticleDraftFromPrompt(articlePrompt, articleReadyBookId);
+  }
+
+  function getArticleScopeLabel(context?: ArticleContext) {
+    if (!context) {
+      return t.articleScopeWholeBook;
+    }
+    if (context.sourceType === "selection") {
+      return t.articleScopeSelection;
+    }
+    if (context.sourceType === "section_map") {
+      return t.articleScopeSectionMap;
+    }
+    if (context.activeSectionNumber) {
+      return `${t.sectionLabel} ${context.activeSectionNumber}`;
+    }
+    return t.articleScopeWholeBook;
+  }
+
+  async function rewriteCurrentArticle(rewriteKind: string) {
+    if (!articleCurrentDraft || articleRewriteBusy || articleBusy) {
+      return;
+    }
+
+    setArticleRewriteBusy(rewriteKind);
+    setArticleMessage("");
+    try {
+      const rewriteArticle = httpsCallable<
+        { draftId: string; rewriteKind: string },
+        ArticleDraftResponse
+      >(functions, "rewriteArticleDraftTest");
+      const response = await rewriteArticle(withSession({
+        draftId: articleCurrentDraft.id,
+        rewriteKind,
+      }));
+      setArticleCurrentDraft(response.data.draft);
+      setArticleCurrentVersion(response.data.version);
+      setArticleDrafts((current) => [
+        response.data.draft,
+        ...current.filter((draft) => draft.id !== response.data.draft.id),
+      ]);
+      setArticleMessage(t.articleRewriteReady);
+    } catch (error) {
+      setArticleMessage(getErrorMessage(error, "Article rewrite failed"));
+    } finally {
+      setArticleRewriteBusy("");
+    }
+  }
+
+  async function deleteArticleDraft(draftId: string) {
+    setArticleDeleteBusyId(draftId);
+    setArticleMessage("");
+    try {
+      const deleteDraft = httpsCallable<{ draftId: string }, { ok: boolean; draftId: string }>(
+        functions,
+        "deleteArticleDraftTest"
+      );
+      await deleteDraft(withSession({ draftId }));
+      setArticleDrafts((current) => current.filter((draft) => draft.id !== draftId));
+      if (articleCurrentDraft?.id === draftId) {
+        setArticleCurrentDraft(null);
+        setArticleCurrentVersion(null);
+      }
+      setArticleMessage(t.articleDeleted);
+    } catch (error) {
+      setArticleMessage(getErrorMessage(error, "Article delete failed"));
+    } finally {
+      setArticleDeleteBusyId("");
+    }
   }
 
   function writeArticleFromCurrentAnswer() {
@@ -5202,11 +5274,45 @@ export function App() {
                     <article className="article-output">
                       <div className="answer-heading">
                         <h4>{articleCurrentDraft.title}</h4>
-                        <span className="mode-badge">{t.articleDraftBadge}</span>
+                        <div className="article-badges">
+                          <span className="mode-badge">{t.articleDraftBadge}</span>
+                          <span className="mode-badge article-scope-badge">
+                            {getArticleScopeLabel(
+                              articleCurrentVersion.articleContext ?? articleCurrentDraft.articleContext
+                            )}
+                          </span>
+                        </div>
                       </div>
                       <p className="small-note">
                         {articleCurrentDraft.bookTitle}
                       </p>
+                      <div className="article-rewrite-actions">
+                        {[
+                          ["shorter", t.rewriteShorter],
+                          ["personal", t.rewritePersonal],
+                          ["formal", t.rewriteFormal],
+                          ["intro", t.rewriteIntro],
+                          ["conclusion", t.rewriteConclusion],
+                        ].map(([kind, label]) => (
+                          <button
+                            className="button secondary compact"
+                            type="button"
+                            key={kind}
+                            disabled={Boolean(articleRewriteBusy) || articleBusy}
+                            onClick={() => rewriteCurrentArticle(kind)}
+                          >
+                            {articleRewriteBusy === kind ? t.articleWriting : label}
+                          </button>
+                        ))}
+                        <button
+                          className="button danger compact"
+                          type="button"
+                          disabled={articleDeleteBusyId === articleCurrentDraft.id}
+                          onClick={() => void deleteArticleDraft(articleCurrentDraft.id)}
+                        >
+                          {articleDeleteBusyId === articleCurrentDraft.id ? t.deletingQuestion : t.deleteArticle}
+                        </button>
+                      </div>
                       <pre>{articleCurrentVersion.body}</pre>
                       {articleCurrentVersion.sources.length > 0 ? (
                         <div className="search-results article-sources">
@@ -5231,8 +5337,18 @@ export function App() {
                     ) : (
                       articleDrafts.map((draft) => (
                         <article key={draft.id}>
-                          <strong>{draft.title}</strong>
-                          <span>{draft.bookTitle}</span>
+                          <div>
+                            <strong>{draft.title}</strong>
+                            <span>{draft.bookTitle} · {getArticleScopeLabel(draft.articleContext)}</span>
+                          </div>
+                          <button
+                            className="button danger compact"
+                            type="button"
+                            disabled={articleDeleteBusyId === draft.id}
+                            onClick={() => void deleteArticleDraft(draft.id)}
+                          >
+                            {articleDeleteBusyId === draft.id ? t.deletingQuestion : t.deleteArticle}
+                          </button>
                         </article>
                       ))
                     )}

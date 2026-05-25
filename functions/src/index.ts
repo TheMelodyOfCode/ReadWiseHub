@@ -2565,7 +2565,8 @@ function extractArticleTitle(text: string, fallbackTitle: string) {
 async function createArticleDraftText(
   promptText: string,
   results: LibrarySearchResult[],
-  locale: string
+  locale: string,
+  rewriteSourceText = ""
 ): Promise<string | null> {
   const apiKey = getOpenAiApiKey();
   if (!apiKey || results.length === 0) {
@@ -2604,6 +2605,7 @@ async function createArticleDraftText(
       instructions: systemInstruction,
       input: [
         `Article request: ${promptText}`,
+        rewriteSourceText ? `\nCurrent draft to revise:\n${rewriteSourceText.slice(0, 6000)}` : "",
         "",
         "Source passages:",
         buildArticleSourceContext(results),
@@ -2622,6 +2624,45 @@ async function createArticleDraftText(
 
   const payload = await response.json();
   return extractOpenAiText(payload) || null;
+}
+
+function parseArticleContext(value: unknown) {
+  const record = value && typeof value === "object" ? (value as Record<string, unknown>) : {};
+  return {
+    sourceType: typeof record.sourceType === "string" ? record.sourceType.slice(0, 40) : "manual",
+    conversationId:
+      typeof record.conversationId === "string" ? record.conversationId.slice(0, 120) : "",
+    activeMode: typeof record.activeMode === "string" ? record.activeMode.slice(0, 80) : "",
+    activeBookId:
+      typeof record.activeBookId === "string" ? record.activeBookId.slice(0, 120) : "",
+    activeArtifactId:
+      typeof record.activeArtifactId === "string" ? record.activeArtifactId.trim() : "",
+    activeSectionNumber: Math.max(0, Math.floor(Number(record.activeSectionNumber) || 0)),
+    titleHint: typeof record.titleHint === "string" ? record.titleHint.slice(0, 160) : "",
+  };
+}
+
+function getRewriteInstruction(kind: string, locale: string): string {
+  const normalized = ["shorter", "personal", "formal", "intro", "conclusion"].includes(kind)
+    ? kind
+    : "shorter";
+  const instructions = {
+    en: {
+      shorter: "Rewrite this article to be shorter and tighter while keeping the source-grounded meaning.",
+      personal: "Rewrite this article in a warmer, more personal voice while keeping it source-grounded.",
+      formal: "Rewrite this article in a more formal, polished style while keeping it source-grounded.",
+      intro: "Add a stronger introduction and lightly revise the article so it flows naturally.",
+      conclusion: "Add a clear conclusion and lightly revise the article so it ends well.",
+    },
+    de: {
+      shorter: "Überarbeite diesen Artikel kürzer und dichter, ohne die quellengestützte Bedeutung zu verändern.",
+      personal: "Überarbeite diesen Artikel persönlicher und wärmer, aber weiterhin quellennah.",
+      formal: "Überarbeite diesen Artikel formeller und geschliffener, aber weiterhin quellennah.",
+      intro: "Füge eine stärkere Einleitung hinzu und überarbeite den Artikel leicht für einen natürlichen Fluss.",
+      conclusion: "Füge einen klaren Schluss hinzu und überarbeite den Artikel leicht, damit er gut endet.",
+    },
+  };
+  return instructions[locale === "de" ? "de" : "en"][normalized as keyof typeof instructions.en];
 }
 
 async function ensureUserProfile(auth: AuthContext) {
@@ -6082,31 +6123,7 @@ export const createArticleDraftTest = onCall(
     const bookId = assertString(request.data?.bookId, "bookId");
     const locale =
       typeof request.data?.locale === "string" && request.data.locale === "de" ? "de" : "en";
-    const rawContext =
-      request.data?.context && typeof request.data.context === "object"
-        ? (request.data.context as Record<string, unknown>)
-        : {};
-    const contextSourceType =
-      typeof rawContext.sourceType === "string" ? rawContext.sourceType.slice(0, 40) : "manual";
-    const contextActiveArtifactId =
-      typeof rawContext.activeArtifactId === "string" ? rawContext.activeArtifactId.trim() : "";
-    const contextActiveSectionNumber = Math.max(
-      0,
-      Math.floor(Number(rawContext.activeSectionNumber) || 0)
-    );
-    const articleContext = {
-      sourceType: contextSourceType,
-      conversationId:
-        typeof rawContext.conversationId === "string" ? rawContext.conversationId.slice(0, 120) : "",
-      activeMode:
-        typeof rawContext.activeMode === "string" ? rawContext.activeMode.slice(0, 80) : "",
-      activeBookId:
-        typeof rawContext.activeBookId === "string" ? rawContext.activeBookId.slice(0, 120) : "",
-      activeArtifactId: contextActiveArtifactId,
-      activeSectionNumber: contextActiveSectionNumber,
-      titleHint:
-        typeof rawContext.titleHint === "string" ? rawContext.titleHint.slice(0, 160) : "",
-    };
+    const articleContext = parseArticleContext(request.data?.context);
     const userRef = db.collection("users").doc(auth.uid);
     const userSnapshot = await userRef.get();
     const plan = normalizePlan(userSnapshot.get("plan"));
@@ -6122,13 +6139,13 @@ export const createArticleDraftTest = onCall(
     }
 
     const sectionScopedSearch =
-      contextActiveArtifactId && contextActiveSectionNumber
+      articleContext.activeArtifactId && articleContext.activeSectionNumber
         ? await resolveArtifactSectionSearch(
             auth.uid,
             promptText,
             bookId,
-            contextActiveArtifactId,
-            contextActiveSectionNumber
+            articleContext.activeArtifactId,
+            articleContext.activeSectionNumber
           )
         : null;
     const search = sectionScopedSearch ?? (await runLibrarySearch(auth.uid, promptText, bookId));
@@ -6256,6 +6273,7 @@ export const createArticleDraftTest = onCall(
         prompt: promptText,
         status: "draft",
         latestVersionId: versionRef.id,
+        articleContext,
       },
       version: {
         id: versionRef.id,
@@ -6263,6 +6281,7 @@ export const createArticleDraftTest = onCall(
         body: articleText,
         versionNumber: 1,
         sources: sourceSnapshots,
+        articleContext,
       },
       usage: {
         articleGenerationsLimit: monthlyArticleLimit,
@@ -6313,6 +6332,165 @@ export const listArticleDrafts = onCall(
     return {
       ok: true,
       drafts,
+    };
+  }
+);
+
+export const rewriteArticleDraftTest = onCall(
+  {
+    region: "us-central1",
+    timeoutSeconds: 120,
+    memory: "512MiB",
+    secrets: [openAiApiKey],
+    invoker: "public",
+  },
+  async (request) => {
+    const auth = requireAuth(request.auth?.token
+      ? {
+          uid: request.auth.uid,
+          email: request.auth.token.email,
+          name: request.auth.token.name,
+          picture: request.auth.token.picture,
+      }
+      : undefined);
+    await requireActiveSession(auth, request.data?.sessionId);
+    await requireVerifiedEmail(auth);
+    await ensureUserProfile(auth);
+
+    const draftId = assertString(request.data?.draftId, "draftId");
+    const rewriteKind = assertString(request.data?.rewriteKind, "rewriteKind").slice(0, 40);
+    const draftRef = db.collection("articleDrafts").doc(draftId);
+    const draftSnapshot = await draftRef.get();
+    if (!draftSnapshot.exists || draftSnapshot.get("userId") !== auth.uid) {
+      throw new HttpsError("not-found", "Article draft was not found.");
+    }
+
+    const plan = normalizePlan((await db.collection("users").doc(auth.uid).get()).get("plan"));
+    requireArticleStudioAccess(auth.uid, plan);
+
+    const latestVersionId =
+      typeof draftSnapshot.get("latestVersionId") === "string"
+        ? draftSnapshot.get("latestVersionId")
+        : "";
+    if (!latestVersionId) {
+      throw new HttpsError("failed-precondition", "This article has no version to rewrite.");
+    }
+    const latestVersionSnapshot = await db.collection("articleVersions").doc(latestVersionId).get();
+    if (!latestVersionSnapshot.exists || latestVersionSnapshot.get("userId") !== auth.uid) {
+      throw new HttpsError("not-found", "Latest article version was not found.");
+    }
+
+    const bookId = assertString(draftSnapshot.get("bookId"), "bookId");
+    const locale =
+      typeof draftSnapshot.get("locale") === "string" && draftSnapshot.get("locale") === "de"
+        ? "de"
+        : "en";
+    const articleContext = parseArticleContext(draftSnapshot.get("articleContext"));
+    const originalPrompt =
+      typeof draftSnapshot.get("prompt") === "string" ? draftSnapshot.get("prompt") : "";
+    const rewritePrompt = [
+      getRewriteInstruction(rewriteKind, locale),
+      originalPrompt ? `Original request: ${originalPrompt}` : "",
+    ].filter(Boolean).join("\n\n");
+    const sourceSnapshots = Array.isArray(latestVersionSnapshot.get("sourceSnapshots"))
+      ? (latestVersionSnapshot.get("sourceSnapshots") as LibrarySearchResult[])
+      : [];
+    const results = sourceSnapshots
+      .map((source, index) => ({
+        chunkId: typeof source.chunkId === "string" ? source.chunkId : "",
+        bookId: typeof source.bookId === "string" ? source.bookId : bookId,
+        bookTitle: typeof source.bookTitle === "string" ? source.bookTitle : String(draftSnapshot.get("bookTitle") || ""),
+        chunkIndex: Number(source.chunkIndex) || index,
+        score: Number(source.score) || 0,
+        excerpt: typeof source.excerpt === "string" ? source.excerpt : "",
+      }))
+      .filter((source) => source.excerpt);
+    const currentBody = assertString(latestVersionSnapshot.get("body"), "body");
+    const articleText = await createArticleDraftText(rewritePrompt, results, locale, currentBody);
+    if (!articleText) {
+      throw new HttpsError("unavailable", "Article rewrite is temporarily unavailable.");
+    }
+
+    const versionNumber = (Number(draftSnapshot.get("versionCount")) || 1) + 1;
+    const title = extractArticleTitle(articleText, String(draftSnapshot.get("title") || "Article rewrite"));
+    const versionRef = db.collection("articleVersions").doc();
+    const now = FieldValue.serverTimestamp();
+    await db.runTransaction(async (transaction) => {
+      transaction.set(versionRef, {
+        userId: auth.uid,
+        tenantId: draftSnapshot.get("tenantId") || resolveTenantId(auth.uid),
+        workspaceId: draftSnapshot.get("workspaceId") || DEFAULT_WORKSPACE_ID,
+        libraryId: draftSnapshot.get("libraryId") || DEFAULT_LIBRARY_ID,
+        draftId,
+        bookId,
+        bookTitle: draftSnapshot.get("bookTitle") || "",
+        title,
+        prompt: rewritePrompt,
+        body: articleText,
+        versionNumber,
+        rewriteKind,
+        sourceSnapshots: results,
+        articleContext,
+        createdAt: now,
+      });
+      transaction.update(draftRef, {
+        title,
+        latestVersionId: versionRef.id,
+        versionCount: versionNumber,
+        updatedAt: now,
+      });
+    });
+
+    return {
+      ok: true,
+      draft: {
+        id: draftId,
+        bookId,
+        bookTitle: draftSnapshot.get("bookTitle") || "",
+        title,
+        prompt: originalPrompt,
+        status: draftSnapshot.get("status") || "draft",
+        latestVersionId: versionRef.id,
+        articleContext,
+      },
+      version: {
+        id: versionRef.id,
+        title,
+        body: articleText,
+        versionNumber,
+        sources: results,
+        articleContext,
+      },
+    };
+  }
+);
+
+export const deleteArticleDraftTest = onCall(
+  { region: "us-central1", timeoutSeconds: 60, memory: "256MiB", invoker: "public" },
+  async (request) => {
+    const auth = requireAuth(request.auth?.token
+      ? {
+          uid: request.auth.uid,
+          email: request.auth.token.email,
+          name: request.auth.token.name,
+          picture: request.auth.token.picture,
+      }
+      : undefined);
+    await requireActiveSession(auth, request.data?.sessionId);
+    await requireVerifiedEmail(auth);
+    const draftId = assertString(request.data?.draftId, "draftId");
+    const draftRef = db.collection("articleDrafts").doc(draftId);
+    const draftSnapshot = await draftRef.get();
+    if (!draftSnapshot.exists || draftSnapshot.get("userId") !== auth.uid) {
+      throw new HttpsError("not-found", "Article draft was not found.");
+    }
+
+    await clearArticleDraftVersionsByDraftId(draftId);
+    await draftRef.delete();
+
+    return {
+      ok: true,
+      draftId,
     };
   }
 );
