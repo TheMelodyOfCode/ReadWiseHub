@@ -1709,32 +1709,32 @@ export function App() {
     if (pineconeCandidate && pineconeIndexed > 0 && pineconeMissing === 0) {
       return {
         status: "pinecone-ready",
-        label: "Pinecone ready",
-        detail: `${pineconeIndexed}/${chunkCount || pineconeIndexed} indexed`,
+        label: t.smartSearchReady,
+        detail: `${pineconeIndexed}/${chunkCount || pineconeIndexed} ${t.passagesReady}`,
       };
     }
 
     if (pineconeCandidate && (pineconeIndexed > 0 || pineconeMissing > 0)) {
       return {
         status: "pinecone-incomplete",
-        label: "Pinecone incomplete",
-        detail: `${pineconeIndexed}/${chunkCount || pineconeIndexed + pineconeMissing} indexed · ${pineconeMissing} missing`,
+        label: t.smartSearchPartial,
+        detail: `${pineconeIndexed}/${chunkCount || pineconeIndexed + pineconeMissing} ${t.passagesReady} · ${pineconeMissing} ${t.passagesMissing}`,
       };
     }
 
     if (embeddedCount > 0) {
       return {
         status: "firestore-vectors",
-        label: "Firestore vectors",
-        detail: `${embeddedCount}/${chunkCount || embeddedCount} embedded`,
+        label: t.storedSearchReady,
+        detail: `${embeddedCount}/${chunkCount || embeddedCount} ${t.passagesReady}`,
       };
     }
 
     if (chunkCount > 0) {
       return {
         status: "text-only",
-        label: "Text retrieval",
-        detail: `${chunkCount} chunks · vectors pending`,
+        label: t.textSearchReady,
+        detail: `${chunkCount} ${t.chunks.toLowerCase()} · ${t.smartSearchPending}`,
       };
     }
 
@@ -3505,7 +3505,7 @@ export function App() {
               ref={workspaceMenuRef}
               className={`workspace-menu ${menuOpen ? "open" : ""}`}
             >
-              <nav className="workspace-nav" aria-label="Workspace navigation">
+              <nav className="workspace-nav" aria-label={t.workspaceToolsTitle}>
                 <a href="#library" onClick={() => openMenuTab("ask")}>
                   {t.tabAsk}
                 </a>
@@ -3758,7 +3758,7 @@ export function App() {
                     {job?.errorMessageSafe ? (
                       <p className="error-text">{job.errorMessageSafe}</p>
                     ) : null}
-                    {book.chunkCount > 0 ? <p>{book.chunkCount} chunks</p> : null}
+                    {book.chunkCount > 0 ? <p>{book.chunkCount} {t.chunks.toLowerCase()}</p> : null}
                     <p className={`vector-coverage-pill vector-${vectorCoverage.status}`}>
                       {vectorCoverage.label}
                       {vectorCoverage.detail ? <span>{vectorCoverage.detail}</span> : null}
