@@ -844,6 +844,7 @@ select {
 
 .suggestion-chip {
   min-height: 38px;
+  max-width: 100%;
   border: 1px solid color-mix(in srgb, var(--primary) 36%, var(--border));
   border-radius: 999px;
   padding: 8px 12px;
@@ -852,6 +853,9 @@ select {
   cursor: pointer;
   font-size: 0.9rem;
   font-weight: 850;
+  line-height: 1.25;
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 .suggestion-chip:hover,

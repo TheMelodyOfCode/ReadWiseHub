@@ -6031,6 +6031,10 @@ export const askLibrary = onCall(
       mode: string;
       conversationId: string;
       results: LibrarySearchResult[];
+      activeMode: string;
+      activeBookId: string;
+      activeArtifactId: string;
+      activeSectionNumber: number;
       retrievalDiagnostics?: RetrievalDiagnostics;
     } = {
       ok: true,
@@ -6039,6 +6043,10 @@ export const askLibrary = onCall(
       mode: aiAnswer ? "ai_grounded" : "source_draft",
       conversationId: conversationRef.id,
       results,
+      activeMode,
+      activeBookId: bookId,
+      activeArtifactId,
+      activeSectionNumber,
     };
 
     if (canViewRetrievalDiagnostics(auth.uid)) {
@@ -6074,6 +6082,31 @@ export const createArticleDraftTest = onCall(
     const bookId = assertString(request.data?.bookId, "bookId");
     const locale =
       typeof request.data?.locale === "string" && request.data.locale === "de" ? "de" : "en";
+    const rawContext =
+      request.data?.context && typeof request.data.context === "object"
+        ? (request.data.context as Record<string, unknown>)
+        : {};
+    const contextSourceType =
+      typeof rawContext.sourceType === "string" ? rawContext.sourceType.slice(0, 40) : "manual";
+    const contextActiveArtifactId =
+      typeof rawContext.activeArtifactId === "string" ? rawContext.activeArtifactId.trim() : "";
+    const contextActiveSectionNumber = Math.max(
+      0,
+      Math.floor(Number(rawContext.activeSectionNumber) || 0)
+    );
+    const articleContext = {
+      sourceType: contextSourceType,
+      conversationId:
+        typeof rawContext.conversationId === "string" ? rawContext.conversationId.slice(0, 120) : "",
+      activeMode:
+        typeof rawContext.activeMode === "string" ? rawContext.activeMode.slice(0, 80) : "",
+      activeBookId:
+        typeof rawContext.activeBookId === "string" ? rawContext.activeBookId.slice(0, 120) : "",
+      activeArtifactId: contextActiveArtifactId,
+      activeSectionNumber: contextActiveSectionNumber,
+      titleHint:
+        typeof rawContext.titleHint === "string" ? rawContext.titleHint.slice(0, 160) : "",
+    };
     const userRef = db.collection("users").doc(auth.uid);
     const userSnapshot = await userRef.get();
     const plan = normalizePlan(userSnapshot.get("plan"));
@@ -6088,7 +6121,17 @@ export const createArticleDraftTest = onCall(
       throw new HttpsError("failed-precondition", "This book is not ready for article writing yet.");
     }
 
-    const search = await runLibrarySearch(auth.uid, promptText, bookId);
+    const sectionScopedSearch =
+      contextActiveArtifactId && contextActiveSectionNumber
+        ? await resolveArtifactSectionSearch(
+            auth.uid,
+            promptText,
+            bookId,
+            contextActiveArtifactId,
+            contextActiveSectionNumber
+          )
+        : null;
+    const search = sectionScopedSearch ?? (await runLibrarySearch(auth.uid, promptText, bookId));
     const results = search.results.slice(0, ARTICLE_SOURCE_RESULTS);
     if (results.length === 0) {
       throw new HttpsError(
@@ -6155,6 +6198,7 @@ export const createArticleDraftTest = onCall(
         latestVersionId: versionRef.id,
         versionCount: 1,
         articleMode: "closed_beta",
+        articleContext,
         createdAt: now,
         updatedAt: now,
       });
@@ -6171,6 +6215,7 @@ export const createArticleDraftTest = onCall(
         body: articleText,
         versionNumber: 1,
         sourceSnapshots,
+        articleContext,
         createdAt: now,
       });
       transaction.set(routeTraceRef, {
@@ -6188,6 +6233,7 @@ export const createArticleDraftTest = onCall(
         sourceBookIds: [bookId],
         sourceChunkIds: results.map((result) => result.chunkId || "").filter(Boolean),
         retrievalDiagnostics: search.diagnostics,
+        articleContext,
         articleDraftId: draftRef.id,
         articleVersionId: versionRef.id,
         usageIncremented: true,

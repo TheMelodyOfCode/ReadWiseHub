@@ -209,6 +209,10 @@ type AskLibraryResponse = {
   mode: string;
   conversationId: string;
   results: LibrarySearchResult[];
+  activeMode?: string;
+  activeBookId?: string;
+  activeArtifactId?: string;
+  activeSectionNumber?: number;
 };
 
 type ArticleSource = LibrarySearchResult & {
@@ -239,6 +243,16 @@ type ArticleDraftResponse = {
   ok: boolean;
   draft: ArticleDraftRecord;
   version: ArticleVersionRecord;
+};
+
+type ArticleContext = {
+  sourceType: "answer" | "section" | "section_map" | "selection" | "manual";
+  conversationId?: string;
+  activeMode?: string;
+  activeBookId?: string;
+  activeArtifactId?: string;
+  activeSectionNumber?: number;
+  titleHint?: string;
 };
 
 type SuggestionChip = {
@@ -689,6 +703,7 @@ export function App() {
   const [askAnswer, setAskAnswer] = useState("");
   const [askMode, setAskMode] = useState("");
   const [askSources, setAskSources] = useState<LibrarySearchResult[]>([]);
+  const [askActiveContext, setAskActiveContext] = useState<ArticleContext | null>(null);
   const [usedSuggestionQuestions, setUsedSuggestionQuestions] = useState<string[]>([]);
   const [conversations, setConversations] = useState<ConversationRecord[]>([]);
   const [conversationsReady, setConversationsReady] = useState(false);
@@ -1960,6 +1975,7 @@ export function App() {
     setAskAnswer("");
     setAskMode("");
     setAskSources([]);
+    setAskActiveContext(null);
     setAskProgress(10);
     window.requestAnimationFrame(() => {
       askProgressRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
@@ -1981,6 +1997,18 @@ export function App() {
       setAskAnswer(response.data.answer);
       setAskMode(response.data.mode);
       setAskSources(response.data.results ?? []);
+      setAskActiveContext({
+        sourceType: response.data.activeMode === "section_map" ? "section" : "answer",
+        conversationId: response.data.conversationId,
+        activeMode: response.data.activeMode,
+        activeBookId: response.data.activeBookId || bookId || response.data.results?.[0]?.bookId || "",
+        activeArtifactId: response.data.activeArtifactId || "",
+        activeSectionNumber: response.data.activeSectionNumber || 0,
+        titleHint:
+          response.data.activeMode === "section_map" && response.data.activeSectionNumber
+            ? `${t.sectionLabel} ${response.data.activeSectionNumber}`
+            : trimmedQuestion.slice(0, 90),
+      });
       setAskMessage(response.data.results.length === 0 ? t.noSearchResults : "");
       setAskProgress(100);
     } catch (error) {
@@ -2011,6 +2039,7 @@ export function App() {
     setAskAnswer("");
     setAskMode("");
     setAskSources([]);
+    setAskActiveContext(null);
     setAskMessage("");
     setAskProgress(0);
   }
@@ -2056,7 +2085,11 @@ export function App() {
     }
   }
 
-  async function writeArticleDraftFromPrompt(prompt: string, bookId: string) {
+  async function writeArticleDraftFromPrompt(
+    prompt: string,
+    bookId: string,
+    context: ArticleContext = { sourceType: "manual" }
+  ) {
     const trimmedPrompt = prompt.trim();
     if (!trimmedPrompt || !bookId || articleBusy) {
       return;
@@ -2076,13 +2109,14 @@ export function App() {
 
     try {
       const createArticle = httpsCallable<
-        { bookId: string; prompt: string; locale: Locale },
+        { bookId: string; prompt: string; locale: Locale; context?: ArticleContext },
         ArticleDraftResponse
       >(functions, "createArticleDraftTest");
       const response = await createArticle(withSession({
         bookId,
         prompt: trimmedPrompt,
         locale,
+        context,
       }));
       setArticleCurrentDraft(response.data.draft);
       setArticleCurrentVersion(response.data.version);
@@ -2103,11 +2137,33 @@ export function App() {
   }
 
   function writeArticleFromCurrentAnswer() {
-    const bookId = selectedBookScope || askSources[0]?.bookId || defaultSuggestionBook?.id || "";
+    const isSectionContext =
+      askActiveContext?.activeMode === "section_map" &&
+      Boolean(askActiveContext.activeArtifactId) &&
+      Boolean(askActiveContext.activeSectionNumber);
+    const bookId =
+      askActiveContext?.activeBookId ||
+      selectedBookScope ||
+      askSources[0]?.bookId ||
+      defaultSuggestionBook?.id ||
+      "";
     const prompt =
       askAnswer && askQuestion
-        ? `${t.articleFromAnswerPrompt}\n\n${askQuestion}\n\n${askAnswer.slice(0, 1200)}`
+        ? `${isSectionContext ? t.articleFromSectionAnswerPrompt : t.articleFromAnswerPrompt}\n\n${askQuestion}\n\n${askAnswer.slice(0, 1200)}`
         : t.articlePromptPlaceholder;
+    const context: ArticleContext = isSectionContext
+      ? {
+          ...askActiveContext,
+          sourceType: "section",
+          titleHint: askActiveContext?.titleHint || t.articleSectionTitleHint,
+        }
+      : {
+          ...(askActiveContext ?? {}),
+          sourceType: "answer",
+          conversationId: askActiveContext?.conversationId,
+          activeBookId: bookId,
+          titleHint: askQuestion.slice(0, 90),
+        };
 
     setArticleBookId(bookId);
     setArticlePrompt(prompt);
@@ -2116,7 +2172,7 @@ export function App() {
       document.getElementById("library")?.scrollIntoView({ behavior: "smooth", block: "start" });
     });
     if (bookId && articleStudioVisible) {
-      void writeArticleDraftFromPrompt(prompt, bookId);
+      void writeArticleDraftFromPrompt(prompt, bookId, context);
     }
   }
 
@@ -2131,7 +2187,11 @@ export function App() {
       document.getElementById("library")?.scrollIntoView({ behavior: "smooth", block: "start" });
     });
     if (readerBookId && articleStudioVisible) {
-      void writeArticleDraftFromPrompt(prompt, readerBookId);
+      void writeArticleDraftFromPrompt(prompt, readerBookId, {
+        sourceType: "selection",
+        activeBookId: readerBookId,
+        titleHint: t.articleSelectionTitleHint,
+      });
     }
   }
 
@@ -2140,6 +2200,12 @@ export function App() {
       .map((section) => `${section.sectionNumber}. ${section.title}: ${section.summary}`)
       .join("\n");
     const prompt = `${t.articleFromMapPrompt}\n\n${artifact.title}\n${sectionList}`.slice(0, 1800);
+    const context: ArticleContext = {
+      sourceType: "section_map",
+      activeBookId: artifact.bookId,
+      activeArtifactId: artifact.id,
+      titleHint: artifact.title,
+    };
     setArticleBookId(artifact.bookId);
     setArticlePrompt(prompt);
     setWorkspaceTab("articles");
@@ -2147,7 +2213,7 @@ export function App() {
       document.getElementById("library")?.scrollIntoView({ behavior: "smooth", block: "start" });
     });
     if (artifact.bookId && articleStudioVisible) {
-      void writeArticleDraftFromPrompt(prompt, artifact.bookId);
+      void writeArticleDraftFromPrompt(prompt, artifact.bookId, context);
     }
   }
 
