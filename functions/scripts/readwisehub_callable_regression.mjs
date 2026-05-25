@@ -35,6 +35,21 @@ function assert(condition, message) {
   }
 }
 
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function waitForCondition(checkCondition, label, attempts = 30, delayMs = 1000) {
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    if (await checkCondition()) {
+      return true;
+    }
+    await sleep(delayMs);
+  }
+  failures.push(`${label} did not complete within ${attempts * delayMs}ms.`);
+  return false;
+}
+
 async function createRegressionAuthUser() {
   const response = await fetch(
     `https://identitytoolkit.googleapis.com/v1/accounts:signUp?key=${API_KEY}`,
@@ -1021,6 +1036,11 @@ async function run() {
 
   const deleteBook = await callFunction("deleteBook", { bookId: primaryBookId }, idToken);
   check(deleteBook.ok === true, "deleteBook did not return ok.");
+  check(deleteBook.status === "deleting", `deleteBook returned status ${deleteBook.status}, expected deleting.`);
+  await waitForCondition(async () => {
+    const deletedBook = await db.collection("books").doc(primaryBookId).get();
+    return !deletedBook.exists;
+  }, "Async deleteBook cleanup");
   const deletedBook = await db.collection("books").doc(primaryBookId).get();
   const deletedChunks = await db.collection("bookChunks").where("bookId", "==", primaryBookId).get();
   const deletedSections = await db.collection("bookSections").where("bookId", "==", primaryBookId).get();

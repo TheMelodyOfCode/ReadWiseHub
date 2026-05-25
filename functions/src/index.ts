@@ -2,7 +2,7 @@ import { initializeApp } from "firebase-admin/app";
 import { getAuth } from "firebase-admin/auth";
 import { FieldValue, getFirestore, WriteBatch } from "firebase-admin/firestore";
 import { getStorage } from "firebase-admin/storage";
-import { onDocumentCreated } from "firebase-functions/v2/firestore";
+import { onDocumentCreated, onDocumentUpdated } from "firebase-functions/v2/firestore";
 import { HttpsError, onCall } from "firebase-functions/v2/https";
 import { defineSecret } from "firebase-functions/params";
 import { PDFParse } from "pdf-parse";
@@ -4933,7 +4933,7 @@ export const finalizeUploadReservation = onCall(
 );
 
 export const deleteBook = onCall(
-  { region: "us-central1", timeoutSeconds: 540, memory: "1GiB" },
+  { region: "us-central1", timeoutSeconds: 60, memory: "256MiB" },
   async (request) => {
     const auth = requireAuth(request.auth?.token
       ? {
@@ -4953,6 +4953,14 @@ export const deleteBook = onCall(
     }
 
     const status = assertString(bookSnapshot.get("status"), "status");
+    if (status === "deleting") {
+      return {
+        ok: true,
+        bookId,
+        status: "deleting",
+      };
+    }
+
     if (status === "processing") {
       throw new HttpsError(
         "failed-precondition",
@@ -4960,66 +4968,107 @@ export const deleteBook = onCall(
       );
     }
 
-    const storagePath =
-      typeof bookSnapshot.get("storagePath") === "string"
-        ? bookSnapshot.get("storagePath")
-        : "";
-
     await bookRef.update({
       status: "deleting",
+      deletionRequestedAt: FieldValue.serverTimestamp(),
       updatedAt: FieldValue.serverTimestamp(),
     });
-
-    if (storagePath) {
-      await getStorage().bucket().file(storagePath).delete({ ignoreNotFound: true });
-    }
-
-    const linkedConversations = await db
-      .collection("conversations")
-      .where("sourceBookIds", "array-contains", bookId)
-      .limit(300)
-      .get();
-    if (!linkedConversations.empty) {
-      const batch = db.batch();
-      linkedConversations.docs.forEach((conversationSnapshot) => {
-        if (conversationSnapshot.get("userId") !== auth.uid) {
-          return;
-        }
-
-        batch.update(conversationSnapshot.ref, {
-          hasUnavailableSources: true,
-          unavailableBookTitles: FieldValue.arrayUnion(
-            assertString(bookSnapshot.get("title"), "title")
-          ),
-          updatedAt: FieldValue.serverTimestamp(),
-        });
-      });
-      await batch.commit();
-    }
-
-    await clearExistingChunks(bookId);
-    await clearExistingSections(bookId);
-    await clearBookPages(bookId);
-    await clearBookInlineMedia(bookId);
-    await clearNestedBookSections(bookId);
-    await clearIngestionJobs(bookId);
-    await clearBookArtifacts(bookId);
-    await clearBookArticleDrafts(auth.uid, bookId);
-    await deleteStoragePrefix(`userDerived/${auth.uid}/${bookId}/`);
-    await db
-      .collection("users")
-      .doc(auth.uid)
-      .collection("readerSettings")
-      .doc(bookId)
-      .delete();
-    await db.recursiveDelete(bookRef);
-    const usage = await refreshUserBookUsage(auth.uid);
 
     return {
       ok: true,
       bookId,
-      usage,
+      status: "deleting",
     };
+  }
+);
+
+export const processBookDeletion = onDocumentUpdated(
+  {
+    document: "books/{bookId}",
+    region: "us-central1",
+    timeoutSeconds: 540,
+    memory: "1GiB",
+  },
+  async (event) => {
+    const before = event.data?.before;
+    const after = event.data?.after;
+    if (!before || !after) {
+      return;
+    }
+
+    const bookId = event.params.bookId;
+    if (after.get("status") !== "deleting") {
+      return;
+    }
+    if (before.get("status") === "deleting" && after.get("deletionWorkerStartedAt")) {
+      return;
+    }
+
+    const bookRef = after.ref;
+    const userId = assertString(after.get("userId"), "userId");
+    const storagePath = typeof after.get("storagePath") === "string" ? after.get("storagePath") : "";
+    const title =
+      typeof after.get("title") === "string" && after.get("title")
+        ? after.get("title")
+        : "Deleted book";
+
+    await bookRef.update({
+      deletionWorkerStartedAt: FieldValue.serverTimestamp(),
+      updatedAt: FieldValue.serverTimestamp(),
+    });
+
+    try {
+      if (storagePath) {
+        await getStorage().bucket().file(storagePath).delete({ ignoreNotFound: true });
+      }
+
+      const linkedConversations = await db
+        .collection("conversations")
+        .where("sourceBookIds", "array-contains", bookId)
+        .limit(300)
+        .get();
+      if (!linkedConversations.empty) {
+        const batch = db.batch();
+        linkedConversations.docs.forEach((conversationSnapshot) => {
+          if (conversationSnapshot.get("userId") !== userId) {
+            return;
+          }
+
+          batch.update(conversationSnapshot.ref, {
+            hasUnavailableSources: true,
+            unavailableBookTitles: FieldValue.arrayUnion(title),
+            updatedAt: FieldValue.serverTimestamp(),
+          });
+        });
+        await batch.commit();
+      }
+
+      await clearExistingChunks(bookId);
+      await clearExistingSections(bookId);
+      await clearBookPages(bookId);
+      await clearBookInlineMedia(bookId);
+      await clearNestedBookSections(bookId);
+      await clearIngestionJobs(bookId);
+      await clearBookArtifacts(bookId);
+      await clearBookArticleDrafts(userId, bookId);
+      await deleteStoragePrefix(`userDerived/${userId}/${bookId}/`);
+      await db
+        .collection("users")
+        .doc(userId)
+        .collection("readerSettings")
+        .doc(bookId)
+        .delete();
+      await db.recursiveDelete(bookRef);
+      await refreshUserBookUsage(userId);
+    } catch (error) {
+      const safeError = createSafeError(error);
+      await bookRef.update({
+        status: "deletion_failed",
+        failedReason: safeError.message,
+        updatedAt: FieldValue.serverTimestamp(),
+      }).catch(() => undefined);
+      throw error;
+    }
   }
 );
 

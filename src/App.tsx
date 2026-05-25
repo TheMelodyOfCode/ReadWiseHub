@@ -1848,6 +1848,12 @@ export function App() {
     if (status === "failed" || book.status === "failed") {
       return t.statusFailed;
     }
+    if (book.status === "deleting") {
+      return t.statusDeleting;
+    }
+    if (book.status === "deletion_failed") {
+      return t.statusDeleteFailed;
+    }
     if (book.status === "upload_reserved") {
       return t.statusUploadReserved;
     }
@@ -2209,7 +2215,7 @@ export function App() {
     }, 650);
 
     try {
-      const deleteBook = httpsCallable<{ bookId: string }, { ok: boolean }>(
+      const deleteBook = httpsCallable<{ bookId: string }, { ok: boolean; status?: string }>(
         functions,
         "deleteBook"
       );
@@ -2224,7 +2230,7 @@ export function App() {
           progress: 100,
         },
       }));
-      setUploadMessage(t.deleteDone);
+      setUploadMessage(t.deleteStarted);
     } catch (error) {
       setUploadMessage(getErrorMessage(error, "Delete failed"));
     } finally {
@@ -4129,7 +4135,7 @@ export function App() {
                           <button
                             className="button danger"
                             type="button"
-                            disabled={Boolean(bookDeleteProgress[book.id])}
+                            disabled={Boolean(bookDeleteProgress[book.id]) || book.status === "deleting"}
                             onClick={() => deleteLibraryBook(book)}
                           >
                             {bookDeleteProgress[book.id] ? t.deletingBook : t.deleteBook}
@@ -4148,7 +4154,11 @@ export function App() {
                         <button
                           className="button danger"
                           type="button"
-                          disabled={Boolean(bookDeleteProgress[book.id]) || book.status === "processing"}
+                          disabled={
+                            Boolean(bookDeleteProgress[book.id]) ||
+                            book.status === "processing" ||
+                            book.status === "deleting"
+                          }
                           onClick={() => setConfirmDeleteBookId(book.id)}
                         >
                           {bookDeleteProgress[book.id] ? t.deletingBook : t.deleteBook}
