@@ -202,6 +202,8 @@ type SuggestionChip = {
   bookId?: string;
 };
 
+type SuggestionAction = "fill" | "ask";
+
 type ConversationRecord = {
   id: string;
   title: string;
@@ -640,6 +642,7 @@ export function App() {
   const [askAnswer, setAskAnswer] = useState("");
   const [askMode, setAskMode] = useState("");
   const [askSources, setAskSources] = useState<LibrarySearchResult[]>([]);
+  const [usedSuggestionQuestions, setUsedSuggestionQuestions] = useState<string[]>([]);
   const [conversations, setConversations] = useState<ConversationRecord[]>([]);
   const [conversationsReady, setConversationsReady] = useState(false);
   const [conversationDetail, setConversationDetail] = useState<ConversationDetail | null>(null);
@@ -805,6 +808,26 @@ export function App() {
         question: t.suggestionFinalQuarterQuestion,
         bookId: defaultSuggestionBook.id,
       },
+      {
+        label: t.suggestionCharacterArc,
+        question: t.suggestionCharacterArcQuestion,
+        bookId: defaultSuggestionBook.id,
+      },
+      {
+        label: t.suggestionQuestionsForClub,
+        question: t.suggestionQuestionsForClubQuestion,
+        bookId: defaultSuggestionBook.id,
+      },
+      {
+        label: t.suggestionMemorableQuotes,
+        question: t.suggestionMemorableQuotesQuestion,
+        bookId: defaultSuggestionBook.id,
+      },
+      {
+        label: t.suggestionPersonalTakeaways,
+        question: t.suggestionPersonalTakeawaysQuestion,
+        bookId: defaultSuggestionBook.id,
+      },
     ];
   }, [defaultSuggestionBook, t]);
   const answerFollowUpSuggestions = useMemo<SuggestionChip[]>(() => {
@@ -824,6 +847,26 @@ export function App() {
       {
         label: t.suggestionNext,
         question: t.suggestionNextQuestion,
+        bookId: scopedBookId || undefined,
+      },
+      {
+        label: t.suggestionCounterpoint,
+        question: t.suggestionCounterpointQuestion,
+        bookId: scopedBookId || undefined,
+      },
+      {
+        label: t.suggestionTurnIntoNotes,
+        question: t.suggestionTurnIntoNotesQuestion,
+        bookId: scopedBookId || undefined,
+      },
+      {
+        label: t.suggestionConnectThemes,
+        question: t.suggestionConnectThemesQuestion,
+        bookId: scopedBookId || undefined,
+      },
+      {
+        label: t.suggestionChapterContext,
+        question: t.suggestionChapterContextQuestion,
         bookId: scopedBookId || undefined,
       },
     ];
@@ -1829,6 +1872,16 @@ export function App() {
     await submitAskQuestion(askQuestion, selectedBookScope);
   }
 
+  function rememberSuggestion(suggestion: SuggestionChip) {
+    setUsedSuggestionQuestions((current) => {
+      if (current.includes(suggestion.question)) {
+        return current;
+      }
+
+      return [...current.slice(-20), suggestion.question];
+    });
+  }
+
   function changeAskBookScope(bookId: string) {
     setSelectedBookScope(bookId);
     setAskAnswer("");
@@ -1839,6 +1892,7 @@ export function App() {
   }
 
   function useSuggestion(suggestion: SuggestionChip) {
+    rememberSuggestion(suggestion);
     setAskQuestion(suggestion.question);
     if (suggestion.bookId) {
       changeAskBookScope(suggestion.bookId);
@@ -1851,6 +1905,7 @@ export function App() {
   }
 
   function askSuggestion(suggestion: SuggestionChip) {
+    rememberSuggestion(suggestion);
     setAskQuestion(suggestion.question);
     if (suggestion.bookId) {
       setSelectedBookScope(suggestion.bookId);
@@ -1862,9 +1917,13 @@ export function App() {
   function renderSuggestionChips(
     title: string,
     suggestions: SuggestionChip[],
-    action: "fill" | "ask" = "fill"
+    action: SuggestionAction = "fill"
   ) {
-    if (suggestions.length === 0) {
+    const visibleSuggestions = suggestions
+      .filter((suggestion) => !usedSuggestionQuestions.includes(suggestion.question))
+      .slice(0, action === "ask" ? 3 : 4);
+
+    if (visibleSuggestions.length === 0) {
       return null;
     }
 
@@ -1872,7 +1931,7 @@ export function App() {
       <div className="suggestion-panel">
         <strong>{title}</strong>
         <div className="suggestion-chips">
-          {suggestions.map((suggestion) => (
+          {visibleSuggestions.map((suggestion) => (
             <button
               className="suggestion-chip"
               type="button"
