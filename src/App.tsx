@@ -5719,7 +5719,9 @@ export function App() {
                 <section className="article-studio-panel">
                   <div className="article-studio-heading">
                     <div>
-                      <p className="eyebrow">{t.articleBetaEyebrow}</p>
+                      <p className="eyebrow">
+                        {articleStudioUnlocked ? t.articleBetaEyebrow : t.articleLockedEyebrow}
+                      </p>
                       <h3>{t.articleTitle}</h3>
                       <p>{t.articleCopy}</p>
                     </div>

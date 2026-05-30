@@ -361,6 +361,7 @@ export const dictionaries: Record<Locale, Dictionary> = {
     historyTipCopy:
       "You can ask about sections, halves, or the final quarter. If no saved map exists, ReadWiseHub will use the extracted book order as a fallback.",
     articleBetaEyebrow: "Closed beta",
+    articleLockedEyebrow: "Article preview",
     articleTitle: "Article Studio",
     articleCopy:
       "Write from your books. Start with a book, a section, a chat answer, or selected evidence.",
@@ -772,6 +773,7 @@ export const dictionaries: Record<Locale, Dictionary> = {
     historyTipCopy:
       "Du kannst nach Abschnitten, Hälften oder dem letzten Viertel fragen. Wenn keine gespeicherte Karte existiert, nutzt ReadWiseHub die extrahierte Buchreihenfolge als Fallback.",
     articleBetaEyebrow: "Geschlossene Beta",
+    articleLockedEyebrow: "Artikel-Vorschau",
     articleTitle: "Artikel Studio",
     articleCopy:
       "Schreibe aus deinen Büchern. Starte mit einem Buch, einem Abschnitt, einer Chat-Antwort oder markierten Quellen.",
