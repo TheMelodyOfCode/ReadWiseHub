@@ -5291,6 +5291,21 @@ export function App() {
                 <h3>{t.askTitle}</h3>
                 <p>{t.askCopy}</p>
               </div>
+              {textReadyBooks.length === 0 ? (
+                <div className="ask-empty-hint">
+                  <div>
+                    <h4>{t.askNeedsBookTitle}</h4>
+                    <p>{t.askNeedsBookCopy}</p>
+                  </div>
+                  <button
+                    className="button secondary"
+                    type="button"
+                    onClick={() => setWorkspaceTab("library")}
+                  >
+                    {t.openLibrary}
+                  </button>
+                </div>
+              ) : null}
               <label>
                 {t.bookScope}
                 <select
@@ -5355,9 +5370,6 @@ export function App() {
                   </div>
                   <progress value={askProgress} max="100" />
                 </div>
-              ) : null}
-              {textReadyBooks.length === 0 ? (
-                <p className="small-note">{t.searchNeedsText}</p>
               ) : null}
               {askMessage ? <p className="error-text">{askMessage}</p> : null}
               {askAnswer ? (

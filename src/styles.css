@@ -847,6 +847,20 @@ select {
   border-color: color-mix(in srgb, var(--primary) 45%, var(--border));
 }
 
+.ask-empty-hint {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--border));
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--accent) 9%, var(--surface));
+}
+
+.ask-empty-hint h4,
+.ask-empty-hint p {
+  margin: 0;
+}
+
 .ask-panel label,
 .article-studio-form label,
 .search-panel label {

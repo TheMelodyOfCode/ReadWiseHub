@@ -89,6 +89,10 @@ export const dictionaries: Record<Locale, Dictionary> = {
     askTitle: "Ask your library",
     askCopy:
       "Ask questions across your books and get answers that stay close to the source text.",
+    askNeedsBookTitle: "Add a book first",
+    askNeedsBookCopy:
+      "Upload a book or document in Library before asking questions.",
+    openLibrary: "Open Library",
     askLabel: "Your question",
     askPlaceholder: "What are the main ideas?",
     clearQuestion: "Clear question",
@@ -454,6 +458,10 @@ export const dictionaries: Record<Locale, Dictionary> = {
     askTitle: "Bibliothek fragen",
     askCopy:
       "Stelle Fragen zu deinen Büchern und erhalte Antworten, die nah am Quelltext bleiben.",
+    askNeedsBookTitle: "Füge zuerst ein Buch hinzu",
+    askNeedsBookCopy:
+      "Lade in der Bibliothek ein Buch oder Dokument hoch, bevor du Fragen stellst.",
+    openLibrary: "Bibliothek öffnen",
     askLabel: "Deine Frage",
     askPlaceholder: "Was sind die wichtigsten Ideen?",
     clearQuestion: "Frage leeren",
