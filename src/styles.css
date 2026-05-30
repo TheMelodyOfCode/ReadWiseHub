@@ -3217,3 +3217,74 @@ a:focus-visible {
     flex-wrap: wrap;
   }
 }
+
+.recent-questions-panel {
+  display: grid;
+  gap: 14px;
+  padding: 18px;
+  margin-bottom: 18px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: var(--shadow);
+}
+
+.compact-history-list article {
+  box-shadow: none;
+}
+
+@media (min-width: 720px) and (max-width: 899px) and (orientation: portrait) {
+  .site-header {
+    align-items: stretch;
+  }
+
+  .site-header .brand {
+    min-width: 0;
+  }
+
+  .site-header .brand span {
+    min-width: 0;
+  }
+
+  .site-header .brand small {
+    overflow-wrap: anywhere;
+  }
+
+  .top-nav {
+    display: none;
+  }
+
+  .public-header-actions {
+    grid-template-columns: minmax(112px, 1fr) minmax(112px, 1fr);
+    width: 100%;
+    margin-left: 0;
+  }
+
+  .hero {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 18px;
+    padding-top: 28px;
+  }
+
+  .hero-copy,
+  .compact-account,
+  .preview-panel {
+    grid-column: auto;
+    grid-row: auto;
+  }
+
+  .hero-copy h1 {
+    max-width: 16ch;
+    font-size: clamp(2.35rem, 8vw, 4rem);
+  }
+
+  .auth-actions {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .compact-account,
+  .preview-panel {
+    width: 100%;
+  }
+}

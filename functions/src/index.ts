@@ -143,6 +143,8 @@ type RetrievalDiagnostics = {
   sectionMapMatched?: boolean;
   activeArtifactId?: string;
   activeSectionNumber?: number;
+  conversationContextUsed?: boolean;
+  contextualizedQuery?: string;
 };
 
 type AdminViewer = AuthContext & {
@@ -161,6 +163,10 @@ type ConversationContext = {
   bookId: string;
   activeArtifactId: string;
   activeSectionNumber: number;
+  messages: Array<{
+    role: "user" | "assistant";
+    text: string;
+  }>;
 };
 
 type SourceBookSummary = {
@@ -1693,6 +1699,66 @@ function isContextualFollowUp(queryText: string): boolean {
   );
 }
 
+async function buildConversationContext(
+  conversationSnapshot: FirebaseFirestore.DocumentSnapshot
+): Promise<ConversationContext | null> {
+  const sourceBookIds = Array.isArray(conversationSnapshot.get("sourceBookIds"))
+    ? conversationSnapshot.get("sourceBookIds").filter((value: unknown): value is string => typeof value === "string")
+    : [];
+  const bookId =
+    (typeof conversationSnapshot.get("activeBookId") === "string" && conversationSnapshot.get("activeBookId")) ||
+    (typeof conversationSnapshot.get("scopedBookId") === "string" && conversationSnapshot.get("scopedBookId")) ||
+    sourceBookIds[0] ||
+    "";
+
+  if (!bookId) {
+    return null;
+  }
+
+  const messagesSnapshot = await conversationSnapshot.ref
+    .collection("messages")
+    .orderBy("createdAt", "asc")
+    .limit(10)
+    .get();
+  const messages = messagesSnapshot.docs
+    .map((messageSnapshot) => {
+      const role: "user" | "assistant" = messageSnapshot.get("role") === "assistant" ? "assistant" : "user";
+      const rawText = typeof messageSnapshot.get("text") === "string" ? String(messageSnapshot.get("text")) : "";
+      return {
+        role,
+        text: rawText.replace(/\s+/g, " ").trim().slice(0, 900),
+      };
+    })
+    .filter((message) => message.text);
+
+  return {
+    conversationId: conversationSnapshot.id,
+    bookId,
+    activeArtifactId:
+      typeof conversationSnapshot.get("activeArtifactId") === "string"
+        ? conversationSnapshot.get("activeArtifactId")
+        : "",
+    activeSectionNumber: Number(conversationSnapshot.get("activeSectionNumber")) || 0,
+    messages,
+  };
+}
+
+async function loadConversationContextById(
+  userId: string,
+  conversationId: string
+): Promise<ConversationContext | null> {
+  if (!conversationId) {
+    return null;
+  }
+
+  const conversationSnapshot = await db.collection("conversations").doc(conversationId).get();
+  if (!conversationSnapshot.exists || conversationSnapshot.get("userId") !== userId) {
+    throw new HttpsError("permission-denied", "Conversation was not found for this account.");
+  }
+
+  return buildConversationContext(conversationSnapshot);
+}
+
 async function loadLatestConversationContext(userId: string): Promise<ConversationContext | null> {
   const conversationsSnapshot = await db
     .collection("conversations")
@@ -1720,28 +1786,87 @@ async function loadLatestConversationContext(userId: string): Promise<Conversati
     return null;
   }
 
-  const sourceBookIds = Array.isArray(latestConversation.get("sourceBookIds"))
-    ? latestConversation.get("sourceBookIds").filter((value: unknown): value is string => typeof value === "string")
-    : [];
-  const bookId =
-    (typeof latestConversation.get("activeBookId") === "string" && latestConversation.get("activeBookId")) ||
-    (typeof latestConversation.get("scopedBookId") === "string" && latestConversation.get("scopedBookId")) ||
-    sourceBookIds[0] ||
-    "";
+  return buildConversationContext(latestConversation);
+}
 
-  if (!bookId) {
-    return null;
+function buildDeterministicContextualQuery(queryText: string, context: ConversationContext | null): string {
+  if (!context || context.messages.length === 0) {
+    return queryText;
   }
 
-  return {
-    conversationId: latestConversation.id,
-    bookId,
-    activeArtifactId:
-      typeof latestConversation.get("activeArtifactId") === "string"
-        ? latestConversation.get("activeArtifactId")
-        : "",
-    activeSectionNumber: Number(latestConversation.get("activeSectionNumber")) || 0,
-  };
+  const recentText = context.messages
+    .slice(-4)
+    .map((message) => `${message.role}: ${message.text}`)
+    .join(" ")
+    .slice(0, 1200);
+  return `${queryText}\n\nConversation context: ${recentText}`.slice(0, MAX_SEARCH_QUERY_LENGTH);
+}
+
+async function contextualizeQuestionForRetrieval(
+  queryText: string,
+  context: ConversationContext | null,
+  locale: string
+): Promise<string> {
+  if (!context || context.messages.length === 0) {
+    return queryText;
+  }
+
+  const apiKey = getOpenAiApiKey();
+  if (!apiKey) {
+    return buildDeterministicContextualQuery(queryText, context);
+  }
+
+  const transcript = context.messages
+    .slice(-6)
+    .map((message) => `${message.role === "assistant" ? "Assistant" : "User"}: ${message.text}`)
+    .join("\n")
+    .slice(0, 3600);
+  const instructions = locale === "de"
+    ? [
+        "Formuliere die aktuelle Nutzerfrage als eigenstaendige Suchfrage fuer Buch-Retrieval um.",
+        "Loese Pronomen und Verweise aus dem Gespraech auf.",
+        "Fuege keine neuen Fakten hinzu. Gib nur die Suchfrage zurueck.",
+      ].join(" ")
+    : [
+        "Rewrite the current user question as a standalone retrieval query for searching within a book.",
+        "Resolve pronouns and references using the conversation transcript.",
+        "Do not add unsupported facts. Return only the standalone retrieval query.",
+      ].join(" ");
+
+  try {
+    const response = await fetch("https://api.openai.com/v1/responses", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: OPENAI_MODEL,
+        instructions,
+        input: [
+          `Conversation transcript:\n${transcript}`,
+          "",
+          `Current question:\n${queryText}`,
+        ].join("\n"),
+        max_output_tokens: 120,
+      }),
+    });
+
+    if (!response.ok) {
+      console.error("OpenAI query contextualization failed", {
+        status: response.status,
+        statusText: response.statusText,
+      });
+      return buildDeterministicContextualQuery(queryText, context);
+    }
+
+    const payload = await response.json();
+    const contextualized = extractOpenAiText(payload).replace(/^[\"']|[\"']$/g, "").trim();
+    return contextualized ? contextualized.slice(0, MAX_SEARCH_QUERY_LENGTH) : buildDeterministicContextualQuery(queryText, context);
+  } catch (error) {
+    console.error("OpenAI query contextualization exception", error);
+    return buildDeterministicContextualQuery(queryText, context);
+  }
 }
 
 function parseSectionMapTargetCount(queryText: string): number {
@@ -5874,6 +5999,10 @@ export const askLibrary = onCall(
       typeof request.data?.bookId === "string" && request.data.bookId.trim()
         ? request.data.bookId.trim()
         : "";
+    const requestedConversationId =
+      typeof request.data?.conversationId === "string" && request.data.conversationId.trim()
+        ? request.data.conversationId.trim()
+        : "";
 
     await ensureUserProfile(auth);
 
@@ -5889,9 +6018,18 @@ export const askLibrary = onCall(
       );
     }
 
-    const inheritedContext = !requestedBookId && isContextualFollowUp(queryText)
-      ? await loadLatestConversationContext(auth.uid)
+    const explicitConversationContext = requestedConversationId
+      ? await loadConversationContextById(auth.uid, requestedConversationId)
       : null;
+    const inheritedContext = explicitConversationContext ?? (!requestedBookId && isContextualFollowUp(queryText)
+      ? await loadLatestConversationContext(auth.uid)
+      : null);
+    const retrievalQueryText = inheritedContext
+      ? await contextualizeQuestionForRetrieval(queryText, inheritedContext, locale)
+      : queryText;
+    const answerQuestionText = retrievalQueryText !== queryText
+      ? [queryText, "", "Interpreted with conversation context: " + retrievalQueryText].join("\n")
+      : queryText;
     const bookId = requestedBookId || inheritedContext?.bookId || "";
     const sectionMapTargetCount = bookId ? parseSectionMapTargetCount(queryText) : 0;
     const createdSectionMap = sectionMapTargetCount
@@ -5911,7 +6049,7 @@ export const askLibrary = onCall(
       !sectionMapCreationSearch && inheritedContext?.activeArtifactId && inheritedContext.activeSectionNumber
         ? await resolveArtifactSectionSearch(
             auth.uid,
-            queryText,
+            retrievalQueryText,
             bookId,
             inheritedContext.activeArtifactId,
             inheritedContext.activeSectionNumber
@@ -5922,14 +6060,20 @@ export const askLibrary = onCall(
       inheritedSectionSearch ??
       (await resolveSectionMapSearch(auth.uid, queryText, bookId));
     const structuralRangeSearch =
-      sectionMapSearch ? null : await resolveStructuralRangeSearch(auth.uid, queryText, bookId);
-    const search = sectionMapSearch ?? structuralRangeSearch ?? (await runLibrarySearch(auth.uid, queryText, bookId));
+      sectionMapSearch ? null : await resolveStructuralRangeSearch(auth.uid, retrievalQueryText, bookId);
+    const search = sectionMapSearch ?? structuralRangeSearch ?? (await runLibrarySearch(auth.uid, retrievalQueryText, bookId));
+    if (inheritedContext) {
+      search.diagnostics.conversationContextUsed = true;
+      if (retrievalQueryText !== queryText) {
+        search.diagnostics.contextualizedQuery = retrievalQueryText.slice(0, 240);
+      }
+    }
     const results = search.results;
     const generatedSectionMapAnswer = createdSectionMap
       ? createSectionMapAnswer(createdSectionMap.bookTitle, createdSectionMap.sections, locale)
       : "";
-    const aiAnswer = generatedSectionMapAnswer || (await createAiGroundedAnswer(queryText, results, locale));
-    const answer = aiAnswer ?? createGroundedDraft(queryText, results, locale);
+    const aiAnswer = generatedSectionMapAnswer || (await createAiGroundedAnswer(answerQuestionText, results, locale));
+    const answer = aiAnswer ?? createGroundedDraft(answerQuestionText, results, locale);
     const sourceBooks = summarizeSourceBooks(results);
     const conversationScope = buildDefaultBookScope(auth.uid);
     const activeArtifactId = search.activeArtifactId || "";
@@ -5940,7 +6084,10 @@ export const askLibrary = onCall(
         ? "section_map"
         : "book_qa";
     const now = FieldValue.serverTimestamp();
-    const conversationRef = db.collection("conversations").doc();
+    const shouldAppendToConversation = Boolean(requestedConversationId && inheritedContext?.conversationId === requestedConversationId);
+    const conversationRef = shouldAppendToConversation
+      ? db.collection("conversations").doc(requestedConversationId)
+      : db.collection("conversations").doc();
     const routeTraceRef = db.collection("routeTraces").doc();
     const userMessageRef = conversationRef.collection("messages").doc();
     const assistantMessageRef = conversationRef.collection("messages").doc();
@@ -5959,7 +6106,7 @@ export const askLibrary = onCall(
         );
       }
 
-      transaction.set(conversationRef, {
+      const conversationData: Record<string, unknown> = {
         userId: auth.uid,
         tenantId: conversationScope.tenantId,
         workspaceId: conversationScope.workspaceId,
@@ -5967,7 +6114,7 @@ export const askLibrary = onCall(
         title: queryText.slice(0, 90),
         mode: aiAnswer ? "ai_grounded" : "source_draft",
         status: "answered",
-        messageCount: 2,
+        messageCount: shouldAppendToConversation ? FieldValue.increment(2) : 2,
         sourceCount: results.length,
         latestQuestion: queryText,
         latestAnswerPreview: answer.slice(0, 360),
@@ -5977,17 +6124,25 @@ export const askLibrary = onCall(
         activeBookId: bookId,
         activeArtifactId,
         activeSectionNumber,
-        contextSource: inheritedContext ? "latest_conversation" : "explicit_or_fresh",
-        parentConversationId: inheritedContext?.conversationId || "",
+        contextSource: shouldAppendToConversation
+          ? "explicit_conversation"
+          : inheritedContext
+            ? "latest_conversation"
+            : "explicit_or_fresh",
+        parentConversationId: shouldAppendToConversation ? "" : inheritedContext?.conversationId || "",
+        retrievalQuery: retrievalQueryText,
         sourceBookIds: sourceBooks.map((sourceBook) => sourceBook.bookId),
         sourceBookTitles: sourceBooks.map((sourceBook) => sourceBook.bookTitle),
         retrievalDiagnostics: search.diagnostics,
         routeTraceId: routeTraceRef.id,
         hasUnavailableSources: false,
         unavailableBookTitles: [],
-        createdAt: now,
         updatedAt: now,
-      });
+      };
+      if (!shouldAppendToConversation) {
+        conversationData.createdAt = now;
+      }
+      transaction.set(conversationRef, conversationData, { merge: shouldAppendToConversation });
       transaction.set(userMessageRef, {
         userId: auth.uid,
         tenantId: conversationScope.tenantId,
@@ -6038,8 +6193,13 @@ export const askLibrary = onCall(
         activeBookId: bookId,
         activeArtifactId,
         activeSectionNumber,
-        contextSource: inheritedContext ? "latest_conversation" : "explicit_or_fresh",
-        parentConversationId: inheritedContext?.conversationId || "",
+        contextSource: shouldAppendToConversation
+          ? "explicit_conversation"
+          : inheritedContext
+            ? "latest_conversation"
+            : "explicit_or_fresh",
+        parentConversationId: shouldAppendToConversation ? "" : inheritedContext?.conversationId || "",
+        retrievalQuery: retrievalQueryText,
         queryPreview: queryText.slice(0, 180),
         queryLength: queryText.length,
         answerMode: aiAnswer ? "ai_grounded" : "source_draft",

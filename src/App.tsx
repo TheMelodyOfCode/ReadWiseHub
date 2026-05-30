@@ -1989,14 +1989,16 @@ export function App() {
     }, 700);
 
     try {
+      const activeConversationId = askActiveContext?.conversationId || undefined;
       const askLibrary = httpsCallable<
-        { query: string; locale: Locale; bookId?: string },
+        { query: string; locale: Locale; bookId?: string; conversationId?: string },
         AskLibraryResponse
       >(functions, "askLibrary");
       const response = await askLibrary(withSession({
         query: trimmedQuestion,
         locale,
         bookId: bookId || undefined,
+        conversationId: activeConversationId,
       }));
       setAskAnswer(response.data.answer);
       setAskMode(response.data.mode);
@@ -5201,6 +5203,70 @@ export function App() {
                 </div>
               ) : null}
             </form>
+                <section className="recent-questions-panel">
+                  <div className="history-header">
+                    <div>
+                      <h3>{t.historyTitle}</h3>
+                      <p>{t.historyCopy}</p>
+                    </div>
+                    <button
+                      className="button compact secondary"
+                      type="button"
+                      onClick={() => setWorkspaceTab("history")}
+                    >
+                      {t.tabHistory}
+                    </button>
+                  </div>
+                  {!conversationsReady ? (
+                    <p>Loading...</p>
+                  ) : conversations.length === 0 ? (
+                    <p className="small-note">{t.historyEmpty}</p>
+                  ) : (
+                    <div className="history-list compact-history-list">
+                      {conversations.slice(0, 3).map((conversation) => (
+                        <article key={conversation.id}>
+                          <div className="history-title-row">
+                            <h4>{conversation.title}</h4>
+                            {conversation.mode ? (
+                              <span className="mode-badge">
+                                {conversation.mode === "ai_grounded"
+                                  ? t.aiGroundedMode
+                                  : t.sourceDraftMode}
+                              </span>
+                            ) : null}
+                          </div>
+                          {conversation.latestAnswerPreview ? (
+                            <p>{conversation.latestAnswerPreview}</p>
+                          ) : (
+                            <p>{t.historyNoPreview}</p>
+                          )}
+                          {conversation.hasUnavailableSources ||
+                          conversation.sourceBookIds.some((sourceBookId) => !activeBookIds.has(sourceBookId)) ? (
+                            <p className="history-warning">
+                              {t.historyUnavailable}
+                              {conversation.unavailableBookTitles.length > 0
+                                ? " " + conversation.unavailableBookTitles.join(", ")
+                                : ""}
+                            </p>
+                          ) : null}
+                          <button
+                            className="button compact secondary"
+                            type="button"
+                            disabled={conversationDetailBusyId === conversation.id}
+                            onClick={() => {
+                              setWorkspaceTab("history");
+                              void openConversationDetail(conversation.id);
+                            }}
+                          >
+                            {conversationDetailBusyId === conversation.id
+                              ? t.loading
+                              : t.openQuestion}
+                          </button>
+                        </article>
+                      ))}
+                    </div>
+                  )}
+                </section>
               </div>
             ) : null}
 
