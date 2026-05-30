@@ -790,6 +790,7 @@ export function App() {
   });
   const [articleBookId, setArticleBookId] = useState("");
   const [articlePrompt, setArticlePrompt] = useState("");
+  const [articleDraftContext, setArticleDraftContext] = useState<ArticleContext>({ sourceType: "manual" });
   const [articleBusy, setArticleBusy] = useState(false);
   const [articleProgress, setArticleProgress] = useState(0);
   const [articleMessage, setArticleMessage] = useState("");
@@ -826,7 +827,7 @@ export function App() {
     () => books.filter((book) => book.status === "text_ready"),
     [books]
   );
-  const articleStudioVisible = usage.plan === "plus" || usage.plan === "pro";
+  const articleStudioUnlocked = usage.plan === "plus" || usage.plan === "pro";
   const articleReadyBookId = articleBookId || textReadyBooks[0]?.id || "";
   const activeBookIds = useMemo(() => new Set(books.map((book) => book.id)), [books]);
   const jobsByBookId = useMemo(() => {
@@ -991,6 +992,14 @@ export function App() {
     [books]
   );
   const emailVerified = user?.emailVerified === true;
+  const articleMessageIsSuccess = [
+    t.articleReady,
+    t.articleRewriteReady,
+    t.articleDeleted,
+    t.articlePrepared,
+    t.articleCopied,
+    t.articleExported,
+  ].includes(articleMessage);
   const languageToggle = (
     <div className="language-toggle" aria-label={t.language}>
       <button
@@ -1316,7 +1325,7 @@ export function App() {
     if (workspaceTab === "articles") {
       void loadArticleDrafts();
     }
-  }, [workspaceTab, user, articleStudioVisible, emailVerified]);
+  }, [workspaceTab, user, articleStudioUnlocked, emailVerified]);
 
   useEffect(() => {
     if (!user || !isAdminPath) {
@@ -2162,7 +2171,7 @@ export function App() {
   }
 
   async function loadArticleDrafts() {
-    if (!user || !articleStudioVisible || !emailVerified) {
+    if (!user || !articleStudioUnlocked || !emailVerified) {
       setArticleDrafts([]);
       return;
     }
@@ -2227,7 +2236,10 @@ export function App() {
 
   async function createArticleDraft(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    await writeArticleDraftFromPrompt(articlePrompt, articleReadyBookId);
+    await writeArticleDraftFromPrompt(articlePrompt, articleReadyBookId, {
+      ...articleDraftContext,
+      activeBookId: articleDraftContext.activeBookId || articleReadyBookId,
+    });
   }
 
   function getArticleScopeLabel(context?: ArticleContext) {
@@ -2244,6 +2256,111 @@ export function App() {
       return `${t.sectionLabel} ${context.activeSectionNumber}`;
     }
     return t.articleScopeWholeBook;
+  }
+
+  function getArticleSourceDescription(context?: ArticleContext) {
+    if (!context || context.sourceType === "manual") {
+      return t.articleSourceManual;
+    }
+
+    const bookTitle =
+      books.find((book) => book.id === (context.activeBookId || articleReadyBookId))?.displayTitle ||
+      articleCurrentDraft?.bookTitle ||
+      "";
+    const scope = getArticleScopeLabel(context);
+    const hint = context.titleHint || scope;
+    return [scope, bookTitle, hint].filter(Boolean).join(" · ");
+  }
+
+  function mapArticleVersionRecord(id: string, data: Record<string, unknown>): ArticleVersionRecord {
+    const rawSources = Array.isArray(data.sourceSnapshots)
+      ? data.sourceSnapshots
+      : Array.isArray(data.sources)
+        ? data.sources
+        : [];
+    const sources: ArticleSource[] = rawSources.map((source, index) => {
+      const record = source && typeof source === "object" ? (source as Record<string, unknown>) : {};
+      return {
+        chunkId: typeof record.chunkId === "string" ? record.chunkId : "",
+        bookId: typeof record.bookId === "string" ? record.bookId : "",
+        bookTitle: typeof record.bookTitle === "string" ? record.bookTitle : "",
+        chunkIndex: Number(record.chunkIndex) || 0,
+        score: Number(record.score) || 0,
+        excerpt: typeof record.excerpt === "string" ? record.excerpt : "",
+        sourceNumber: Number(record.sourceNumber) || index + 1,
+      };
+    });
+    return {
+      id,
+      title: typeof data.title === "string" ? data.title : "",
+      body: typeof data.body === "string" ? data.body : "",
+      versionNumber: Number(data.versionNumber) || 1,
+      sources,
+      articleContext:
+        data.articleContext && typeof data.articleContext === "object"
+          ? (data.articleContext as ArticleContext)
+          : undefined,
+    };
+  }
+
+  async function continueArticleDraft(draft: ArticleDraftRecord) {
+    setArticleMessage("");
+    setArticleCurrentDraft(draft);
+    setArticleBookId(draft.bookId);
+    setArticlePrompt(draft.prompt);
+    setArticleDraftContext(draft.articleContext ?? { sourceType: "manual", activeBookId: draft.bookId });
+
+    try {
+      const versionsSnapshot = await getDocs(
+        query(collection(db, "articleVersions"), where("draftId", "==", draft.id))
+      );
+      const versions = versionsSnapshot.docs
+        .map((versionDoc) =>
+          mapArticleVersionRecord(versionDoc.id, versionDoc.data() as Record<string, unknown>)
+        )
+        .sort((left, right) => right.versionNumber - left.versionNumber);
+      const latestVersion =
+        versions.find((version) => version.id === draft.latestVersionId) ?? versions[0] ?? null;
+      setArticleCurrentVersion(latestVersion);
+      if (!latestVersion) {
+        setArticleMessage(t.articleVersionMissing);
+      }
+    } catch (error) {
+      setArticleMessage(getErrorMessage(error, t.articleVersionLoadFailed));
+    }
+  }
+
+  async function copyCurrentArticleMarkdown() {
+    if (!articleCurrentVersion) {
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(articleCurrentVersion.body);
+      setArticleMessage(t.articleCopied);
+    } catch (error) {
+      setArticleMessage(getErrorMessage(error, t.articleCopyFailed));
+    }
+  }
+
+  function exportCurrentArticleMarkdown() {
+    if (!articleCurrentVersion) {
+      return;
+    }
+    const fileTitle = (articleCurrentDraft?.title || articleCurrentVersion.title || "readwisehub-article")
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .slice(0, 80) || "readwisehub-article";
+    const blob = new Blob([articleCurrentVersion.body], { type: "text/markdown;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `${fileTitle}.md`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+    setArticleMessage(t.articleExported);
   }
 
   async function rewriteCurrentArticle(rewriteKind: string) {
@@ -2329,13 +2446,14 @@ export function App() {
 
     setArticleBookId(bookId);
     setArticlePrompt(prompt);
+    setArticleDraftContext(context);
+    setArticleCurrentDraft(null);
+    setArticleCurrentVersion(null);
+    setArticleMessage(t.articlePrepared);
     setWorkspaceTab("articles");
     window.requestAnimationFrame(() => {
       document.getElementById("library")?.scrollIntoView({ behavior: "smooth", block: "start" });
     });
-    if (bookId && articleStudioVisible) {
-      void writeArticleDraftFromPrompt(prompt, bookId, context);
-    }
   }
 
   function writeArticleFromReaderSelection() {
@@ -2344,17 +2462,18 @@ export function App() {
       : t.articlePromptPlaceholder;
     setArticleBookId(readerBookId);
     setArticlePrompt(prompt);
+    setArticleCurrentDraft(null);
+    setArticleCurrentVersion(null);
+    setArticleMessage(t.articlePrepared);
     setWorkspaceTab("articles");
     window.requestAnimationFrame(() => {
       document.getElementById("library")?.scrollIntoView({ behavior: "smooth", block: "start" });
     });
-    if (readerBookId && articleStudioVisible) {
-      void writeArticleDraftFromPrompt(prompt, readerBookId, {
-        sourceType: "selection",
-        activeBookId: readerBookId,
-        titleHint: t.articleSelectionTitleHint,
-      });
-    }
+    setArticleDraftContext({
+      sourceType: "selection",
+      activeBookId: readerBookId,
+      titleHint: t.articleSelectionTitleHint,
+    });
   }
 
   function writeArticleFromSectionMap(artifact: BookArtifact) {
@@ -2370,13 +2489,14 @@ export function App() {
     };
     setArticleBookId(artifact.bookId);
     setArticlePrompt(prompt);
+    setArticleCurrentDraft(null);
+    setArticleCurrentVersion(null);
+    setArticleMessage(t.articlePrepared);
     setWorkspaceTab("articles");
     window.requestAnimationFrame(() => {
       document.getElementById("library")?.scrollIntoView({ behavior: "smooth", block: "start" });
     });
-    if (artifact.bookId && articleStudioVisible) {
-      void writeArticleDraftFromPrompt(prompt, artifact.bookId, context);
-    }
+    setArticleDraftContext(context);
   }
 
   function renderSuggestionChips(
@@ -4163,11 +4283,9 @@ export function App() {
                 <a href="#library" onClick={() => openMenuTab("read")}>
                   {t.tabRead}
                 </a>
-                {articleStudioVisible ? (
-                  <a href="#library" onClick={() => openMenuTab("articles")}>
-                    {t.tabArticles}
-                  </a>
-                ) : null}
+                <a href="#library" onClick={() => openMenuTab("articles")}>
+                  {t.tabArticles}
+                </a>
                 {adminAccess ? (
                   <a href="/admin" onClick={closeMenu}>
                     {t.adminSwitch}
@@ -4257,9 +4375,7 @@ export function App() {
 
             <div className="workspace-tabs" aria-label={t.workspaceToolsTitle}>
               {(
-                articleStudioVisible
-                  ? (["ask", "library", "read", "articles", "history", "help"] as WorkspaceTab[])
-                  : (["ask", "library", "read", "history", "help"] as WorkspaceTab[])
+                ["ask", "library", "read", "articles", "history", "help"] as WorkspaceTab[]
               ).map((tab) => (
                 <button
                   key={tab}
@@ -4689,7 +4805,7 @@ export function App() {
                               >
                                 Delete map
                               </button>
-                              {articleStudioVisible ? (
+                              {articleStudioUnlocked ? (
                                 <button
                                   className="button secondary compact"
                                   type="button"
@@ -5022,7 +5138,7 @@ export function App() {
                           >
                             {readerAskBusy ? t.asking : t.askAboutSelection}
                           </button>
-                          {articleStudioVisible ? (
+                          {articleStudioUnlocked ? (
                             <button
                               className="button secondary compact"
                               type="button"
@@ -5384,7 +5500,7 @@ export function App() {
                   </div>
                   <p>{askAnswer}</p>
                   {renderSuggestionChips(t.followUpTitle, answerFollowUpSuggestions, "ask")}
-                  {articleStudioVisible ? (
+                  {articleStudioUnlocked ? (
                     <div className="inline-actions">
                       <button
                         className="button secondary compact"
@@ -5475,7 +5591,7 @@ export function App() {
               </div>
             ) : null}
 
-            {workspaceTab === "articles" && articleStudioVisible ? (
+            {workspaceTab === "articles" ? (
               <div className="workspace-tab-panel">
                 <section className="article-studio-panel">
                   <div className="article-studio-heading">
@@ -5484,14 +5600,61 @@ export function App() {
                       <h3>{t.articleTitle}</h3>
                       <p>{t.articleCopy}</p>
                     </div>
-                    <span>{usage.articleGenerations} {t.articleUsedThisMonth}</span>
+                    {articleStudioUnlocked ? (
+                      <span>{usage.articleGenerations} {t.articleUsedThisMonth}</span>
+                    ) : (
+                      <span>{usage.plan.toUpperCase()}</span>
+                    )}
+                  </div>
+                  {!articleStudioUnlocked ? (
+                    <div className="article-locked-panel">
+                      <h4>{t.articleLockedTitle}</h4>
+                      <p>{t.articleLockedCopy}</p>
+                      <p className="small-note">{t.articleLockedPreview}</p>
+                    </div>
+                  ) : (
+                    <>
+                  <div className="article-start-panel">
+                    <div>
+                      <h4>{t.articleStartTitle}</h4>
+                      <p>{t.articleStartCopy}</p>
+                    </div>
+                    <div className="article-start-actions">
+                      <button
+                        className="button secondary compact"
+                        type="button"
+                        disabled={!askAnswer || !askQuestion}
+                        onClick={writeArticleFromCurrentAnswer}
+                      >
+                        {t.articleStartCurrentAnswer}
+                      </button>
+                      {bookArtifacts[0] ? (
+                        <button
+                          className="button secondary compact"
+                          type="button"
+                          onClick={() => writeArticleFromSectionMap(bookArtifacts[0])}
+                        >
+                          {t.articleStartSectionMap}
+                        </button>
+                      ) : null}
+                    </div>
+                  </div>
+                  <div className="article-source-panel">
+                    <strong>{t.articleSourceTitle}</strong>
+                    <span>{getArticleSourceDescription(articleDraftContext)}</span>
                   </div>
                   <form className="article-studio-form" onSubmit={createArticleDraft}>
                     <label>
                       {t.articleBookLabel}
                       <select
                         value={articleReadyBookId}
-                        onChange={(event) => setArticleBookId(event.target.value)}
+                        onChange={(event) => {
+                          setArticleBookId(event.target.value);
+                          setArticleDraftContext({
+                            sourceType: "manual",
+                            activeBookId: event.target.value,
+                          });
+                        }}
                         disabled={articleBusy || textReadyBooks.length === 0}
                       >
                         {textReadyBooks.map((book) => (
@@ -5536,7 +5699,7 @@ export function App() {
                       <p className="small-note">{t.searchNeedsText}</p>
                     ) : null}
                     {articleMessage ? (
-                      <p className={articleCurrentVersion ? "success-text" : "error-text"}>
+                      <p className={articleMessageIsSuccess ? "success-text" : "error-text"}>
                         {articleMessage}
                       </p>
                     ) : null}
@@ -5583,6 +5746,20 @@ export function App() {
                         >
                           {articleDeleteBusyId === articleCurrentDraft.id ? t.deletingQuestion : t.deleteArticle}
                         </button>
+                        <button
+                          className="button secondary compact"
+                          type="button"
+                          onClick={() => void copyCurrentArticleMarkdown()}
+                        >
+                          {t.copyMarkdown}
+                        </button>
+                        <button
+                          className="button secondary compact"
+                          type="button"
+                          onClick={exportCurrentArticleMarkdown}
+                        >
+                          {t.exportMarkdown}
+                        </button>
                       </div>
                       <pre>{articleCurrentVersion.body}</pre>
                       {articleCurrentVersion.sources.length > 0 ? (
@@ -5613,6 +5790,13 @@ export function App() {
                             <span>{draft.bookTitle} · {getArticleScopeLabel(draft.articleContext)}</span>
                           </div>
                           <button
+                            className="button secondary compact"
+                            type="button"
+                            onClick={() => void continueArticleDraft(draft)}
+                          >
+                            {t.continueDraft}
+                          </button>
+                          <button
                             className="button danger compact"
                             type="button"
                             disabled={articleDeleteBusyId === draft.id}
@@ -5624,6 +5808,8 @@ export function App() {
                       ))
                     )}
                   </div>
+                  </>
+                  )}
                 </section>
               </div>
             ) : null}

@@ -995,6 +995,42 @@ select {
   gap: 12px;
 }
 
+.article-locked-panel,
+.article-start-panel,
+.article-source-panel {
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid color-mix(in srgb, var(--accent) 42%, var(--border));
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--accent) 8%, var(--surface));
+}
+
+.article-locked-panel h4,
+.article-locked-panel p,
+.article-start-panel h4,
+.article-start-panel p {
+  margin: 0;
+}
+
+.article-start-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.article-source-panel {
+  grid-template-columns: minmax(0, auto) minmax(0, 1fr);
+  align-items: center;
+  background: var(--surface-strong);
+}
+
+.article-source-panel span {
+  min-width: 0;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
 .article-output,
 .article-draft-list article {
   padding: 16px;
