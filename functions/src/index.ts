@@ -77,6 +77,7 @@ const SECTION_SIZE = 1800;
 const MAX_EXTRACTED_TEXT_BYTES = 6_000_000;
 const INGESTION_WORKER_TIMEOUT_SECONDS = 540;
 const MAX_EMBEDDED_CHUNKS_PER_INGESTION = 800;
+const PINECONE_BACKFILL_CHUNKS_PER_JOB = 500;
 const MAX_SEARCH_QUERY_LENGTH = 240;
 const MAX_SEARCH_RESULTS = 5;
 const MAX_ARTICLE_PROMPT_LENGTH = 700;
@@ -3506,6 +3507,57 @@ async function writeChunks(
   }
 }
 
+async function enqueuePineconeBackfill(input: {
+  userId: string;
+  bookId: string;
+  bookScope: BookScope;
+  chunkCount: number;
+  reason: string;
+}) {
+  if (input.chunkCount <= 0) {
+    return;
+  }
+
+  const runRef = db.collection("vectorBackfillRuns").doc();
+  const firstJobRef = db.collection("vectorBackfillJobs").doc(`${input.bookId}_${runRef.id}_000000`);
+  const now = FieldValue.serverTimestamp();
+
+  await db.runTransaction(async (transaction) => {
+    transaction.set(runRef, {
+      userId: input.userId,
+      bookId: input.bookId,
+      tenantId: input.bookScope.tenantId,
+      workspaceId: input.bookScope.workspaceId,
+      libraryId: input.bookScope.libraryId,
+      vectorNamespace: input.bookScope.vectorNamespace,
+      targetBackend: "pinecone",
+      status: "queued",
+      reason: input.reason,
+      chunkCount: input.chunkCount,
+      processedChunkCount: 0,
+      indexedChunkCount: 0,
+      missingChunkCount: input.chunkCount,
+      createdAt: now,
+      updatedAt: now,
+    });
+    transaction.set(firstJobRef, {
+      runId: runRef.id,
+      userId: input.userId,
+      bookId: input.bookId,
+      tenantId: input.bookScope.tenantId,
+      workspaceId: input.bookScope.workspaceId,
+      libraryId: input.bookScope.libraryId,
+      vectorNamespace: input.bookScope.vectorNamespace,
+      targetBackend: "pinecone",
+      status: "queued",
+      startChunkIndex: 0,
+      chunkCount: input.chunkCount,
+      createdAt: now,
+      updatedAt: now,
+    });
+  });
+}
+
 async function writeSections(
   sections: BookSection[],
   userId: string,
@@ -4235,6 +4287,22 @@ async function processIngestionJobById(jobId: string) {
         updatedAt: FieldValue.serverTimestamp(),
       });
     });
+
+    if (!shouldEmbedChunks) {
+      await enqueuePineconeBackfill({
+        userId,
+        bookId,
+        bookScope,
+        chunkCount: chunks.length,
+        reason: "large_ingestion_without_firestore_embeddings",
+      });
+      await bookRef.update({
+        vectorBackfillStatus: "queued",
+        vectorBackfillBackend: "pinecone",
+        vectorBackfillQueuedAt: FieldValue.serverTimestamp(),
+        updatedAt: FieldValue.serverTimestamp(),
+      });
+    }
 
     return {
       ok: true,
@@ -7017,6 +7085,282 @@ export const backfillBookToPineconeTest = onCall(
       indexedChunkCount: audit.indexedChunkCount,
       missingChunkCount: audit.missingChunkCount,
     };
+  }
+);
+
+export const processVectorBackfillJob = onDocumentCreated(
+  {
+    document: "vectorBackfillJobs/{jobId}",
+    region: "us-central1",
+    timeoutSeconds: 540,
+    memory: "1GiB",
+    secrets: [openAiApiKey, pineconeApiKey],
+  },
+  async (event) => {
+    const jobRef = event.data?.ref;
+    const jobSnapshot = event.data;
+    if (!jobRef || !jobSnapshot || jobSnapshot.get("status") !== "queued") {
+      return;
+    }
+
+    const apiKey = getPineconeApiKey();
+    if (!apiKey) {
+      throw new HttpsError("failed-precondition", "Pinecone API key is not configured.");
+    }
+
+    const runId = assertString(jobSnapshot.get("runId"), "runId");
+    const userId = assertString(jobSnapshot.get("userId"), "userId");
+    const bookId = assertString(jobSnapshot.get("bookId"), "bookId");
+    const startChunkIndex = Number(jobSnapshot.get("startChunkIndex")) || 0;
+    const chunkCount = Number(jobSnapshot.get("chunkCount")) || 0;
+    const runRef = db.collection("vectorBackfillRuns").doc(runId);
+    const bookRef = db.collection("books").doc(bookId);
+    const bookSnapshot = await bookRef.get();
+
+    if (!bookSnapshot.exists || bookSnapshot.get("userId") !== userId) {
+      throw new HttpsError("failed-precondition", "Book does not match vector backfill job.");
+    }
+    if (bookSnapshot.get("status") !== "text_ready") {
+      throw new HttpsError("failed-precondition", "Only text-ready books can be vector indexed.");
+    }
+
+    const bookScope = resolveBookScope(userId, bookSnapshot);
+    const language =
+      typeof bookSnapshot.get("language") === "string" ? String(bookSnapshot.get("language")) : "";
+    const endChunkIndex = Math.min(startChunkIndex + PINECONE_BACKFILL_CHUNKS_PER_JOB, chunkCount);
+
+    await db.runTransaction(async (transaction) => {
+      transaction.update(jobRef, {
+        status: "processing",
+        stage: "embedding_chunks",
+        updatedAt: FieldValue.serverTimestamp(),
+      });
+      transaction.set(
+        runRef,
+        {
+          status: "processing",
+          currentStartChunkIndex: startChunkIndex,
+          updatedAt: FieldValue.serverTimestamp(),
+        },
+        { merge: true }
+      );
+      transaction.update(bookRef, {
+        vectorBackfillStatus: "processing",
+        vectorBackfillBackend: "pinecone",
+        updatedAt: FieldValue.serverTimestamp(),
+      });
+    });
+
+    try {
+      const chunkRefs = Array.from(
+        { length: endChunkIndex - startChunkIndex },
+        (_, offset) => db.collection("bookChunks").doc(`${bookId}_${startChunkIndex + offset}`)
+      );
+      const chunkSnapshots = chunkRefs.length > 0 ? await db.getAll(...chunkRefs) : [];
+      const chunks = chunkSnapshots
+        .filter((chunkSnapshot) => chunkSnapshot.exists && chunkSnapshot.get("userId") === userId)
+        .map((chunkSnapshot) => {
+          const text = chunkSnapshot.get("text");
+          const chunkIndex = Number(chunkSnapshot.get("chunkIndex")) || 0;
+          if (typeof text !== "string" || !text.trim()) {
+            return null;
+          }
+
+          return {
+            ref: chunkSnapshot.ref,
+            chunkId: chunkSnapshot.id,
+            bookId,
+            fileId: typeof chunkSnapshot.get("fileId") === "string" ? String(chunkSnapshot.get("fileId")) : bookId,
+            chunkIndex,
+            text,
+            textPreview:
+              typeof chunkSnapshot.get("textPreview") === "string"
+                ? String(chunkSnapshot.get("textPreview"))
+                : text.slice(0, 240),
+            charStart: Number(chunkSnapshot.get("charStart")) || 0,
+            charEnd: Number(chunkSnapshot.get("charEnd")) || 0,
+            chapterId: typeof chunkSnapshot.get("chapterId") === "string" ? String(chunkSnapshot.get("chapterId")) : "",
+            sectionId: typeof chunkSnapshot.get("sectionId") === "string" ? String(chunkSnapshot.get("sectionId")) : "",
+            pageStart: Number(chunkSnapshot.get("pageStart")) || 0,
+            pageEnd: Number(chunkSnapshot.get("pageEnd")) || 0,
+            language,
+          };
+        })
+        .filter((chunk): chunk is NonNullable<typeof chunk> => chunk !== null);
+
+      const embeddingsByIndex = await createChunkEmbeddingMap(chunks);
+      if (chunks.length === 0 || embeddingsByIndex.size !== chunks.length) {
+        throw new HttpsError("internal", "Could not create vector embeddings for this backfill slice.");
+      }
+
+      const chunksForIndex = chunks.map((chunk) => ({
+        ...chunk,
+        embedding: embeddingsByIndex.get(chunk.chunkIndex) || [],
+      }));
+      const backend = new PineconeBookRetrievalBackend({
+        apiKey,
+        firestore: db,
+        indexName: process.env.PINECONE_INDEX_NAME || DEFAULT_VECTOR_INDEX_NAME,
+        indexHost: process.env.PINECONE_INDEX_HOST || "",
+        embeddingModel: OPENAI_EMBEDDING_MODEL,
+        chunkerVersion: CHUNKER_VERSION,
+        extractorVersion: EXTRACTOR_VERSION,
+      });
+
+      await jobRef.update({
+        stage: "upserting_pinecone",
+        updatedAt: FieldValue.serverTimestamp(),
+      });
+      await backend.upsertBookChunks({
+        scope: {
+          userId,
+          tenantId: bookScope.tenantId,
+          workspaceId: bookScope.workspaceId,
+          libraryId: bookScope.libraryId,
+        },
+        chunks: chunksForIndex,
+      });
+
+      let batch: WriteBatch = db.batch();
+      let writes = 0;
+      for (const chunk of chunks) {
+        const vectorRecordId = buildPineconeVectorId(bookId, chunk.chunkIndex);
+        batch.update(chunk.ref, {
+          tenantId: bookScope.tenantId,
+          workspaceId: bookScope.workspaceId,
+          libraryId: bookScope.libraryId,
+          fileId: bookId,
+          chunkId: chunk.chunkId,
+          vectorBackend: "pinecone",
+          vectorIndexName: process.env.PINECONE_INDEX_NAME || DEFAULT_VECTOR_INDEX_NAME,
+          vectorNamespace: bookScope.vectorNamespace,
+          vectorRecordId,
+          vectorMetadata: buildBookVectorMetadata({
+            userId,
+            tenantId: bookScope.tenantId,
+            workspaceId: bookScope.workspaceId,
+            libraryId: bookScope.libraryId,
+            bookId,
+            fileId: bookId,
+            chunkId: chunk.chunkId,
+            chunkIndex: chunk.chunkIndex,
+            chapterId: chunk.chapterId,
+            sectionId: chunk.sectionId,
+            pageStart: chunk.pageStart,
+            pageEnd: chunk.pageEnd,
+            language,
+            embeddingModel: OPENAI_EMBEDDING_MODEL,
+            chunkerVersion: CHUNKER_VERSION,
+            extractorVersion: EXTRACTOR_VERSION,
+          }),
+          embeddingModel: OPENAI_EMBEDDING_MODEL,
+          embeddingDimensions: DEFAULT_EMBEDDING_DIMENSIONS,
+          indexedInPineconeAt: FieldValue.serverTimestamp(),
+          updatedAt: FieldValue.serverTimestamp(),
+        });
+        writes += 1;
+
+        if (writes >= 400) {
+          await batch.commit();
+          batch = db.batch();
+          writes = 0;
+        }
+      }
+
+      if (writes > 0) {
+        await batch.commit();
+      }
+
+      const processedChunkCount = endChunkIndex;
+      const isComplete = processedChunkCount >= chunkCount;
+      const indexedChunkCount = processedChunkCount;
+      const missingChunkCount = Math.max(0, chunkCount - indexedChunkCount);
+      const now = FieldValue.serverTimestamp();
+
+      await db.runTransaction(async (transaction) => {
+        transaction.update(jobRef, {
+          status: "completed",
+          stage: "completed",
+          processedChunkCount: chunks.length,
+          startChunkIndex,
+          endChunkIndex,
+          completedAt: now,
+          updatedAt: now,
+        });
+        transaction.set(
+          runRef,
+          {
+            status: isComplete ? "completed" : "processing",
+            processedChunkCount,
+            indexedChunkCount,
+            missingChunkCount,
+            completedAt: isComplete ? now : FieldValue.delete(),
+            updatedAt: now,
+          },
+          { merge: true }
+        );
+        transaction.update(bookRef, {
+          vectorBackfillStatus: isComplete ? "completed" : "processing",
+          vectorBackfillBackend: "pinecone",
+          vectorBackfillProcessedChunkCount: processedChunkCount,
+          pineconeIndexedChunkCount: indexedChunkCount,
+          pineconeMissingChunkCount: missingChunkCount,
+          pineconeIndexedAt: isComplete ? now : bookSnapshot.get("pineconeIndexedAt") || now,
+          vectorBackendCandidate: "pinecone",
+          vectorIndexName: process.env.PINECONE_INDEX_NAME || DEFAULT_VECTOR_INDEX_NAME,
+          vectorNamespace: bookScope.vectorNamespace,
+          updatedAt: now,
+        });
+
+        if (!isComplete) {
+          const nextJobRef = db
+            .collection("vectorBackfillJobs")
+            .doc(`${bookId}_${runId}_${String(endChunkIndex).padStart(6, "0")}`);
+          transaction.set(nextJobRef, {
+            runId,
+            userId,
+            bookId,
+            tenantId: bookScope.tenantId,
+            workspaceId: bookScope.workspaceId,
+            libraryId: bookScope.libraryId,
+            vectorNamespace: bookScope.vectorNamespace,
+            targetBackend: "pinecone",
+            status: "queued",
+            startChunkIndex: endChunkIndex,
+            chunkCount,
+            createdAt: now,
+            updatedAt: now,
+          });
+        }
+      });
+    } catch (error) {
+      const safeError = createSafeError(error);
+      await db.runTransaction(async (transaction) => {
+        transaction.update(jobRef, {
+          status: "failed",
+          stage: "failed",
+          errorCode: safeError.code,
+          errorMessageSafe: safeError.message,
+          updatedAt: FieldValue.serverTimestamp(),
+        });
+        transaction.set(
+          runRef,
+          {
+            status: "failed",
+            errorCode: safeError.code,
+            errorMessageSafe: safeError.message,
+            updatedAt: FieldValue.serverTimestamp(),
+          },
+          { merge: true }
+        );
+        transaction.update(bookRef, {
+          vectorBackfillStatus: "failed",
+          vectorBackfillError: safeError.message,
+          updatedAt: FieldValue.serverTimestamp(),
+        });
+      });
+      throw error;
+    }
   }
 );
 
