@@ -540,6 +540,24 @@ textarea {
   gap: 14px;
 }
 
+.auth-text-button {
+  justify-self: start;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: var(--primary);
+  font: inherit;
+  font-weight: 800;
+  text-align: left;
+  cursor: pointer;
+}
+
+.auth-text-button:hover,
+.auth-text-button:focus-visible {
+  color: var(--primary-strong);
+  text-decoration: underline;
+}
+
 .error-text {
   color: var(--danger);
   font-weight: 700;

@@ -260,6 +260,11 @@ export const dictionaries: Record<Locale, Dictionary> = {
     authRequired: "Sign in to open your library.",
     authError: "Sign-in failed. Please check the details and try again.",
     userCreated: "Your ReadWiseHub account is ready.",
+    forgotPassword: "Forgot password?",
+    passwordResetEmailRequired: "Enter your email address first.",
+    passwordResetSent:
+      "If this email is registered, we sent a password reset link.",
+    passwordResetFailed: "Password reset email could not be sent.",
     verificationEmailSent: "Verification email sent. Please open the link in your inbox.",
     verificationEmailFailed: "Verification email could not be sent.",
     verificationRefreshFailed: "Verification status could not be refreshed.",
@@ -601,6 +606,11 @@ export const dictionaries: Record<Locale, Dictionary> = {
     authRequired: "Melde dich an, um deine Bibliothek zu öffnen.",
     authError: "Die Anmeldung ist fehlgeschlagen. Bitte prüfe die Angaben und versuche es erneut.",
     userCreated: "Dein ReadWiseHub-Konto ist bereit.",
+    forgotPassword: "Passwort vergessen?",
+    passwordResetEmailRequired: "Gib zuerst deine E-Mail-Adresse ein.",
+    passwordResetSent:
+      "Falls diese E-Mail registriert ist, haben wir dir einen Link zum Zurücksetzen des Passworts gesendet.",
+    passwordResetFailed: "Die Passwort-E-Mail konnte nicht gesendet werden.",
     verificationEmailSent: "Bestätigungs-E-Mail gesendet. Bitte öffne den Link in deinem Postfach.",
     verificationEmailFailed: "Die Bestätigungs-E-Mail konnte nicht gesendet werden.",
     verificationRefreshFailed: "Der Bestätigungsstatus konnte nicht aktualisiert werden.",

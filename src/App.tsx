@@ -6,6 +6,7 @@ import {
   onAuthStateChanged,
   reload,
   sendEmailVerification,
+  sendPasswordResetEmail,
   signInWithEmailAndPassword,
   signInWithPopup,
   signOut,
@@ -1617,6 +1618,30 @@ export function App() {
       setStatus(credential.user.emailVerified ? t.userCreated : t.verifyEmailPrompt);
     } catch (error) {
       setAuthError(getErrorMessage(error, t.authError));
+    }
+  }
+
+  async function sendPasswordReset() {
+    const resetEmail = email.trim();
+    setAuthError("");
+    setStatus("");
+
+    if (!resetEmail) {
+      setAuthError(t.passwordResetEmailRequired);
+      return;
+    }
+
+    try {
+      await sendPasswordResetEmail(auth, resetEmail, {
+        url: window.location.origin,
+      });
+      setStatus(t.passwordResetSent);
+    } catch (error) {
+      if (error instanceof FirebaseError && error.code === "auth/user-not-found") {
+        setStatus(t.passwordResetSent);
+        return;
+      }
+      setAuthError(getErrorMessage(error, t.passwordResetFailed));
     }
   }
 
@@ -5889,6 +5914,13 @@ export function App() {
                       minLength={6}
                     />
                   </label>
+                  <button
+                    className="auth-text-button"
+                    type="button"
+                    onClick={sendPasswordReset}
+                  >
+                    {t.forgotPassword}
+                  </button>
                   <div className="auth-actions">
                     <button className="button primary" type="submit">
                       {t.signIn}
