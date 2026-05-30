@@ -52,6 +52,8 @@ type BookRecord = {
   pineconeIndexedChunkCount: number;
   pineconeMissingChunkCount: number;
   vectorBackendCandidate: string;
+  vectorBackfillStatus: string;
+  vectorBackfillProcessedChunkCount: number;
   renderedPageCount: number;
   originalPageView: boolean;
   structureQuality: string;
@@ -880,6 +882,24 @@ export function App() {
           ? 5
           : 0
     : 0;
+  const uploadTrackingVectorProgress = uploadTrackingBook
+    ? uploadTrackingBook.chunkCount > 0
+      ? Math.max(
+          0,
+          Math.min(
+            100,
+            Math.round(
+              (Math.max(
+                uploadTrackingBook.pineconeIndexedChunkCount,
+                uploadTrackingBook.vectorBackfillProcessedChunkCount
+              ) /
+                uploadTrackingBook.chunkCount) *
+                100
+            )
+          )
+        )
+      : 0
+    : 0;
   const selectedScopeBook = selectedBookScope
     ? textReadyBooks.find((book) => book.id === selectedBookScope) ?? null
     : null;
@@ -1131,6 +1151,14 @@ export function App() {
                   typeof data.vectorBackendCandidate === "string"
                     ? data.vectorBackendCandidate
                     : "",
+                vectorBackfillStatus:
+                  typeof data.vectorBackfillStatus === "string"
+                    ? data.vectorBackfillStatus
+                    : "",
+                vectorBackfillProcessedChunkCount:
+                  typeof data.vectorBackfillProcessedChunkCount === "number"
+                    ? data.vectorBackfillProcessedChunkCount
+                    : 0,
                 renderedPageCount:
                   typeof data.renderedPageCount === "number" ? data.renderedPageCount : 0,
                 originalPageView: data.originalPageView === true,
@@ -1862,6 +1890,7 @@ export function App() {
         );
       });
 
+      setUploadMessage(t.uploadFinalizing);
       await finalizeReservation(withSession({ bookId: reservation.data.bookId }));
       setUploadProgress(100);
       setSelectedFile(null);
@@ -1975,6 +2004,77 @@ export function App() {
     }
 
     return book.status;
+  }
+
+  function getIngestionStageLabel(job?: IngestionJobRecord | null) {
+    if (!job) {
+      return t.uploadStageWaiting;
+    }
+
+    if (job.status === "failed") {
+      return t.uploadStageFailed;
+    }
+    if (job.status === "completed") {
+      return t.uploadStageReady;
+    }
+
+    switch (job.stage) {
+      case "queued":
+        return t.uploadStageQueued;
+      case "extracting_text":
+        return t.uploadStageExtracting;
+      case "chunking_text":
+        return t.uploadStageChunking;
+      case "embedding_chunks":
+        return t.uploadStageEmbedding;
+      case "writing_chunks":
+        return t.uploadStageWriting;
+      case "text_ready":
+        return t.uploadStageReady;
+      default:
+        return job.status === "processing" ? t.uploadStageProcessing : job.stage || job.status;
+    }
+  }
+
+  function getIngestionStageDetail(job?: IngestionJobRecord | null) {
+    if (!job) {
+      return t.uploadStageWaitingDetail;
+    }
+
+    switch (job.stage) {
+      case "queued":
+        return t.uploadStageQueuedDetail;
+      case "extracting_text":
+        return t.uploadStageExtractingDetail;
+      case "chunking_text":
+        return t.uploadStageChunkingDetail;
+      case "embedding_chunks":
+        return t.uploadStageEmbeddingDetail;
+      case "writing_chunks":
+        return t.uploadStageWritingDetail;
+      case "text_ready":
+        return t.uploadStageReadyDetail;
+      default:
+        return job.status === "failed" ? job.errorMessageSafe || t.uploadStageFailedDetail : t.uploadStageProcessingDetail;
+    }
+  }
+
+  function getVectorBackfillProgress(book: BookRecord) {
+    if (!book.chunkCount) {
+      return 0;
+    }
+
+    return Math.max(
+      0,
+      Math.min(
+        100,
+        Math.round(
+          (Math.max(book.pineconeIndexedChunkCount, book.vectorBackfillProcessedChunkCount) /
+            book.chunkCount) *
+            100
+        )
+      )
+    );
   }
 
   function getVectorCoverage(book: {
@@ -4436,11 +4536,23 @@ export function App() {
                     <strong>
                       {uploadTrackingBook.status === "text_ready"
                         ? `${t.uploadReady}: ${uploadTrackingBook.displayTitle}`
-                        : `${t.uploadProcessing}: ${uploadTrackingBook.displayTitle}`}
+                        : `${getIngestionStageLabel(uploadTrackingJob)}: ${uploadTrackingBook.displayTitle}`}
                     </strong>
                     <span>{processingProgress}%</span>
                   </div>
                   <progress value={processingProgress} max="100" />
+                  <p>{uploadTrackingBook.status === "text_ready" ? t.uploadStageReadyDetail : getIngestionStageDetail(uploadTrackingJob)}</p>
+                </div>
+              ) : null}
+              {uploadTrackingBook?.status === "text_ready" &&
+              ["queued", "processing"].includes(uploadTrackingBook.vectorBackfillStatus) ? (
+                <div className="upload-progress vector-progress" role="status" aria-live="polite">
+                  <div>
+                    <strong>{t.searchIndexPreparing}</strong>
+                    <span>{uploadTrackingVectorProgress}%</span>
+                  </div>
+                  <progress value={uploadTrackingVectorProgress} max="100" />
+                  <p>{t.searchIndexPreparingDetail}</p>
                 </div>
               ) : null}
               {uploadTrackingBook?.status === "text_ready"
@@ -4526,10 +4638,11 @@ export function App() {
                     {job ? (
                       <div className="job-progress">
                         <div>
-                          <span>{job.stage || job.status}</span>
+                          <span>{getIngestionStageLabel(job)}</span>
                           <strong>{Math.max(0, Math.min(100, job.progress))}%</strong>
                         </div>
                         <progress value={job.progress} max="100" />
+                        <p>{getIngestionStageDetail(job)}</p>
                       </div>
                     ) : null}
                     {book.formatWarning ? (
@@ -4543,6 +4656,16 @@ export function App() {
                       {vectorCoverage.label}
                       {vectorCoverage.detail ? <span>{vectorCoverage.detail}</span> : null}
                     </p>
+                    {["queued", "processing"].includes(book.vectorBackfillStatus) ? (
+                      <div className="job-progress vector-job-progress">
+                        <div>
+                          <span>{t.searchIndexPreparing}</span>
+                          <strong>{getVectorBackfillProgress(book)}%</strong>
+                        </div>
+                        <progress value={getVectorBackfillProgress(book)} max="100" />
+                        <p>{t.searchIndexPreparingDetail}</p>
+                      </div>
+                    ) : null}
                     <p className="small-note">
                       {book.language || "unknown"} · {Math.round(book.sizeBytes / 1024)} KB
                       {book.embeddedChunkCount > 0

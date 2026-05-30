@@ -2326,6 +2326,17 @@ select {
   color: var(--accent);
 }
 
+.vector-progress,
+.vector-job-progress {
+  border-color: color-mix(in srgb, var(--accent) 42%, var(--border));
+  background: color-mix(in srgb, var(--accent) 8%, var(--surface));
+}
+
+.vector-progress progress,
+.vector-job-progress progress {
+  accent-color: var(--accent);
+}
+
 .vector-firestore-vectors {
   border-color: color-mix(in srgb, var(--primary) 42%, var(--border));
   color: var(--primary);
@@ -2355,6 +2366,13 @@ select {
 .task-progress span {
   color: var(--muted);
   font-weight: 800;
+}
+
+.job-progress p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.86rem;
+  line-height: 1.35;
 }
 
 .job-progress progress,
@@ -2495,6 +2513,13 @@ select {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
+}
+
+.upload-progress p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.86rem;
+  line-height: 1.35;
 }
 
 .upload-progress progress {
