@@ -2,6 +2,7 @@ import { FormEvent, TouchEvent, useEffect, useMemo, useRef, useState } from "rea
 import { FirebaseError } from "firebase/app";
 import {
   User,
+  confirmPasswordReset,
   createUserWithEmailAndPassword,
   onAuthStateChanged,
   reload,
@@ -11,6 +12,7 @@ import {
   signInWithPopup,
   signOut,
   updateProfile,
+  verifyPasswordResetCode,
 } from "firebase/auth";
 import {
   collection,
@@ -686,6 +688,14 @@ export function App() {
   const [password, setPassword] = useState("");
   const [authError, setAuthError] = useState("");
   const [status, setStatus] = useState("");
+  const [resetActionEmail, setResetActionEmail] = useState("");
+  const [resetActionPassword, setResetActionPassword] = useState("");
+  const [resetActionConfirmPassword, setResetActionConfirmPassword] = useState("");
+  const [resetActionBusy, setResetActionBusy] = useState(false);
+  const [resetActionChecked, setResetActionChecked] = useState(false);
+  const [resetActionComplete, setResetActionComplete] = useState(false);
+  const [resetActionError, setResetActionError] = useState("");
+  const [resetActionFormError, setResetActionFormError] = useState("");
   const [verificationBusy, setVerificationBusy] = useState(false);
   const [books, setBooks] = useState<BookRecord[]>([]);
   const [booksReady, setBooksReady] = useState(false);
@@ -804,6 +814,13 @@ export function App() {
   const [adminMessage, setAdminMessage] = useState("");
 
   const t = useMemo(() => dictionaries[locale], [locale]);
+  const authActionParams = useMemo(() => new URLSearchParams(window.location.search), []);
+  const authActionMode = authActionParams.get("mode") || "";
+  const authActionCode = authActionParams.get("oobCode") || "";
+  const isPasswordResetAction =
+    window.location.pathname.startsWith("/auth-action") &&
+    authActionMode === "resetPassword" &&
+    Boolean(authActionCode);
   const textReadyBooks = useMemo(
     () => books.filter((book) => book.status === "text_ready"),
     [books]
@@ -1013,6 +1030,24 @@ export function App() {
     document.documentElement.lang = locale;
     window.localStorage.setItem("readwisehub_locale", locale);
   }, [locale]);
+
+  useEffect(() => {
+    if (!isPasswordResetAction) {
+      return;
+    }
+
+    setResetActionChecked(false);
+    setResetActionError("");
+    verifyPasswordResetCode(auth, authActionCode)
+      .then((accountEmail) => {
+        setResetActionEmail(accountEmail);
+        setResetActionChecked(true);
+      })
+      .catch(() => {
+        setResetActionError(t.passwordResetInvalidLink);
+        setResetActionChecked(true);
+      });
+  }, [authActionCode, isPasswordResetAction, t.passwordResetInvalidLink]);
 
   useEffect(() => {
     return onAuthStateChanged(auth, async (currentUser) => {
@@ -1633,7 +1668,7 @@ export function App() {
 
     try {
       await sendPasswordResetEmail(auth, resetEmail, {
-        url: window.location.origin,
+        url: `${window.location.origin}/auth-action`,
       });
       setStatus(t.passwordResetSent);
     } catch (error) {
@@ -1642,6 +1677,33 @@ export function App() {
         return;
       }
       setAuthError(getErrorMessage(error, t.passwordResetFailed));
+    }
+  }
+
+  async function submitResetAction(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setResetActionFormError("");
+
+    if (resetActionPassword.length < 8) {
+      setResetActionFormError(t.passwordResetTooShort);
+      return;
+    }
+
+    if (resetActionPassword !== resetActionConfirmPassword) {
+      setResetActionFormError(t.passwordResetMismatch);
+      return;
+    }
+
+    setResetActionBusy(true);
+    try {
+      await confirmPasswordReset(auth, authActionCode, resetActionPassword);
+      setResetActionComplete(true);
+      setResetActionPassword("");
+      setResetActionConfirmPassword("");
+    } catch (error) {
+      setResetActionFormError(getErrorMessage(error, t.passwordResetConfirmFailed));
+    } finally {
+      setResetActionBusy(false);
     }
   }
 
@@ -3951,6 +4013,111 @@ export function App() {
     );
   }
 
+  if (isPasswordResetAction) {
+    const passwordLongEnough = resetActionPassword.length >= 8;
+    const passwordsMatch =
+      resetActionPassword.length > 0 &&
+      resetActionPassword === resetActionConfirmPassword;
+    const resetSubmitDisabled =
+      resetActionBusy ||
+      !resetActionChecked ||
+      Boolean(resetActionError) ||
+      resetActionComplete ||
+      !passwordLongEnough ||
+      !passwordsMatch;
+
+    return (
+      <div className="app-shell auth-action-page">
+        <header className="site-header">
+          <a className="brand" href="/" aria-label="ReadWiseHub home">
+            <img className="brand-mark" src={readWiseHubIcon} alt="" aria-hidden="true" />
+            <span>
+              <strong>ReadWiseHub</strong>
+              <small>{t.brandTagline}</small>
+            </span>
+          </a>
+          <div className="public-header-actions">
+            {languageToggle}
+            {themeToggle}
+          </div>
+        </header>
+
+        <main className="auth-action-main">
+          <section className="auth-action-card">
+            <p className="eyebrow">{t.passwordResetEyebrow}</p>
+            <h1>{t.passwordResetTitle}</h1>
+
+            {!resetActionChecked ? <p>{t.loading}</p> : null}
+
+            {resetActionChecked && resetActionError ? (
+              <div className="auth-status-card error-text">
+                <h2>{t.passwordResetLinkProblemTitle}</h2>
+                <p>{resetActionError}</p>
+                <a className="button primary" href="/">
+                  {t.backToSignIn}
+                </a>
+              </div>
+            ) : null}
+
+            {resetActionComplete ? (
+              <div className="auth-status-card success-text">
+                <h2>{t.passwordResetCompleteTitle}</h2>
+                <p>{t.passwordResetCompleteCopy}</p>
+                <a className="button primary" href="/">
+                  {t.backToSignIn}
+                </a>
+              </div>
+            ) : null}
+
+            {resetActionChecked && !resetActionError && !resetActionComplete ? (
+              <form className="auth-panel" onSubmit={submitResetAction}>
+                <p className="small-note">
+                  {t.passwordResetFor} <strong>{resetActionEmail}</strong>
+                </p>
+                <label>
+                  {t.newPassword}
+                  <input
+                    type="password"
+                    autoComplete="new-password"
+                    value={resetActionPassword}
+                    onChange={(event) => setResetActionPassword(event.target.value)}
+                    required
+                    minLength={8}
+                  />
+                </label>
+                <label>
+                  {t.repeatNewPassword}
+                  <input
+                    type="password"
+                    autoComplete="new-password"
+                    value={resetActionConfirmPassword}
+                    onChange={(event) => setResetActionConfirmPassword(event.target.value)}
+                    required
+                    minLength={8}
+                  />
+                </label>
+                <ul className="password-check-list">
+                  <li className={passwordLongEnough ? "valid" : ""}>
+                    {t.passwordResetLengthCheck}
+                  </li>
+                  <li className={passwordsMatch ? "valid" : ""}>
+                    {t.passwordResetMatchCheck}
+                  </li>
+                </ul>
+                <button className="button primary" type="submit" disabled={resetSubmitDisabled}>
+                  {resetActionBusy ? t.loading : t.saveNewPassword}
+                </button>
+                {resetActionFormError ? (
+                  <p className="error-text">{resetActionFormError}</p>
+                ) : null}
+              </form>
+            ) : null}
+          </section>
+        </main>
+      </div>
+    );
+  }
+
   if (user) {
     if (isAdminPath) {
       return renderAdminConsole();
@@ -5938,7 +6105,14 @@ export function App() {
                   {t.continueWithGoogle}
                 </button>
                 {authError ? <p className="error-text">{authError}</p> : null}
-                {status ? <p className="success-text">{status}</p> : null}
+                {status === t.passwordResetSent ? (
+                  <div className="auth-status-card success-text">
+                    <h3>{t.passwordResetSentTitle}</h3>
+                    <p>{status}</p>
+                  </div>
+                ) : status ? (
+                  <p className="success-text">{status}</p>
+                ) : null}
               </div>
             )}
           </section>
