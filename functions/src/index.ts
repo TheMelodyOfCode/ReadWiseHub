@@ -74,7 +74,9 @@ const ALLOWED_CONTENT_TYPES = new Set([
 const CHUNK_SIZE = 1200;
 const CHUNK_OVERLAP = 160;
 const SECTION_SIZE = 1800;
-const MAX_EXTRACTED_TEXT_BYTES = 2_500_000;
+const MAX_EXTRACTED_TEXT_BYTES = 6_000_000;
+const INGESTION_WORKER_TIMEOUT_SECONDS = 540;
+const MAX_EMBEDDED_CHUNKS_PER_INGESTION = 800;
 const MAX_SEARCH_QUERY_LENGTH = 240;
 const MAX_SEARCH_RESULTS = 5;
 const MAX_ARTICLE_PROMPT_LENGTH = 700;
@@ -4156,13 +4158,24 @@ async function processIngestionJobById(jobId: string) {
     const bookScope = resolveBookScope(userId, bookSnapshot);
     const renderedPages = extraction.renderedPages ?? [];
 
+    const shouldEmbedChunks = chunks.length <= MAX_EMBEDDED_CHUNKS_PER_INGESTION;
     await jobRef.update({
-      stage: "embedding_chunks",
-      progress: 65,
+      stage: shouldEmbedChunks ? "embedding_chunks" : "writing_chunks",
+      progress: shouldEmbedChunks ? 65 : 70,
       updatedAt: FieldValue.serverTimestamp(),
     });
 
-    const embeddingsByIndex = await createChunkEmbeddingMap(chunks);
+    const embeddingsByIndex = shouldEmbedChunks
+      ? await createChunkEmbeddingMap(chunks)
+      : new Map<number, number[]>();
+
+    if (shouldEmbedChunks) {
+      await jobRef.update({
+        stage: "writing_chunks",
+        progress: 80,
+        updatedAt: FieldValue.serverTimestamp(),
+      });
+    }
 
     await clearExistingChunks(bookId);
     await clearExistingSections(bookId);
@@ -4176,6 +4189,7 @@ async function processIngestionJobById(jobId: string) {
     await db.runTransaction(async (transaction) => {
       transaction.update(bookRef, {
         status: "text_ready",
+        failedReason: FieldValue.delete(),
         tenantId: bookScope.tenantId,
         workspaceId: bookScope.workspaceId,
         libraryId: bookScope.libraryId,
@@ -5239,7 +5253,12 @@ export const processBookDeletion = onDocumentUpdated(
 );
 
 export const processIngestionJob = onCall(
-  { region: "us-central1", timeoutSeconds: 300, memory: "1GiB", secrets: [openAiApiKey] },
+  {
+    region: "us-central1",
+    timeoutSeconds: INGESTION_WORKER_TIMEOUT_SECONDS,
+    memory: "1GiB",
+    secrets: [openAiApiKey],
+  },
   async (request) => {
     const auth = requireAuth(request.auth?.token
       ? {
@@ -5266,7 +5285,7 @@ export const processQueuedIngestionJob = onDocumentCreated(
   {
     document: "ingestionJobs/{jobId}",
     region: "us-central1",
-    timeoutSeconds: 300,
+    timeoutSeconds: INGESTION_WORKER_TIMEOUT_SECONDS,
     memory: "1GiB",
     secrets: [openAiApiKey],
   },
