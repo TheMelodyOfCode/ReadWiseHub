@@ -269,6 +269,7 @@ type InlineBookMedia = {
 type StructureAssessment = {
   structureQuality: string;
   formatWarning: string;
+  preferredReaderMode: "text" | "original";
 };
 type BookScope = {
   tenantId: string;
@@ -4378,6 +4379,7 @@ function assessDocumentStructure(
     return {
       structureQuality: extraction.quality ?? "text",
       formatWarning: "",
+      preferredReaderMode: "text",
     };
   }
 
@@ -4390,6 +4392,16 @@ function assessDocumentStructure(
       structureQuality: "poor",
       formatWarning:
         "This PDF has limited layout data. Reading may be less comfortable, but search and AI questions can still work.",
+      preferredReaderMode: "text",
+    };
+  }
+
+  if (sectionsPerPage >= 3.5 || (extraction.tocEntries || []).length >= 20) {
+    return {
+      structureQuality: "complex_layout",
+      formatWarning:
+        "This PDF has a dense or multi-column layout. The original page view is the most reliable way to read it; extracted text is still used for search and questions.",
+      preferredReaderMode: "original",
     };
   }
 
@@ -4398,12 +4410,14 @@ function assessDocumentStructure(
       structureQuality: "limited",
       formatWarning:
         "This PDF appears to have sparse or irregular text structure. Reading may be less comfortable, but search and AI questions can still work.",
+      preferredReaderMode: "text",
     };
   }
 
   return {
     structureQuality: "layout",
     formatWarning: "",
+    preferredReaderMode: "text",
   };
 }
 
@@ -4550,6 +4564,7 @@ async function processIngestionJobById(jobId: string) {
         derivedPageImagePrefix: renderedPages.length > 0 ? `userDerived/${userId}/${bookId}/pages` : "",
         structureQuality: structureAssessment.structureQuality,
         formatWarning: structureAssessment.formatWarning,
+        preferredReaderMode: structureAssessment.preferredReaderMode,
         embeddedChunkCount: embeddingsByIndex.size,
         embeddingModel: embeddingsByIndex.size > 0 ? OPENAI_EMBEDDING_MODEL : "",
         embeddingDimensions: embeddingsByIndex.size > 0 ? DEFAULT_EMBEDDING_DIMENSIONS : 0,

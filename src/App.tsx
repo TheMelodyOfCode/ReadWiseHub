@@ -59,6 +59,7 @@ type BookRecord = {
   originalPageView: boolean;
   structureQuality: string;
   formatWarning: string;
+  preferredReaderMode: ReaderMode;
   createdAtMs: number;
   updatedAtMs: number;
 };
@@ -1215,6 +1216,8 @@ export function App() {
                   typeof data.structureQuality === "string" ? data.structureQuality : "",
                 formatWarning:
                   typeof data.formatWarning === "string" ? data.formatWarning : "",
+                preferredReaderMode:
+                  data.preferredReaderMode === "original" ? "original" as ReaderMode : "text" as ReaderMode,
                 createdAtMs:
                   typeof data.createdAt?.toMillis === "function"
                     ? data.createdAt.toMillis()
@@ -2999,9 +3002,14 @@ export function App() {
     }
 
     const targetPage = page >= 0 ? page : savedPage;
+    const nextReaderMode =
+      page < 0 && book.preferredReaderMode === "original" && book.originalPageView
+        ? "original"
+        : readerMode;
 
     setReaderBookId(book.id);
     setReaderPage(targetPage);
+    setReaderMode(nextReaderMode);
     setReaderBookmarks(bookmarks);
     setReaderHighlights(highlights);
     setReaderBookmarkMenuOpen(false);
@@ -3041,7 +3049,7 @@ export function App() {
         bookId: book.id,
         page: targetPage,
         pageSize: readerPageSize,
-        mode: readerMode,
+        mode: nextReaderMode,
       }));
       setReaderChunks(response.data.chunks ?? []);
       setReaderInlineMedia(response.data.inlineMedia ?? []);
@@ -4928,6 +4936,8 @@ export function App() {
                           <dd>
                             {book.structureQuality === "layout"
                               ? t.structureGood
+                              : book.structureQuality === "complex_layout"
+                                ? t.structureComplex
                               : book.structureQuality === "limited"
                                 ? t.structureLimited
                                 : book.structureQuality === "poor"
