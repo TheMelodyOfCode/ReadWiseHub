@@ -46,23 +46,28 @@ def is_heading(text: str, size: float, median_size: float, y: float) -> bool:
 def merge_lines(lines: list[dict[str, Any]]) -> list[dict[str, Any]]:
     paragraphs: list[dict[str, Any]] = []
     current: list[str] = []
-    current_page = 0
+    current_page_start = 0
+    current_page_end = 0
     current_title = ""
     previous: dict[str, Any] | None = None
 
     def flush() -> None:
-        nonlocal current, current_title, current_page
+        nonlocal current, current_title, current_page_start, current_page_end
         text = clean_text(" ".join(current))
         if text:
             paragraphs.append(
                 {
-                    "page": current_page,
+                    "page": current_page_start,
+                    "pageStart": current_page_start,
+                    "pageEnd": current_page_end or current_page_start,
                     "title": current_title,
                     "text": text,
                 }
             )
         current = []
         current_title = ""
+        current_page_start = 0
+        current_page_end = 0
 
     for line in lines:
         text = clean_text(line["text"])
@@ -71,7 +76,15 @@ def merge_lines(lines: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
         if line["heading"]:
             flush()
-            paragraphs.append({"page": line["page"], "title": text, "text": text})
+            paragraphs.append(
+                {
+                    "page": line["page"],
+                    "pageStart": line["page"],
+                    "pageEnd": line["page"],
+                    "title": text,
+                    "text": text,
+                }
+            )
             previous = line
             continue
 
@@ -81,7 +94,9 @@ def merge_lines(lines: list[dict[str, Any]]) -> list[dict[str, Any]]:
             indent_jump = line["x0"] - previous["x0"]
             previous_text = clean_text(previous["text"])
             starts_new = (
-                vertical_gap > max(8, line["size"] * 0.9)
+                line["page"] != previous["page"]
+                or vertical_gap < -max(8, line["size"] * 0.9)
+                or vertical_gap > max(8, line["size"] * 0.9)
                 or indent_jump > 22
                 or previous_text.endswith((".", "!", "?", ".”", "?”"))
             )
@@ -89,8 +104,10 @@ def merge_lines(lines: list[dict[str, Any]]) -> list[dict[str, Any]]:
         if starts_new:
             flush()
 
+        if not current:
+            current_page_start = line["page"]
         current.append(text)
-        current_page = line["page"]
+        current_page_end = line["page"]
         previous = line
 
     flush()
@@ -102,9 +119,10 @@ def build_sections(paragraphs: list[dict[str, Any]], target_size: int = 1800) ->
     title = ""
     parts: list[str] = []
     start_page = 0
+    end_page = 0
 
-    def flush(end_page: int) -> None:
-        nonlocal parts, title, start_page
+    def flush() -> None:
+        nonlocal parts, title, start_page, end_page
         text = "\n\n".join(parts).strip()
         if not text:
             return
@@ -115,24 +133,28 @@ def build_sections(paragraphs: list[dict[str, Any]], target_size: int = 1800) ->
                 "text": text,
                 "textPreview": text[:300],
                 "pageStart": start_page,
-                "pageEnd": end_page,
+                "pageEnd": end_page or start_page,
             }
         )
         parts = []
         title = ""
+        start_page = 0
+        end_page = 0
 
     for paragraph in paragraphs:
         paragraph_title = paragraph["title"] if paragraph["title"] == paragraph["text"] else ""
         current_length = len("\n\n".join(parts))
         if parts and (paragraph_title or current_length + len(paragraph["text"]) > target_size):
-            flush(paragraph["page"])
-            start_page = paragraph["page"]
+            flush()
+        if not parts:
+            start_page = int(paragraph.get("pageStart") or paragraph.get("page") or 0)
         if paragraph_title:
             title = paragraph_title
         parts.append(paragraph["text"])
+        end_page = int(paragraph.get("pageEnd") or paragraph.get("page") or start_page)
 
     if paragraphs:
-        flush(paragraphs[-1]["page"])
+        flush()
 
     return sections
 

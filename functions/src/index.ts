@@ -4775,6 +4775,7 @@ export const getBookReader = onCall(
     await requireActiveSession(auth, request.data?.sessionId);
     const page = Math.max(0, Math.floor(Number(request.data?.page) || 0));
     const pageSize = Math.min(12, Math.max(4, Math.floor(Number(request.data?.pageSize) || 8)));
+    const readerMode = request.data?.mode === "original" ? "original" : "text";
     const bookSnapshot = await db.collection("books").doc(bookId).get();
 
     if (!bookSnapshot.exists || bookSnapshot.get("userId") !== auth.uid) {
@@ -4836,6 +4837,13 @@ export const getBookReader = onCall(
     const readerItems = allSections.length > 0 ? allSections : fallbackChunks;
     const start = page * pageSize;
     const pageItems = readerItems.slice(start, start + pageSize);
+    const firstVisiblePageStart = Number(pageItems[0]?.pageStart) || 0;
+    const originalPageNumber =
+      readerMode === "original"
+        ? page + 1
+        : firstVisiblePageStart > 0
+          ? firstVisiblePageStart
+          : page + 1;
     const visibleSectionIndexes = new Set(pageItems.map((item) => item.chunkIndex));
     const inlineMediaSnapshot = await db
       .collection("bookInlineMedia")
@@ -4863,12 +4871,12 @@ export const getBookReader = onCall(
       .sort((left, right) => left.sectionIndex - right.sectionIndex || left.mediaIndex - right.mediaIndex);
     const pageSnapshot = await db
       .collection("bookPages")
-      .doc(`${bookId}_${String(page + 1).padStart(4, "0")}`)
+      .doc(`${bookId}_${String(originalPageNumber).padStart(4, "0")}`)
       .get();
     const totalPageImages = Number(bookSnapshot.get("renderedPageCount")) || 0;
     const originalPage = pageSnapshot.exists && pageSnapshot.get("userId") === auth.uid
       ? {
-          pageNumber: Number(pageSnapshot.get("pageNumber")) || page + 1,
+          pageNumber: Number(pageSnapshot.get("pageNumber")) || originalPageNumber,
           storagePath: String(pageSnapshot.get("storagePath") || ""),
           width: Number(pageSnapshot.get("width")) || 0,
           height: Number(pageSnapshot.get("height")) || 0,

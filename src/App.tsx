@@ -2971,7 +2971,7 @@ export function App() {
 
     try {
       const getBookReader = httpsCallable<
-        { bookId: string; page: number; pageSize: number },
+        { bookId: string; page: number; pageSize: number; mode?: ReaderMode },
         {
           ok: boolean;
           chunks: ReaderChunk[];
@@ -2985,6 +2985,7 @@ export function App() {
         bookId: book.id,
         page: targetPage,
         pageSize: readerPageSize,
+        mode: readerMode,
       }));
       setReaderChunks(response.data.chunks ?? []);
       setReaderInlineMedia(response.data.inlineMedia ?? []);
