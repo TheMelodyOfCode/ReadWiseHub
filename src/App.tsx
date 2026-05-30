@@ -35,6 +35,7 @@ import { UAParser } from "ua-parser-js";
 type Theme = "light" | "dark";
 type WorkspaceTab = "ask" | "library" | "read" | "articles" | "history" | "help";
 const DELETE_CONFIRMATION_PHRASE = "ReadWiseHub 2026";
+const CANONICAL_ORIGIN = "https://readwisehub.com";
 
 type BookRecord = {
   id: string;
@@ -1668,7 +1669,7 @@ export function App() {
 
     try {
       await sendPasswordResetEmail(auth, resetEmail, {
-        url: `${window.location.origin}/auth-action`,
+        url: `${CANONICAL_ORIGIN}/auth-action`,
       });
       setStatus(t.passwordResetSent);
     } catch (error) {
