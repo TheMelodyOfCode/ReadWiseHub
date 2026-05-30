@@ -225,6 +225,7 @@ type TextExtractionResult = {
   pageCount: number;
   sections?: BookSection[];
   pageTexts?: ExtractedPageText[];
+  tocEntries?: SourceTocEntry[];
   outline?: Array<{ sectionIndex: number; title: string }>;
   quality?: string;
   renderedPages?: RenderedBookPage[];
@@ -235,6 +236,12 @@ type ExtractedPageText = {
   text: string;
   textPreview: string;
   isTocPage: boolean;
+};
+type SourceTocEntry = {
+  title: string;
+  pageStart: number;
+  pageEnd: number;
+  tocPage: number;
 };
 type RenderedBookPage = {
   pageNumber: number;
@@ -824,6 +831,27 @@ function normalizePageTexts(value: unknown): ExtractedPageText[] {
     .slice(0, 600);
 }
 
+function normalizeTocEntries(value: unknown): SourceTocEntry[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value
+    .filter((entry) => entry && typeof entry === "object")
+    .map((entry) => {
+      const record = entry as Record<string, unknown>;
+      return {
+        title: typeof record.title === "string" ? record.title.slice(0, 120).trim() : "",
+        pageStart: Math.max(1, Math.floor(Number(record.pageStart) || 0)),
+        pageEnd: Math.max(1, Math.floor(Number(record.pageEnd) || Number(record.pageStart) || 0)),
+        tocPage: Math.max(0, Math.floor(Number(record.tocPage) || 0)),
+      };
+    })
+    .filter((entry) => entry.title && entry.pageStart > 0)
+    .sort((left, right) => left.pageStart - right.pageStart)
+    .slice(0, 120);
+}
+
 function normalizeInlineMedia(value: unknown): InlineBookMedia[] {
   if (!Array.isArray(value)) {
     return [];
@@ -907,6 +935,7 @@ async function extractPdfWithLayoutService(
       pageCount: typeof payload.pageCount === "number" ? payload.pageCount : 0,
       sections: normalizeLayoutSections(payload.sections),
       pageTexts: normalizePageTexts(payload.pageTexts),
+      tocEntries: normalizeTocEntries(payload.tocEntries),
       outline: normalizeOutline(payload.outline),
       quality: typeof payload.quality === "string" ? payload.quality : "layout",
       renderedPages: normalizeRenderedPages(payload.renderedPages),
@@ -3900,6 +3929,45 @@ async function writeBookInlineMedia(
   }
 }
 
+async function writeSourceTocArtifact(
+  tocEntries: SourceTocEntry[],
+  userId: string,
+  bookId: string,
+  bookTitle: string,
+  scope: BookScope
+) {
+  if (tocEntries.length === 0) {
+    return;
+  }
+
+  await db.collection("bookArtifacts").doc(`${bookId}_source_toc`).set({
+    userId,
+    tenantId: scope.tenantId,
+    workspaceId: scope.workspaceId,
+    libraryId: scope.libraryId,
+    bookId,
+    bookTitle,
+    type: "source_toc",
+    title: "Source table of contents",
+    status: "ready",
+    generatedBy: "source_toc",
+    targetSectionCount: tocEntries.length,
+    sourceSectionCount: tocEntries.length,
+    sections: tocEntries.map((entry, index) => ({
+      sectionNumber: index + 1,
+      title: entry.title,
+      summary: `Source table of contents entry: ${entry.title}`,
+      sourceSectionStart: entry.pageStart,
+      sourceSectionEnd: entry.pageEnd || entry.pageStart,
+      pageStart: entry.pageStart,
+      pageEnd: entry.pageEnd || entry.pageStart,
+      tocPage: entry.tocPage,
+    })),
+    createdAt: FieldValue.serverTimestamp(),
+    updatedAt: FieldValue.serverTimestamp(),
+  });
+}
+
 async function backfillPdfPageImagesForBook(
   userId: string,
   bookId: string,
@@ -4453,6 +4521,13 @@ async function processIngestionJobById(jobId: string) {
     await writeBookPages(renderedPages, userId, bookId, bookScope);
     await writeBookPageText(extraction.pageTexts || [], userId, bookId, bookScope);
     await writeBookInlineMedia(extraction.inlineMedia || [], userId, bookId, bookScope);
+    await writeSourceTocArtifact(
+      extraction.tocEntries || [],
+      userId,
+      bookId,
+      String(bookSnapshot.get("displayTitle") || bookSnapshot.get("title") || "Untitled"),
+      bookScope
+    );
 
     await db.runTransaction(async (transaction) => {
       transaction.update(bookRef, {
@@ -4469,6 +4544,7 @@ async function processIngestionJobById(jobId: string) {
         sectionCount: sections.length,
         renderedPageCount: renderedPages.length,
         pageTextCount: (extraction.pageTexts || []).length,
+        sourceTocEntryCount: (extraction.tocEntries || []).length,
         inlineMediaCount: (extraction.inlineMedia || []).length,
         originalPageView: renderedPages.length > 0,
         derivedPageImagePrefix: renderedPages.length > 0 ? `userDerived/${userId}/${bookId}/pages` : "",
@@ -4497,6 +4573,7 @@ async function processIngestionJobById(jobId: string) {
         sectionCount: sections.length,
         renderedPageCount: renderedPages.length,
         pageTextCount: (extraction.pageTexts || []).length,
+        sourceTocEntryCount: (extraction.tocEntries || []).length,
         inlineMediaCount: (extraction.inlineMedia || []).length,
         embeddedChunkCount: embeddingsByIndex.size,
         textLength: extraction.text.length,
@@ -4905,9 +4982,10 @@ export const getBookReader = onCall(
         }
       : null;
 
-    if (pageTextSnapshot?.exists && pageTextSnapshot.get("userId") === auth.uid) {
+    if (pageTextCount > 0) {
+      const hasPageText = pageTextSnapshot?.exists && pageTextSnapshot.get("userId") === auth.uid;
       const pageText =
-        typeof pageTextSnapshot.get("text") === "string" ? pageTextSnapshot.get("text") : "";
+        hasPageText && typeof pageTextSnapshot.get("text") === "string" ? pageTextSnapshot.get("text") : "";
       const inlineMediaSnapshot = await db
         .collection("bookInlineMedia")
         .where("bookId", "==", bookId)
@@ -4947,9 +5025,9 @@ export const getBookReader = onCall(
         chunks: pageText.trim()
           ? [
               {
-                id: pageTextSnapshot.id,
+                id: pageTextSnapshot?.id || `${bookId}_${String(physicalPageNumber).padStart(4, "0")}`,
                 chunkIndex: page,
-                title: pageTextSnapshot.get("isTocPage") === true ? "Table of Contents" : "",
+                title: pageTextSnapshot?.get("isTocPage") === true ? "Table of Contents" : "",
                 text: pageText,
                 pageStart: physicalPageNumber,
                 pageEnd: physicalPageNumber,
@@ -5105,7 +5183,6 @@ export const listBookArtifacts = onCall(
       .collection("bookArtifacts")
       .where("userId", "==", auth.uid)
       .where("bookId", "==", bookId)
-      .where("type", "==", "section_map")
       .limit(20)
       .get();
 
@@ -5120,6 +5197,10 @@ export const listBookArtifacts = onCall(
           if (status !== "ready") {
             return null;
           }
+          const type = String(artifactSnapshot.get("type") || "");
+          if (type !== "section_map" && type !== "source_toc") {
+            return null;
+          }
           const sectionEntries = rawSections
             .map(normalizeSectionMapEntry)
             .filter((entry): entry is SectionMapEntry => entry !== null);
@@ -5131,8 +5212,8 @@ export const listBookArtifacts = onCall(
 
           return {
             id: artifactSnapshot.id,
-            title: artifactSnapshot.get("title") || "Section map",
-            type: artifactSnapshot.get("type") || "",
+            title: artifactSnapshot.get("title") || (type === "source_toc" ? "Table of contents" : "Section map"),
+            type,
             bookId: artifactSnapshot.get("bookId") || "",
             bookTitle: artifactSnapshot.get("bookTitle") || "",
             status,
@@ -5141,7 +5222,9 @@ export const listBookArtifacts = onCall(
             sourceSectionCount: Number(artifactSnapshot.get("sourceSectionCount")) || 0,
             weakTitleCount,
             mapQuality:
-              weakTitleCount > 0
+              type === "source_toc"
+                ? "source_toc"
+                : weakTitleCount > 0
                 ? "weak_titles"
                 : hasHeadingAwareTitles
                   ? "heading_aware"

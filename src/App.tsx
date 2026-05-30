@@ -105,6 +105,11 @@ type BookArtifact = {
   updatedAt?: string;
 };
 
+type ReaderNavigationEntry = {
+  label: string;
+  page: number;
+};
+
 type ReaderChunk = {
   id: string;
   chunkIndex: number;
@@ -853,6 +858,29 @@ export function App() {
   );
   const readerPageCount = Math.max(1, Math.ceil(readerTotalChunks / readerEffectivePageSize));
   const readerUsesPhysicalPages = readerEffectivePageSize === 1 && readerTotalChunks > 0;
+  const readerSourceToc = useMemo(
+    () =>
+      bookArtifacts.find(
+        (artifact) =>
+          artifact.bookId === readerBookId &&
+          artifact.type === "source_toc" &&
+          artifact.sections.length > 0
+      ) ?? null,
+    [bookArtifacts, readerBookId]
+  );
+  const readerNavigationEntries = useMemo<ReaderNavigationEntry[]>(() => {
+    if (readerSourceToc) {
+      return readerSourceToc.sections.map((section) => ({
+        label: section.title,
+        page: Math.max(0, (section.pageStart || 1) - 1),
+      }));
+    }
+
+    return Array.from({ length: readerPageCount }, (_, index) => ({
+      label: `${readerUsesPhysicalPages ? t.page : t.chapter} ${index + 1}`,
+      page: index,
+    }));
+  }, [readerPageCount, readerSourceToc, readerUsesPhysicalPages, t.chapter, t.page]);
   const activeReaderPageCount =
     readerMode === "original" && readerOriginalPageCount > 0
       ? readerOriginalPageCount
@@ -1383,6 +1411,35 @@ export function App() {
 
     void loadAdminConsole();
   }, [isAdminPath, user]);
+
+  useEffect(() => {
+    setBookDeleteProgress((current) => {
+      const activeProgress = Object.fromEntries(
+        Object.entries(current).filter(([bookId]) =>
+          books.some((book) => book.id === bookId && book.status !== "deleting")
+        )
+      );
+      return Object.keys(activeProgress).length === Object.keys(current).length
+        ? current
+        : activeProgress;
+    });
+
+    books
+      .filter((book) => book.status === "deleting")
+      .forEach((book) => {
+        setBookDeleteProgress((current) =>
+          current[book.id]
+            ? current
+            : {
+                ...current,
+                [book.id]: {
+                  label: book.displayTitle,
+                  progress: 92,
+                },
+              }
+        );
+      });
+  }, [books]);
 
   useEffect(() => {
     if (!lastUploadedBookId) {
@@ -2749,7 +2806,7 @@ export function App() {
         ...current,
         [book.id]: {
           label: current[book.id]?.label || book.displayTitle,
-          progress: 100,
+          progress: 96,
         },
       }));
       setUploadMessage(t.deleteStarted);
@@ -2758,13 +2815,6 @@ export function App() {
     } finally {
       window.clearInterval(progressTimer);
       setDeleteBusyId("");
-      window.setTimeout(() => {
-        setBookDeleteProgress((current) => {
-          const next = { ...current };
-          delete next[book.id];
-          return next;
-        });
-      }, 1400);
     }
   }
 
@@ -2972,6 +3022,7 @@ export function App() {
     setReaderReturnParagraphId("");
     setReaderBookmarkMessage("");
     setWorkspaceTab("read");
+    void loadBookArtifacts(book.id).catch(() => undefined);
 
     try {
       const getBookReader = httpsCallable<
@@ -4764,6 +4815,7 @@ export function App() {
                       <button
                         className="button secondary compact"
                         type="button"
+                        disabled={book.status === "deleting"}
                         onClick={() => openBookDetail(book)}
                       >
                         {t.viewDetails}
@@ -4816,7 +4868,7 @@ export function App() {
                       </div>
                     )}
                     {bookDeleteProgress[book.id] ? (
-                      <div className="task-progress danger-progress" role="status" aria-live="polite">
+                      <div className="task-progress danger-progress deletion-progress" role="status" aria-live="polite">
                         <div>
                           <strong>
                             {`${t.deletingBookTitle}: ${bookDeleteProgress[book.id].label || book.displayTitle}`}
@@ -4824,6 +4876,8 @@ export function App() {
                           <span>{bookDeleteProgress[book.id].progress}%</span>
                         </div>
                         <progress value={bookDeleteProgress[book.id].progress} max="100" />
+                        <p>{t.deleteBookProgressCopy}</p>
+                        <p className="small-note">{t.deleteBookProgressDetail}</p>
                       </div>
                     ) : null}
                   </article>
@@ -5117,15 +5171,17 @@ export function App() {
                           <span aria-hidden="true">←</span>
                         </button>
                         <label className="reader-jump">
-                          <span className="visually-hidden">{t.chapter}</span>
+                          <span className="visually-hidden">
+                            {readerSourceToc ? t.sourceOutline : readerUsesPhysicalPages ? t.page : t.chapter}
+                          </span>
                           <select
                             value={readerPage}
                             onChange={(event) => goToReaderPage(Number(event.target.value))}
                             disabled={readerBusy || activeReaderPageCount === 0}
                           >
-                            {Array.from({ length: activeReaderPageCount }, (_, index) => (
-                              <option key={index} value={index}>
-                                {readerMode === "original" || readerUsesPhysicalPages ? t.page : t.chapter} {index + 1}
+                            {readerNavigationEntries.map((entry, index) => (
+                              <option key={`${entry.page}-${index}`} value={entry.page}>
+                                {entry.label}
                               </option>
                             ))}
                           </select>

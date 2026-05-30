@@ -208,6 +208,10 @@ export const dictionaries: Record<Locale, Dictionary> = {
     deleteInlineConfirm: "Delete this book and its extracted text?",
     deleteDone: "Book deleted.",
     deleteStarted: "Book deletion started. Large books may take a moment to disappear.",
+    deleteBookProgressCopy:
+      "Removing the uploaded file, extracted text, reader pages, questions, article drafts, and search data.",
+    deleteBookProgressDetail:
+      "Large books can take a few minutes. This card will disappear when cleanup has finished.",
     cancel: "Cancel",
     chooseFile: "Choose file",
     selectedFile: "Selected file",
@@ -628,6 +632,10 @@ export const dictionaries: Record<Locale, Dictionary> = {
     deleteInlineConfirm: "Dieses Buch und den extrahierten Text löschen?",
     deleteDone: "Buch gelöscht.",
     deleteStarted: "Löschen gestartet. Große Bücher brauchen kurz, bis sie verschwinden.",
+    deleteBookProgressCopy:
+      "Upload-Datei, extrahierter Text, Reader-Seiten, Fragen, Artikelentwürfe und Suchdaten werden entfernt.",
+    deleteBookProgressDetail:
+      "Große Bücher können ein paar Minuten brauchen. Diese Karte verschwindet, sobald die Bereinigung fertig ist.",
     cancel: "Abbrechen",
     chooseFile: "Datei auswählen",
     selectedFile: "Ausgewählte Datei",

@@ -195,6 +195,45 @@ def build_page_texts(paragraphs: list[dict[str, Any]], page_count: int) -> list[
     return page_texts
 
 
+def parse_toc_entries(page_texts: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    entries: list[dict[str, Any]] = []
+    pattern = re.compile(r"([0-9]?\s?[A-Za-zÄÖÜäöüß][A-Za-zÄÖÜäöüß ]{1,40})\s+\.{4,}\s+(\d{1,4})")
+
+    for page in page_texts[:20]:
+        text = str(page.get("text") or "")
+        if not is_toc_text(text):
+            continue
+
+        for title, page_number in pattern.findall(text):
+            clean_title = clean_text(title)
+            if len(clean_title) < 3:
+                continue
+            entries.append(
+                {
+                    "title": clean_title,
+                    "pageStart": int(page_number),
+                    "tocPage": int(page.get("pageNumber") or 0),
+                }
+            )
+
+    seen: set[tuple[str, int]] = set()
+    unique_entries: list[dict[str, Any]] = []
+    for entry in entries:
+        key = (entry["title"].lower(), entry["pageStart"])
+        if key in seen:
+            continue
+        seen.add(key)
+        unique_entries.append(entry)
+
+    unique_entries.sort(key=lambda entry: entry["pageStart"])
+    for index, entry in enumerate(unique_entries):
+        next_entry = unique_entries[index + 1] if index + 1 < len(unique_entries) else None
+        if next_entry:
+            entry["pageEnd"] = max(entry["pageStart"], int(next_entry["pageStart"]) - 1)
+
+    return unique_entries[:120]
+
+
 def render_pdf_pages(
     document: fitz.Document,
     bucket_name: str,
@@ -352,6 +391,7 @@ def extract_pdf(request: ExtractRequest) -> dict[str, Any]:
         paragraphs = merge_lines(lines)
         sections = build_sections(paragraphs)
         page_texts = build_page_texts(paragraphs, document.page_count)
+        toc_entries = parse_toc_entries(page_texts)
         text = "\n\n".join(paragraph["text"] for paragraph in paragraphs).strip()
         outline = [
             {"sectionIndex": section["sectionIndex"], "title": section["title"]}
@@ -388,6 +428,7 @@ def extract_pdf(request: ExtractRequest) -> dict[str, Any]:
             "pageCount": document.page_count,
             "sections": sections,
             "pageTexts": page_texts,
+            "tocEntries": toc_entries,
             "outline": outline,
             "quality": "layout",
             "renderedPages": rendered_pages,
