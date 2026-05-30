@@ -129,6 +129,11 @@ service cloud.firestore {
       allow write: if false;
     }
 
+    match /bookPageText/{pageId} {
+      allow read: if signedIn() && resource.data.userId == request.auth.uid;
+      allow write: if false;
+    }
+
     match /bookInlineMedia/{mediaId} {
       allow read: if signedIn() && resource.data.userId == request.auth.uid;
       allow write: if false;

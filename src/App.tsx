@@ -750,6 +750,7 @@ export function App() {
   const [readerChunks, setReaderChunks] = useState<ReaderChunk[]>([]);
   const [readerPage, setReaderPage] = useState(0);
   const [readerTotalChunks, setReaderTotalChunks] = useState(0);
+  const [readerActivePageSize, setReaderActivePageSize] = useState(8);
   const [readerOriginalPage, setReaderOriginalPage] = useState<ReaderOriginalPage | null>(null);
   const [readerOriginalPageCount, setReaderOriginalPageCount] = useState(0);
   const [readerOriginalPageUrl, setReaderOriginalPageUrl] = useState("");
@@ -841,6 +842,7 @@ export function App() {
     return jobs;
   }, [ingestionJobs]);
   const readerPageSize = 8;
+  const readerEffectivePageSize = Math.max(1, readerActivePageSize || readerPageSize);
   const readerBook = useMemo(
     () => books.find((book) => book.id === readerBookId) ?? null,
     [books, readerBookId]
@@ -849,7 +851,8 @@ export function App() {
     () => formatReaderParagraphs(readerChunks),
     [readerChunks]
   );
-  const readerPageCount = Math.max(1, Math.ceil(readerTotalChunks / readerPageSize));
+  const readerPageCount = Math.max(1, Math.ceil(readerTotalChunks / readerEffectivePageSize));
+  const readerUsesPhysicalPages = readerEffectivePageSize === 1 && readerTotalChunks > 0;
   const activeReaderPageCount =
     readerMode === "original" && readerOriginalPageCount > 0
       ? readerOriginalPageCount
@@ -2956,6 +2959,7 @@ export function App() {
     setReaderBusy(true);
     setReaderMessage("");
     setReaderChunks([]);
+    setReaderActivePageSize(readerPageSize);
     setReaderOriginalPage(null);
     setReaderOriginalPageUrl("");
     setReaderInlineMedia([]);
@@ -2977,6 +2981,7 @@ export function App() {
           chunks: ReaderChunk[];
           inlineMedia: ReaderInlineMedia[];
           totalChunks: number;
+          pageSize: number;
           originalPage: ReaderOriginalPage | null;
           totalPageImages: number;
         }
@@ -2990,6 +2995,7 @@ export function App() {
       setReaderChunks(response.data.chunks ?? []);
       setReaderInlineMedia(response.data.inlineMedia ?? []);
       setReaderTotalChunks(response.data.totalChunks ?? 0);
+      setReaderActivePageSize(response.data.pageSize || readerPageSize);
       setReaderOriginalPage(response.data.originalPage ?? null);
       setReaderOriginalPageCount(response.data.totalPageImages ?? 0);
       if (progressKey) {
@@ -3016,7 +3022,7 @@ export function App() {
     const maxPage =
       readerMode === "original" && readerOriginalPageCount > 0
         ? readerOriginalPageCount
-        : Math.ceil(readerTotalChunks / readerPageSize);
+        : Math.ceil(readerTotalChunks / readerEffectivePageSize);
     if (nextPage < 0 || nextPage >= maxPage) {
       return;
     }
@@ -5119,7 +5125,7 @@ export function App() {
                           >
                             {Array.from({ length: activeReaderPageCount }, (_, index) => (
                               <option key={index} value={index}>
-                                {readerMode === "original" ? t.page : t.chapter} {index + 1}
+                                {readerMode === "original" || readerUsesPhysicalPages ? t.page : t.chapter} {index + 1}
                               </option>
                             ))}
                           </select>
@@ -5534,9 +5540,11 @@ export function App() {
                         <span>
                           {readerMode === "original"
                             ? `${t.page} ${readerPage + 1} / ${activeReaderPageCount}`
-                            : `${Math.min(readerTotalChunks, readerPage * readerPageSize + 1)}-${Math.min(
+                            : readerUsesPhysicalPages
+                              ? `${t.page} ${readerPage + 1} / ${activeReaderPageCount}`
+                              : `${Math.min(readerTotalChunks, readerPage * readerEffectivePageSize + 1)}-${Math.min(
                                 readerTotalChunks,
-                                (readerPage + 1) * readerPageSize
+                                (readerPage + 1) * readerEffectivePageSize
                               )} / ${readerTotalChunks} ${t.chunks}`}
                         </span>
                         <button

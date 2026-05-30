@@ -224,10 +224,17 @@ type TextExtractionResult = {
   text: string;
   pageCount: number;
   sections?: BookSection[];
+  pageTexts?: ExtractedPageText[];
   outline?: Array<{ sectionIndex: number; title: string }>;
   quality?: string;
   renderedPages?: RenderedBookPage[];
   inlineMedia?: InlineBookMedia[];
+};
+type ExtractedPageText = {
+  pageNumber: number;
+  text: string;
+  textPreview: string;
+  isTocPage: boolean;
 };
 type RenderedBookPage = {
   pageNumber: number;
@@ -791,7 +798,30 @@ function normalizeRenderedPages(value: unknown): RenderedBookPage[] {
     })
     .filter((page) => page.pageNumber > 0 && page.storagePath && page.width > 0 && page.height > 0)
     .sort((left, right) => left.pageNumber - right.pageNumber)
-    .slice(0, 300);
+    .slice(0, 600);
+}
+
+function normalizePageTexts(value: unknown): ExtractedPageText[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value
+    .filter((page) => page && typeof page === "object")
+    .map((page) => {
+      const record = page as Record<string, unknown>;
+      const text = typeof record.text === "string" ? normalizeText(record.text) : "";
+      return {
+        pageNumber: Math.max(1, Math.floor(Number(record.pageNumber) || 0)),
+        text,
+        textPreview:
+          typeof record.textPreview === "string" ? record.textPreview.slice(0, 300) : text.slice(0, 300),
+        isTocPage: record.isTocPage === true,
+      };
+    })
+    .filter((page) => page.pageNumber > 0 && page.text)
+    .sort((left, right) => left.pageNumber - right.pageNumber)
+    .slice(0, 600);
 }
 
 function normalizeInlineMedia(value: unknown): InlineBookMedia[] {
@@ -854,7 +884,7 @@ async function extractPdfWithLayoutService(
         renderPages: Boolean(outputPrefix),
         outputPrefix,
         renderDpi: 144,
-        maxRenderedPages: 250,
+        maxRenderedPages: 600,
       }),
     });
 
@@ -876,6 +906,7 @@ async function extractPdfWithLayoutService(
       text,
       pageCount: typeof payload.pageCount === "number" ? payload.pageCount : 0,
       sections: normalizeLayoutSections(payload.sections),
+      pageTexts: normalizePageTexts(payload.pageTexts),
       outline: normalizeOutline(payload.outline),
       quality: typeof payload.quality === "string" ? payload.quality : "layout",
       renderedPages: normalizeRenderedPages(payload.renderedPages),
@@ -3191,6 +3222,26 @@ async function clearBookPages(bookId: string) {
   }
 }
 
+async function clearBookPageText(bookId: string) {
+  const snapshot = await db
+    .collection("bookPageText")
+    .where("bookId", "==", bookId)
+    .limit(300)
+    .get();
+
+  if (snapshot.empty) {
+    return;
+  }
+
+  const batch = db.batch();
+  snapshot.docs.forEach((docSnapshot) => batch.delete(docSnapshot.ref));
+  await batch.commit();
+
+  if (snapshot.size === 300) {
+    await clearBookPageText(bookId);
+  }
+}
+
 async function clearBookInlineMedia(bookId: string) {
   const snapshot = await db
     .collection("bookInlineMedia")
@@ -3449,6 +3500,7 @@ async function clearUserBooks(userId: string) {
     await clearExistingChunks(bookSnapshot.id);
     await clearExistingSections(bookSnapshot.id);
     await clearBookPages(bookSnapshot.id);
+    await clearBookPageText(bookSnapshot.id);
     await clearBookInlineMedia(bookSnapshot.id);
     await clearIngestionJobs(bookSnapshot.id);
     await clearBookArtifacts(bookSnapshot.id);
@@ -3748,6 +3800,43 @@ async function writeBookPages(
       contentType: page.contentType,
       sizeBytes: page.sizeBytes,
       renderDpi: page.renderDpi,
+      createdAt: FieldValue.serverTimestamp(),
+    });
+    writes += 1;
+
+    if (writes >= 300) {
+      await batch.commit();
+      batch = db.batch();
+      writes = 0;
+    }
+  }
+
+  if (writes > 0) {
+    await batch.commit();
+  }
+}
+
+async function writeBookPageText(
+  pages: ExtractedPageText[],
+  userId: string,
+  bookId: string,
+  scope: BookScope
+) {
+  let batch: WriteBatch = db.batch();
+  let writes = 0;
+
+  for (const page of pages) {
+    const pageRef = db.collection("bookPageText").doc(`${bookId}_${String(page.pageNumber).padStart(4, "0")}`);
+    batch.set(pageRef, {
+      userId,
+      tenantId: scope.tenantId,
+      workspaceId: scope.workspaceId,
+      libraryId: scope.libraryId,
+      bookId,
+      pageNumber: page.pageNumber,
+      text: page.text,
+      textPreview: page.textPreview,
+      isTocPage: page.isTocPage,
       createdAt: FieldValue.serverTimestamp(),
     });
     writes += 1;
@@ -4357,10 +4446,12 @@ async function processIngestionJobById(jobId: string) {
     await clearExistingChunks(bookId);
     await clearExistingSections(bookId);
     await clearBookPages(bookId);
+    await clearBookPageText(bookId);
     await clearBookInlineMedia(bookId);
     await writeChunks(chunks, userId, bookId, bookScope, language, embeddingsByIndex);
     await writeSections(sections, userId, bookId, bookScope);
     await writeBookPages(renderedPages, userId, bookId, bookScope);
+    await writeBookPageText(extraction.pageTexts || [], userId, bookId, bookScope);
     await writeBookInlineMedia(extraction.inlineMedia || [], userId, bookId, bookScope);
 
     await db.runTransaction(async (transaction) => {
@@ -4377,6 +4468,7 @@ async function processIngestionJobById(jobId: string) {
         chunkCount: chunks.length,
         sectionCount: sections.length,
         renderedPageCount: renderedPages.length,
+        pageTextCount: (extraction.pageTexts || []).length,
         inlineMediaCount: (extraction.inlineMedia || []).length,
         originalPageView: renderedPages.length > 0,
         derivedPageImagePrefix: renderedPages.length > 0 ? `userDerived/${userId}/${bookId}/pages` : "",
@@ -4404,6 +4496,7 @@ async function processIngestionJobById(jobId: string) {
         chunkCount: chunks.length,
         sectionCount: sections.length,
         renderedPageCount: renderedPages.length,
+        pageTextCount: (extraction.pageTexts || []).length,
         inlineMediaCount: (extraction.inlineMedia || []).length,
         embeddedChunkCount: embeddingsByIndex.size,
         textLength: extraction.text.length,
@@ -4786,6 +4879,89 @@ export const getBookReader = onCall(
       throw new HttpsError("failed-precondition", "Book text is not ready yet.");
     }
 
+    const totalPageImages = Number(bookSnapshot.get("renderedPageCount")) || 0;
+    const pageCount = Number(bookSnapshot.get("pageCount")) || 0;
+    const pageTextCount = Number(bookSnapshot.get("pageTextCount")) || 0;
+    const physicalPageCount = Math.max(pageTextCount, totalPageImages, pageCount);
+    const physicalPageNumber = page + 1;
+    const pageTextSnapshot =
+      pageTextCount > 0
+        ? await db
+            .collection("bookPageText")
+            .doc(`${bookId}_${String(physicalPageNumber).padStart(4, "0")}`)
+            .get()
+        : null;
+    const pageSnapshot = await db
+      .collection("bookPages")
+      .doc(`${bookId}_${String(physicalPageNumber).padStart(4, "0")}`)
+      .get();
+    const originalPage = pageSnapshot.exists && pageSnapshot.get("userId") === auth.uid
+      ? {
+          pageNumber: Number(pageSnapshot.get("pageNumber")) || physicalPageNumber,
+          storagePath: String(pageSnapshot.get("storagePath") || ""),
+          width: Number(pageSnapshot.get("width")) || 0,
+          height: Number(pageSnapshot.get("height")) || 0,
+          contentType: String(pageSnapshot.get("contentType") || "image/jpeg"),
+        }
+      : null;
+
+    if (pageTextSnapshot?.exists && pageTextSnapshot.get("userId") === auth.uid) {
+      const pageText =
+        typeof pageTextSnapshot.get("text") === "string" ? pageTextSnapshot.get("text") : "";
+      const inlineMediaSnapshot = await db
+        .collection("bookInlineMedia")
+        .where("bookId", "==", bookId)
+        .limit(500)
+        .get();
+      const inlineMedia = inlineMediaSnapshot.docs
+        .filter(
+          (mediaSnapshot) =>
+            mediaSnapshot.get("userId") === auth.uid &&
+            Number(mediaSnapshot.get("pageNumber")) === physicalPageNumber
+        )
+        .map((mediaSnapshot) => ({
+          id: mediaSnapshot.id,
+          pageNumber: Number(mediaSnapshot.get("pageNumber")) || 0,
+          sectionIndex: page,
+          mediaIndex: Number(mediaSnapshot.get("mediaIndex")) || 0,
+          kind: String(mediaSnapshot.get("kind") || "image"),
+          storagePath: String(mediaSnapshot.get("storagePath") || ""),
+          width: Number(mediaSnapshot.get("width")) || 0,
+          height: Number(mediaSnapshot.get("height")) || 0,
+          contentType: String(mediaSnapshot.get("contentType") || "image/jpeg"),
+          bbox: Array.isArray(mediaSnapshot.get("bbox")) ? mediaSnapshot.get("bbox") : [],
+        }))
+        .sort((left, right) => left.mediaIndex - right.mediaIndex);
+
+      return {
+        ok: true,
+        book: {
+          id: bookSnapshot.id,
+          title: bookSnapshot.get("title") ?? "Untitled",
+          chunkCount: physicalPageCount,
+          pageCount,
+        },
+        page,
+        pageSize: 1,
+        totalChunks: physicalPageCount,
+        chunks: pageText.trim()
+          ? [
+              {
+                id: pageTextSnapshot.id,
+                chunkIndex: page,
+                title: pageTextSnapshot.get("isTocPage") === true ? "Table of Contents" : "",
+                text: pageText,
+                pageStart: physicalPageNumber,
+                pageEnd: physicalPageNumber,
+              },
+            ]
+          : [],
+        inlineMedia,
+        originalPage,
+        totalPageImages,
+      };
+    }
+
     const sectionsSnapshot = await db
       .collection("bookSections")
       .where("bookId", "==", bookId)
@@ -4869,18 +5045,20 @@ export const getBookReader = onCall(
         bbox: Array.isArray(mediaSnapshot.get("bbox")) ? mediaSnapshot.get("bbox") : [],
       }))
       .sort((left, right) => left.sectionIndex - right.sectionIndex || left.mediaIndex - right.mediaIndex);
-    const pageSnapshot = await db
-      .collection("bookPages")
-      .doc(`${bookId}_${String(originalPageNumber).padStart(4, "0")}`)
-      .get();
-    const totalPageImages = Number(bookSnapshot.get("renderedPageCount")) || 0;
-    const originalPage = pageSnapshot.exists && pageSnapshot.get("userId") === auth.uid
+    const fallbackPageSnapshot =
+      originalPageNumber === physicalPageNumber
+        ? pageSnapshot
+        : await db
+            .collection("bookPages")
+            .doc(`${bookId}_${String(originalPageNumber).padStart(4, "0")}`)
+            .get();
+    const fallbackOriginalPage = fallbackPageSnapshot.exists && fallbackPageSnapshot.get("userId") === auth.uid
       ? {
-          pageNumber: Number(pageSnapshot.get("pageNumber")) || originalPageNumber,
-          storagePath: String(pageSnapshot.get("storagePath") || ""),
-          width: Number(pageSnapshot.get("width")) || 0,
-          height: Number(pageSnapshot.get("height")) || 0,
-          contentType: String(pageSnapshot.get("contentType") || "image/jpeg"),
+          pageNumber: Number(fallbackPageSnapshot.get("pageNumber")) || originalPageNumber,
+          storagePath: String(fallbackPageSnapshot.get("storagePath") || ""),
+          width: Number(fallbackPageSnapshot.get("width")) || 0,
+          height: Number(fallbackPageSnapshot.get("height")) || 0,
+          contentType: String(fallbackPageSnapshot.get("contentType") || "image/jpeg"),
         }
       : null;
 
@@ -4890,14 +5068,14 @@ export const getBookReader = onCall(
         id: bookSnapshot.id,
         title: bookSnapshot.get("title") ?? "Untitled",
         chunkCount: Number(bookSnapshot.get("sectionCount")) || readerItems.length,
-        pageCount: Number(bookSnapshot.get("pageCount")) || 0,
+        pageCount,
       },
       page,
       pageSize,
       totalChunks: readerItems.length,
       chunks: pageItems,
       inlineMedia,
-      originalPage,
+      originalPage: fallbackOriginalPage,
       totalPageImages,
     };
   }
@@ -5427,6 +5605,7 @@ export const processBookDeletion = onDocumentUpdated(
       await clearExistingChunks(bookId);
       await clearExistingSections(bookId);
       await clearBookPages(bookId);
+      await clearBookPageText(bookId);
       await clearBookInlineMedia(bookId);
       await clearNestedBookSections(bookId);
       await clearIngestionJobs(bookId);

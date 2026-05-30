@@ -21,7 +21,7 @@ class ExtractRequest(BaseModel):
     renderPages: bool = False
     outputPrefix: str = ""
     renderDpi: int = 144
-    maxRenderedPages: int = 250
+    maxRenderedPages: int = 600
 
 
 def clean_text(value: str) -> str:
@@ -159,6 +159,42 @@ def build_sections(paragraphs: list[dict[str, Any]], target_size: int = 1800) ->
     return sections
 
 
+def is_toc_text(text: str) -> bool:
+    lower = text.lower()
+    dot_leader_count = len(re.findall(r"\.{4,}\s*\d+", text))
+    return (
+        "table of contents" in lower
+        or "inhaltsverzeichnis" in lower
+        or dot_leader_count >= 5
+    )
+
+
+def build_page_texts(paragraphs: list[dict[str, Any]], page_count: int) -> list[dict[str, Any]]:
+    by_page: dict[int, list[str]] = {}
+    for paragraph in paragraphs:
+        page_number = int(paragraph.get("pageStart") or paragraph.get("page") or 0)
+        text = clean_text(str(paragraph.get("text") or ""))
+        if page_number <= 0 or not text:
+            continue
+        by_page.setdefault(page_number, []).append(text)
+
+    page_texts: list[dict[str, Any]] = []
+    for page_number in range(1, page_count + 1):
+        text = "\n\n".join(by_page.get(page_number, [])).strip()
+        if not text:
+            continue
+        page_texts.append(
+            {
+                "pageNumber": page_number,
+                "text": text,
+                "textPreview": text[:300],
+                "isTocPage": is_toc_text(text),
+            }
+        )
+
+    return page_texts
+
+
 def render_pdf_pages(
     document: fitz.Document,
     bucket_name: str,
@@ -170,7 +206,7 @@ def render_pdf_pages(
         return []
 
     safe_dpi = min(max(render_dpi, 96), 180)
-    safe_max_pages = min(max(max_pages, 1), 300)
+    safe_max_pages = min(max(max_pages, 1), 600)
     bucket = storage_client.bucket(bucket_name)
     pages: list[dict[str, Any]] = []
 
@@ -315,6 +351,7 @@ def extract_pdf(request: ExtractRequest) -> dict[str, Any]:
 
         paragraphs = merge_lines(lines)
         sections = build_sections(paragraphs)
+        page_texts = build_page_texts(paragraphs, document.page_count)
         text = "\n\n".join(paragraph["text"] for paragraph in paragraphs).strip()
         outline = [
             {"sectionIndex": section["sectionIndex"], "title": section["title"]}
@@ -350,6 +387,7 @@ def extract_pdf(request: ExtractRequest) -> dict[str, Any]:
             "text": text,
             "pageCount": document.page_count,
             "sections": sections,
+            "pageTexts": page_texts,
             "outline": outline,
             "quality": "layout",
             "renderedPages": rendered_pages,
