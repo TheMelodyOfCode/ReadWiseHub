@@ -36,6 +36,7 @@ type Theme = "light" | "dark";
 type WorkspaceTab = "ask" | "library" | "read" | "articles" | "history" | "help";
 const DELETE_CONFIRMATION_PHRASE = "ReadWiseHub 2026";
 const CANONICAL_ORIGIN = "https://readwisehub.com";
+const LARGE_UPLOAD_NOTICE_BYTES = 3 * 1024 * 1024;
 
 type BookRecord = {
   id: string;
@@ -735,6 +736,8 @@ export function App() {
   const [deleteAllHistoryBusy, setDeleteAllHistoryBusy] = useState(false);
   const [lastUploadedBookId, setLastUploadedBookId] = useState("");
   const [uploadTrackingBookId, setUploadTrackingBookId] = useState("");
+  const [uploadPrepNoticeBookId, setUploadPrepNoticeBookId] = useState("");
+  const [dismissedUploadPrepNoticeBookIds, setDismissedUploadPrepNoticeBookIds] = useState<string[]>([]);
   const [workspaceTab, setWorkspaceTab] = useState<WorkspaceTab>("ask");
   const [processingBookId, setProcessingBookId] = useState("");
   const [selectedBookDetailId, setSelectedBookDetailId] = useState("");
@@ -899,6 +902,21 @@ export function App() {
           )
         )
       : 0
+    : 0;
+  const uploadPrepNoticeBook = uploadPrepNoticeBookId
+    ? books.find((book) => book.id === uploadPrepNoticeBookId) ?? null
+    : null;
+  const uploadPrepNoticeJob = uploadPrepNoticeBook
+    ? jobsByBookId.get(uploadPrepNoticeBook.id) ?? null
+    : null;
+  const uploadPrepNoticeProgress = uploadPrepNoticeBook
+    ? uploadPrepNoticeBook.status === "text_ready"
+      ? 100
+      : uploadPrepNoticeJob
+        ? Math.max(0, Math.min(100, uploadPrepNoticeJob.progress))
+        : uploadPrepNoticeBook.status === "queued"
+          ? 5
+          : 0
     : 0;
   const selectedScopeBook = selectedBookScope
     ? textReadyBooks.find((book) => book.id === selectedBookScope) ?? null
@@ -1382,6 +1400,45 @@ export function App() {
       setUploadMessage(`${t.uploadProcessing}: ${uploadedBook.displayTitle}`);
     }
   }, [books, lastUploadedBookId, t.uploadProcessing, t.uploadReady]);
+
+  useEffect(() => {
+    const trackedBook = uploadTrackingBook;
+    if (!trackedBook) {
+      return;
+    }
+
+    const isPreparing = ["upload_reserved", "queued", "processing"].includes(trackedBook.status);
+    const alreadyDismissed = dismissedUploadPrepNoticeBookIds.includes(trackedBook.id);
+    if (!isPreparing || alreadyDismissed || uploadPrepNoticeBookId === trackedBook.id) {
+      return;
+    }
+
+    if (trackedBook.sizeBytes >= LARGE_UPLOAD_NOTICE_BYTES) {
+      setUploadPrepNoticeBookId(trackedBook.id);
+      return;
+    }
+
+    const timer = window.setTimeout(() => {
+      setUploadPrepNoticeBookId((currentBookId) => currentBookId || trackedBook.id);
+    }, 20000);
+
+    return () => window.clearTimeout(timer);
+  }, [
+    dismissedUploadPrepNoticeBookIds,
+    uploadPrepNoticeBookId,
+    uploadTrackingBook,
+  ]);
+
+  useEffect(() => {
+    if (!uploadPrepNoticeBookId) {
+      return;
+    }
+
+    const noticeBook = books.find((book) => book.id === uploadPrepNoticeBookId);
+    if (!noticeBook || noticeBook.status === "text_ready" || noticeBook.status === "failed") {
+      setUploadPrepNoticeBookId("");
+    }
+  }, [books, uploadPrepNoticeBookId]);
 
   useEffect(() => {
     if (!lastUploadedBookId) {
@@ -1902,6 +1959,20 @@ export function App() {
     } finally {
       setUploadBusy(false);
     }
+  }
+
+  function dismissUploadPrepNotice() {
+    if (uploadPrepNoticeBookId) {
+      setDismissedUploadPrepNoticeBookIds((bookIds) =>
+        bookIds.includes(uploadPrepNoticeBookId) ? bookIds : [...bookIds, uploadPrepNoticeBookId]
+      );
+    }
+    setUploadPrepNoticeBookId("");
+  }
+
+  function continueInAskDuringUpload() {
+    dismissUploadPrepNotice();
+    setWorkspaceTab("ask");
   }
 
   async function processQueuedJobs() {
@@ -6330,6 +6401,52 @@ export function App() {
             </div>
             {authError ? <p className="error-text">{authError}</p> : null}
           </section>
+          {uploadPrepNoticeBook ? (
+            <div className="modal-backdrop" role="presentation">
+              <section
+                className="modal-panel upload-prep-modal"
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="upload-prep-modal-title"
+              >
+                <div className="modal-heading">
+                  <div>
+                    <p className="eyebrow">{t.uploadPrepNoticeEyebrow}</p>
+                    <h3 id="upload-prep-modal-title">{t.uploadPrepNoticeTitle}</h3>
+                  </div>
+                  <button
+                    className="button compact secondary"
+                    type="button"
+                    aria-label={t.close}
+                    onClick={dismissUploadPrepNotice}
+                  >
+                    ×
+                  </button>
+                </div>
+                <p>
+                  <strong>{uploadPrepNoticeBook.displayTitle}</strong>
+                </p>
+                <p>{t.uploadPrepNoticeCopy}</p>
+                <p className="small-note">{t.uploadPrepNoticeAskCopy}</p>
+                <div className="upload-progress compact-progress" role="status" aria-live="polite">
+                  <div>
+                    <strong>{getIngestionStageLabel(uploadPrepNoticeJob)}</strong>
+                    <span>{uploadPrepNoticeProgress}%</span>
+                  </div>
+                  <progress value={uploadPrepNoticeProgress} max="100" />
+                  <p>{getIngestionStageDetail(uploadPrepNoticeJob)}</p>
+                </div>
+                <div className="modal-actions">
+                  <button className="button primary" type="button" onClick={continueInAskDuringUpload}>
+                    {t.uploadPrepNoticeAskButton}
+                  </button>
+                  <button className="button secondary" type="button" onClick={dismissUploadPrepNotice}>
+                    {t.uploadPrepNoticeStayButton}
+                  </button>
+                </div>
+              </section>
+            </div>
+          ) : null}
         </main>
       </div>
     );

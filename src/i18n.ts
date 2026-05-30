@@ -235,6 +235,14 @@ export const dictionaries: Record<Locale, Dictionary> = {
     uploadStageWritingDetail: "Passages and reading data are being saved.",
     uploadStageReadyDetail: "The book is readable now. Search quality may continue improving in the background.",
     uploadStageFailedDetail: "The book could not be prepared.",
+    uploadPrepNoticeEyebrow: "Book preparation",
+    uploadPrepNoticeTitle: "We’re preparing your book",
+    uploadPrepNoticeCopy:
+      "Larger books can take a few minutes while ReadWiseHub extracts the text, splits it into passages, and prepares search.",
+    uploadPrepNoticeAskCopy:
+      "You can keep using ReadWiseHub while this runs. Ask your other ready books now, and this book will appear as ready in your library when preparation is finished.",
+    uploadPrepNoticeAskButton: "Go to Ask",
+    uploadPrepNoticeStayButton: "Stay in Library",
     searchIndexPreparing: "Improving smart search",
     searchIndexPreparingDetail: "You can read and ask questions now. Semantic search is still being indexed in the background.",
     documentStructure: "Book structure",
@@ -647,6 +655,14 @@ export const dictionaries: Record<Locale, Dictionary> = {
     uploadStageWritingDetail: "Textstellen und Lesedaten werden gespeichert.",
     uploadStageReadyDetail: "Das Buch ist jetzt lesbar. Die Suchqualität kann im Hintergrund weiter verbessert werden.",
     uploadStageFailedDetail: "Das Buch konnte nicht vorbereitet werden.",
+    uploadPrepNoticeEyebrow: "Buchvorbereitung",
+    uploadPrepNoticeTitle: "Wir bereiten dein Buch vor",
+    uploadPrepNoticeCopy:
+      "Größere Bücher können ein paar Minuten brauchen, während ReadWiseHub den Text extrahiert, in Textstellen aufteilt und die Suche vorbereitet.",
+    uploadPrepNoticeAskCopy:
+      "Du kannst ReadWiseHub währenddessen weiter nutzen. Frage jetzt deine anderen bereiten Bücher. Dieses Buch erscheint in deiner Bibliothek als bereit, sobald die Vorbereitung abgeschlossen ist.",
+    uploadPrepNoticeAskButton: "Zu Ask",
+    uploadPrepNoticeStayButton: "In der Bibliothek bleiben",
     searchIndexPreparing: "Smarte Suche wird verbessert",
     searchIndexPreparingDetail: "Du kannst schon lesen und Fragen stellen. Die semantische Suche wird im Hintergrund noch indexiert.",
     documentStructure: "Buchstruktur",

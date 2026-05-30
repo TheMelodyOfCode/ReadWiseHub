@@ -2528,8 +2528,61 @@ select {
   accent-color: var(--primary);
 }
 
+.compact-progress {
+  margin-top: 4px;
+}
+
 .processing-progress strong {
   overflow-wrap: anywhere;
+}
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: rgb(12 16 24 / 58%);
+}
+
+.modal-panel {
+  width: min(540px, 100%);
+  max-height: min(88vh, 680px);
+  overflow: auto;
+  display: grid;
+  gap: 14px;
+  padding: 22px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: var(--shadow);
+}
+
+.modal-panel p {
+  margin: 0;
+}
+
+.modal-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.modal-heading h3 {
+  margin: 4px 0 0;
+}
+
+.modal-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.upload-prep-modal {
+  border-color: color-mix(in srgb, var(--primary) 34%, var(--border));
 }
 
 .uploaded-book-card,
