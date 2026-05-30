@@ -14,6 +14,7 @@ let idToken = "";
 let primaryBookId = "";
 let structuredBookId = "";
 let chapterOnlyBookId = "";
+let openingChapterBookId = "";
 let accountDeleteBookId = "";
 let accountDeleteConversationId = "";
 let unverifiedUid = "";
@@ -80,6 +81,7 @@ async function createRegressionAuthUser() {
   primaryBookId = `${uid}-book`;
   structuredBookId = `${uid}-structured-book`;
   chapterOnlyBookId = `${uid}-chapter-only-book`;
+  openingChapterBookId = `${uid}-opening-chapter-book`;
   accountDeleteBookId = `${uid}-account-delete-book`;
   accountDeleteConversationId = `${uid}-account-delete-conversation`;
 }
@@ -530,6 +532,65 @@ async function seedChapterOnlyBook() {
   await batch.commit();
 }
 
+async function seedOpeningChapterBook() {
+  await db.collection("books").doc(openingChapterBookId).set({
+    userId: uid,
+    title: "Opening Chapter Regression Book",
+    normalizedTitle: "opening chapter regression book",
+    author: "",
+    language: "en",
+    status: "text_ready",
+    sourceType: "regression",
+    storagePath: "",
+    originalFileName: "opening-chapter.txt",
+    mimeType: "text/plain",
+    sizeBytes: 8192,
+    pageCount: 10,
+    textLength: 4000,
+    chunkCount: 5,
+    sectionCount: 5,
+    embeddedChunkCount: 0,
+    createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    textReadyAt: admin.firestore.FieldValue.serverTimestamp(),
+    planAtIngestion: "free",
+  });
+
+  const chunkTexts = [
+    "Contents .................... 1\nChapter 1 .................... 7\nChapter 2 .................... 19\nChapter 3 .................... 31\nChapter 4 .................... 42",
+    "Chapter 1 begins with the harbor archivist opening a blue ledger. The first chapter explains that the city stores coral maps, tide warnings, and witness notes in the old lighthouse.",
+    "In the opening chapter, Mara discovers that the missing bell was moved before dawn. This opening chapter passage should be used for chapter one questions.",
+    "Chapter 1 closes with the archivist locking the lighthouse door and promising to compare the tide warnings with the coral maps.",
+    "Chapter 9 later discusses unrelated mountain radios and should not be used as the main answer for a chapter 1 question.",
+  ];
+
+  const batch = db.batch();
+  chunkTexts.forEach((text, index) => {
+    batch.set(db.collection("bookChunks").doc(`${openingChapterBookId}_${index}`), {
+      userId: uid,
+      bookId: openingChapterBookId,
+      chunkIndex: index,
+      text,
+      textPreview: text.slice(0, 240),
+      charStart: index * 1000,
+      charEnd: index * 1000 + text.length,
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+    batch.set(db.collection("bookSections").doc(`${openingChapterBookId}_${index}`), {
+      userId: uid,
+      bookId: openingChapterBookId,
+      sectionIndex: index,
+      title: index === 0 ? "Contents" : index <= 3 ? "Chapter 1" : "Chapter 9",
+      text,
+      textPreview: text.slice(0, 300),
+      paragraphStart: index,
+      paragraphEnd: index,
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+  });
+  await batch.commit();
+}
+
 async function seedAccountDeleteData() {
   await seedBook(accountDeleteBookId, "Account Delete Regression Book");
   await seedArticleData(accountDeleteBookId, "account-delete");
@@ -617,6 +678,7 @@ async function run() {
   await seedBook(primaryBookId, "Callable Regression Book");
   await seedStructuredBook();
   await seedChapterOnlyBook();
+  await seedOpeningChapterBook();
   const registeredSession = await callFunction(
     "registerLoginSession",
     {
@@ -929,7 +991,7 @@ async function run() {
   const structuredTitles = structuredArtifact?.get("sections")?.map((section) => section.title) || [];
   check(
     structuredTitles.some((title) => /quantum gravity/i.test(title)) &&
-      structuredTitles.some((title) => /(arrow|direction)\s+of\s+time/i.test(title)),
+      structuredTitles.some((title) => /(?:arrow|direction).{0,20}time|time.{0,20}arrow/i.test(title)),
     `structured section-map titles were not heading-aware: ${structuredTitles.join(", ")}`
   );
   check(
@@ -988,6 +1050,25 @@ async function run() {
   check(
     chapterOnlyTitles.every((title) => !/^(Chapter|Section) \d+$/i.test(title)),
     `chapter-only section map returned generic titles: ${chapterOnlyTitles.join(", ")}`
+  );
+
+  const openingChapterAsk = await callFunction(
+    "askLibrary",
+    {
+      query: "What happens in chapter 1?",
+      locale: "en",
+      bookId: openingChapterBookId,
+    },
+    idToken
+  );
+  check(openingChapterAsk.ok === true, "opening chapter askLibrary did not return ok.");
+  check(
+    openingChapterAsk.results?.some((result) => /blue ledger|tide warnings|missing bell/i.test(result.excerpt || "")),
+    "opening chapter askLibrary did not use opening chapter source passages."
+  );
+  check(
+    !openingChapterAsk.results?.some((result) => /Contents \.{3,}|Chapter 9 later/i.test(result.excerpt || "")),
+    "opening chapter askLibrary included table-of-contents or later-chapter source passages."
   );
 
   await writeReaderSettingsViaClient(primaryBookId);

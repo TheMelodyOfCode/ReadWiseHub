@@ -1304,6 +1304,18 @@ function isPineconeSearchEnabledForUser(userId: string): boolean {
   return parseUidAllowlist(process.env.PINECONE_SEARCH_USER_IDS).includes(userId);
 }
 
+function shouldUsePineconeSearch(userId: string, books: Map<string, SearchableBook>): boolean {
+  const explicitBackend = (process.env.READWISEHUB_RETRIEVAL_BACKEND || "").trim().toLowerCase();
+  if (explicitBackend === "firestore") {
+    return false;
+  }
+  if (isPineconeSearchEnabledForUser(userId)) {
+    return true;
+  }
+
+  return books.size > 0 && Array.from(books.values()).every(hasCompletePineconeCoverage);
+}
+
 function hasCompletePineconeCoverage(book: SearchableBook): boolean {
   return book.pineconeIndexedChunkCount > 0 && book.pineconeMissingChunkCount === 0;
 }
@@ -1520,7 +1532,7 @@ async function runLibrarySearch(userId: string, queryText: string, bookId = ""):
     /\b(list|enumerate|name|what are|which are).{0,80}\b(problem|problems|unsolved|biggest|questions)\b/i.test(queryText);
   let pineconeSeedResults: LibrarySearchResult[] = [];
 
-  if (isPineconeSearchEnabledForUser(userId)) {
+  if (shouldUsePineconeSearch(userId, books)) {
     diagnostics.pineconeAttempted = true;
     const pineconeSearch = await runPineconeLibrarySearch(userId, queryText, queryEmbedding, books);
     diagnostics.candidateCount = pineconeSearch.candidateCount;
@@ -1951,6 +1963,119 @@ function parseStructuralRangeRequest(queryText: string): StructuralRangeRequest 
   }
 
   return null;
+}
+
+function isOpeningChapterRequest(queryText: string): boolean {
+  const normalized = queryText.toLowerCase();
+  return (
+    /\b(?:chapter|kapitel)\s+1\b/.test(normalized) ||
+    /\b(?:first|opening|erste[snrm]?)\s+(?:chapter|kapitel)\b/.test(normalized)
+  );
+}
+
+function isLikelyTableOfContentsChunk(text: string): boolean {
+  const normalized = text.replace(/\s+/g, " ").trim();
+  if (!normalized) {
+    return true;
+  }
+
+  const dottedEntryCount = (normalized.match(/\.{3,}\s*\d+/g) || []).length;
+  const headingListCount = (normalized.match(/\b(?:chapter|kapitel)\s+\d+\b/gi) || []).length;
+  return dottedEntryCount >= 3 || headingListCount >= 8;
+}
+
+function isLikelyNonOpeningChapterChunk(text: string): boolean {
+  return /^\s*(?:chapter|kapitel)\s+([2-9]|\d{2,})\b/i.test(text);
+}
+
+async function resolveOpeningChapterSearch(
+  userId: string,
+  queryText: string,
+  bookId: string
+): Promise<LibrarySearchResponse | null> {
+  if (!bookId || !isOpeningChapterRequest(queryText)) {
+    return null;
+  }
+
+  const bookSnapshot = await db.collection("books").doc(bookId).get();
+  if (!bookSnapshot.exists || bookSnapshot.get("userId") !== userId) {
+    return null;
+  }
+
+  const chunkCount = Number(bookSnapshot.get("chunkCount")) || 0;
+  if (chunkCount <= 0) {
+    return null;
+  }
+
+  const chunkRefs = Array.from(
+    { length: Math.min(60, chunkCount) },
+    (_, chunkIndex) => db.collection("bookChunks").doc(`${bookId}_${chunkIndex}`)
+  );
+  const chunkSnapshots = await db.getAll(...chunkRefs);
+  const candidateChunks = chunkSnapshots
+    .filter((chunkSnapshot) => chunkSnapshot.exists && chunkSnapshot.get("userId") === userId)
+    .map((chunkSnapshot) => {
+      const text = String(chunkSnapshot.get("text") || "").trim();
+      return {
+        snapshot: chunkSnapshot,
+        chunkIndex: Number(chunkSnapshot.get("chunkIndex")) || 0,
+        text,
+      };
+    })
+    .filter((chunk) =>
+      chunk.text.length >= 80 &&
+      !isLikelyTableOfContentsChunk(chunk.text) &&
+      !isLikelyNonOpeningChapterChunk(chunk.text)
+    )
+    .sort((left, right) => left.chunkIndex - right.chunkIndex);
+
+  const selectedChunks = candidateChunks.slice(0, 6);
+  if (selectedChunks.length === 0) {
+    return null;
+  }
+
+  const bookTitle =
+    String(bookSnapshot.get("displayTitle") || "") ||
+    createDisplayTitle(String(bookSnapshot.get("title") || "Untitled"));
+  const terms = tokenizeSearchQuery(queryText);
+  const results = selectedChunks.map(({ snapshot, chunkIndex, text }, index) => ({
+    chunkId: snapshot.id,
+    bookId,
+    bookTitle,
+    chunkIndex,
+    charStart: Number(snapshot.get("charStart")) || 0,
+    charEnd: Number(snapshot.get("charEnd")) || 0,
+    score: 130 - index,
+    excerpt: [
+      "Structural range: opening chapter",
+      createExcerpt(text, terms) || text.slice(0, 1800),
+    ].join("\n"),
+  }));
+
+  const diagnostics = createRetrievalDiagnostics({
+    userId,
+    bookId,
+    books: new Map([
+      [
+        bookId,
+        {
+          title: bookTitle,
+          scope: resolveBookScope(userId, bookSnapshot),
+          pineconeIndexedChunkCount: Number(bookSnapshot.get("pineconeIndexedChunkCount")) || 0,
+          pineconeMissingChunkCount: Number(bookSnapshot.get("pineconeMissingChunkCount")) || 0,
+        },
+      ],
+    ]),
+  });
+  diagnostics.backend = "firestore";
+  diagnostics.fallbackReason = "opening_chapter";
+  diagnostics.candidateCount = candidateChunks.length;
+  diagnostics.resultCount = results.length;
+
+  return {
+    results,
+    diagnostics,
+  };
 }
 
 function normalizeSectionMapEntry(value: unknown): SectionMapEntry | null {
@@ -6146,9 +6271,15 @@ export const askLibrary = onCall(
       sectionMapCreationSearch ??
       inheritedSectionSearch ??
       (await resolveSectionMapSearch(auth.uid, queryText, bookId));
+    const openingChapterSearch =
+      sectionMapSearch ? null : await resolveOpeningChapterSearch(auth.uid, retrievalQueryText, bookId);
     const structuralRangeSearch =
-      sectionMapSearch ? null : await resolveStructuralRangeSearch(auth.uid, retrievalQueryText, bookId);
-    const search = sectionMapSearch ?? structuralRangeSearch ?? (await runLibrarySearch(auth.uid, retrievalQueryText, bookId));
+      sectionMapSearch || openingChapterSearch ? null : await resolveStructuralRangeSearch(auth.uid, retrievalQueryText, bookId);
+    const search =
+      sectionMapSearch ??
+      openingChapterSearch ??
+      structuralRangeSearch ??
+      (await runLibrarySearch(auth.uid, retrievalQueryText, bookId));
     if (inheritedContext) {
       search.diagnostics.conversationContextUsed = true;
       if (retrievalQueryText !== queryText) {
