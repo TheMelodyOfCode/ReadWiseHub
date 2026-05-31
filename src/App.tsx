@@ -1464,6 +1464,19 @@ export function App() {
   }, [readerBookId]);
 
   useEffect(() => {
+    if (!adminBookDebug) {
+      return;
+    }
+
+    window.setTimeout(() => {
+      document.getElementById("admin-book-debug")?.scrollIntoView({
+        behavior: "smooth",
+        block: "start",
+      });
+    }, 0);
+  }, [adminBookDebug]);
+
+  useEffect(() => {
     let cancelled = false;
     setReaderOriginalPageUrl("");
 
@@ -1761,12 +1774,6 @@ export function App() {
         reason: "Admin console book metadata and ingestion review.",
       });
       setAdminBookDebug(response.data);
-      window.requestAnimationFrame(() => {
-        document.getElementById("admin-book-debug")?.scrollIntoView({
-          behavior: "smooth",
-          block: "start",
-        });
-      });
     } catch (error) {
       setAdminMessage(getErrorMessage(error, "Book debug failed"));
     } finally {
