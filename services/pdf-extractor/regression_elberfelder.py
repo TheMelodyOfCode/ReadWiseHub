@@ -66,13 +66,27 @@ def main_cli() -> int:
         print("Usage: python regression_elberfelder.py /path/to/elberfelder_1905.pdf", file=sys.stderr)
         return 2
 
-    page_text = extract_page_text(Path(sys.argv[1]), 7)
-    assert_contains(page_text, "Chapter 1")
-    assert_contains(page_text, "1 Im Anfang schuf Gott die Himmel und die Erde.")
-    assert_contains(page_text, "an der Ausdehnung des Himmels, um den")
-    assert_contains(page_text, "\n\n15 und sie seien zu Lichtern")
-    assert_contains(page_text, "\n\n18 und um zu herrschen")
-    assert_contains(page_text, "\n\n21 Und Gott schuf die großen Seeungeheuer")
+    pdf_path = Path(sys.argv[1])
+    page_7_text = extract_page_text(pdf_path, 7)
+    assert_contains(page_7_text, "Chapter 1")
+    assert_contains(page_7_text, "1 Im Anfang schuf Gott die Himmel und die Erde.")
+    assert_contains(page_7_text, "schwebte über den Wassern")
+    assert_contains(page_7_text, "an der Ausdehnung des Himmels, um den")
+    assert_contains(page_7_text, "\n\n15 und sie seien zu Lichtern")
+    assert_contains(page_7_text, "\n\n18 und um zu herrschen")
+    assert_contains(page_7_text, "\n\n21 Und Gott schuf die großen Seeungeheuer")
+    assert_contains(page_7_text, "von all seinem Werk, das Gott geschaffen")
+    assert_contains(page_7_text, "nicht regnen lassen auf die Erde")
+    assert_contains(page_7_text, "und befeuchtete die ganze Oberfläche des Erdbodens")
+
+    page_8_text = extract_page_text(pdf_path, 8)
+    assert_contains(page_8_text, "den Erdboden")
+    assert_contains(page_8_text, "achthundertfünfzehn Jahre")
+
+    page_9_text = extract_page_text(pdf_path, 9)
+    assert_contains(page_9_text, "Wasserflut über die Erde, um alles Fleisch")
+    assert_contains(page_9_text, "in die Arche gehen, du und deine Söhne")
+    assert_contains(page_9_text, "Männliches und ein Weibliches von allem")
 
     print("Elberfelder extractor regression passed.")
     return 0

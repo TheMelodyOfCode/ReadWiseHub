@@ -186,6 +186,19 @@ GERMAN_GLUE_REPLACEMENTS = [
     ("wirdüber", "wird über"),
     ("herrschenüber", "herrschen über"),
     ("tröstenüber", "trösten über"),
+    ("schwebteüber", "schwebte über"),
+    ("vonallseinemWerk", "von all seinem Werk"),
+    ("dasGottgeschaffen", "das Gott geschaffen"),
+    ("lassenaufdieErde", "lassen auf die Erde"),
+    ("undbefeuchtetedieganzeOberflächedes", "und befeuchtete die ganze Oberfläche des"),
+    ("dennwelchesTagesdudavon", "denn welches Tages du davon"),
+    ("denErdboden", "den Erdboden"),
+    ("WasserflutüberdieErde", "Wasserflut über die Erde"),
+    ("umallesFleisch", "um alles Fleisch"),
+    ("dieArche", "die Arche"),
+    ("duunddeinganzesHaus", "du und dein ganzes Haus"),
+    ("ännlichesundeinWeiblichesvonallem", "Männliches und ein Weibliches von allem"),
+    ("menschlichenHerzensistbösevonseiner", "menschlichen Herzens ist böse von seiner"),
 ]
 
 
@@ -200,6 +213,8 @@ def repair_extracted_text_spacing(text: str) -> str:
     repaired = re.sub(r"([,;:!?])(?=\S)", r"\1 ", repaired)
     repaired = re.sub(r"\b(an|auf|aus|bei|bis|in|mit|nach|um|von|vor|zu)(der|die|das|den|dem|des|ein|eine|einem|einen)\b", r"\1 \2", repaired, flags=re.I)
     repaired = re.sub(r"\b(und|oder|aber)(der|die|das|den|dem|des|ein|eine|einem|einen|kein|keine|sie|er|es|ich|wir)\b", r"\1 \2", repaired, flags=re.I)
+    repaired = re.sub(r"\b(der|die|das|den|dem|des|ein|eine|einem|einen)(?=[A-ZÄÖÜ])", r"\1 ", repaired)
+    repaired = re.sub(r"(?<=[a-zäöüß])(?=Jahre\b)", " ", repaired)
     repaired = re.sub(r"\s+", " ", repaired).strip()
     return repaired
 
