@@ -54,6 +54,10 @@ def detect_column_bands(lines: list[dict[str, Any]], page_width: float) -> list[
     if len(body_lines) < 18 or page_width <= 0:
         return []
 
+    start_bands = detect_column_bands_from_starts(body_lines, page_width)
+    if start_bands:
+        return start_bands
+
     bucket_count = 96
     buckets = [0] * bucket_count
     for line in body_lines:
@@ -125,11 +129,15 @@ def detect_column_bands_from_starts(
 
     bands: list[tuple[float, float]] = []
     for index, cluster in enumerate(significant):
-        left = 0 if index == 0 else (significant[index - 1]["center"] + cluster["center"]) / 2
+        left = (
+            0
+            if index == 0
+            else (significant[index - 1]["max"] + cluster["center"]) / 2
+        )
         right = (
             page_width
             if index == len(significant) - 1
-            else (cluster["center"] + significant[index + 1]["center"]) / 2
+            else (cluster["max"] + significant[index + 1]["center"]) / 2
         )
         bands.append((left, right))
 
@@ -158,6 +166,78 @@ def order_page_lines(lines: list[dict[str, Any]], page_width: float) -> list[dic
         ordered.append(line)
 
     return sorted(ordered, key=lambda line: (line["columnIndex"], line["y0"], line["x0"]))
+
+
+GERMAN_GLUE_REPLACEMENTS = [
+    ("anderAusdehnungdesHimmels", "an der Ausdehnung des Himmels"),
+    ("AusdehnunginmittenderWasser", "Ausdehnung inmitten der Wasser"),
+    ("AusdehnungdesHimmels", "Ausdehnung des Himmels"),
+    ("GartenEdenhinaus", "Garten Eden hinaus"),
+    ("GartenEden", "Garten Eden"),
+    ("Erdbodenzu", "Erdboden zu"),
+    ("nichtregnenlassen", "nicht regnen lassen"),
+    ("seinWeib", "sein Weib"),
+    ("Eva,sein", "Eva, sein"),
+    ("welcheunterhalb", "welche unterhalb"),
+    ("undkein", "und kein"),
+    ("undsie", "und sie"),
+    ("umden", "um den"),
+    ("warüber", "war über"),
+    ("wirdüber", "wird über"),
+    ("herrschenüber", "herrschen über"),
+    ("tröstenüber", "trösten über"),
+]
+
+
+def repair_extracted_text_spacing(text: str) -> str:
+    repaired = clean_text(text)
+    if not repaired:
+        return ""
+
+    for source, replacement in GERMAN_GLUE_REPLACEMENTS:
+        repaired = repaired.replace(source, replacement)
+
+    repaired = re.sub(r"([,;:!?])(?=\S)", r"\1 ", repaired)
+    repaired = re.sub(r"\b(an|auf|aus|bei|bis|in|mit|nach|um|von|vor|zu)(der|die|das|den|dem|des|ein|eine|einem|einen)\b", r"\1 \2", repaired, flags=re.I)
+    repaired = re.sub(r"\b(und|oder|aber)(der|die|das|den|dem|des|ein|eine|einem|einen|kein|keine|sie|er|es|ich|wir)\b", r"\1 \2", repaired, flags=re.I)
+    repaired = re.sub(r"\s+", " ", repaired).strip()
+    return repaired
+
+
+def split_bible_paragraphs(paragraph: dict[str, Any]) -> list[dict[str, Any]]:
+    text = repair_extracted_text_spacing(str(paragraph.get("text") or ""))
+    if not text:
+        return []
+
+    text = re.sub(r"\s+(Chapter\s+\d{1,3})\b", r"\n\n\1", text, flags=re.I)
+    text = re.sub(r"([,.;!?])\s+(\d{1,3})\s+(?=[a-zäöüß])", r"\1\n\n\2 ", text)
+    text = re.sub(r"(\D)\s+(\d{1,3})\s+Und\b", r"\1\n\n\2 Und", text)
+
+    parts = [clean_text(part) for part in re.split(r"\n{2,}", text) if clean_text(part)]
+    if len(parts) <= 1:
+        repaired = dict(paragraph)
+        repaired["text"] = text
+        if repaired.get("title") and str(repaired.get("title")) != str(paragraph.get("text")):
+            repaired["title"] = repair_extracted_text_spacing(str(repaired.get("title") or ""))
+        return [repaired]
+
+    split_paragraphs: list[dict[str, Any]] = []
+    for index, part in enumerate(parts):
+        split_part = dict(paragraph)
+        split_part["text"] = part
+        split_part["title"] = part if re.match(r"^Chapter\s+\d{1,3}$", part, re.I) else ""
+        if index > 0:
+            split_part["pageStart"] = paragraph.get("pageEnd") or paragraph.get("pageStart") or paragraph.get("page") or 0
+        split_paragraphs.append(split_part)
+
+    return split_paragraphs
+
+
+def repair_paragraphs(paragraphs: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    repaired: list[dict[str, Any]] = []
+    for paragraph in paragraphs:
+        repaired.extend(split_bible_paragraphs(paragraph))
+    return repaired
 
 
 def merge_lines(lines: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -210,12 +290,18 @@ def merge_lines(lines: list[dict[str, Any]]) -> list[dict[str, Any]]:
             vertical_gap = line["y0"] - previous["y1"]
             indent_jump = line["x0"] - previous["x0"]
             previous_text = clean_text(previous["text"])
+            same_baseline = abs(line["y0"] - previous.get("y0", line["y0"])) <= max(2, line["size"] * 0.35)
             starts_new = (
                 line["page"] != previous["page"]
-                or vertical_gap < -max(8, line["size"] * 0.9)
-                or vertical_gap > max(8, line["size"] * 0.9)
-                or indent_jump > 22
-                or previous_text.endswith((".", "!", "?", ".”", "?”"))
+                or (
+                    not same_baseline
+                    and (
+                        vertical_gap < -max(8, line["size"] * 0.9)
+                        or vertical_gap > max(8, line["size"] * 0.9)
+                        or indent_jump > 22
+                        or previous_text.endswith((".", "!", "?", ".”", "?”"))
+                    )
+                )
             )
 
         if starts_new:
@@ -509,7 +595,7 @@ def extract_pdf(request: ExtractRequest) -> dict[str, Any]:
         for line in lines:
             line["heading"] = is_heading(line["text"], line["size"], median_size, line["y0"])
 
-        paragraphs = merge_lines(lines)
+        paragraphs = repair_paragraphs(merge_lines(lines))
         sections = build_sections(paragraphs)
         page_texts = build_page_texts(paragraphs, document.page_count)
         toc_entries = parse_toc_entries(page_texts)
