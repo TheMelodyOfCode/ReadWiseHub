@@ -43,6 +43,123 @@ def is_heading(text: str, size: float, median_size: float, y: float) -> bool:
     return len(letters) >= 6 and letters.upper() == letters and size >= median_size * 1.05
 
 
+def detect_column_bands(lines: list[dict[str, Any]], page_width: float) -> list[tuple[float, float]]:
+    body_lines = [
+        line
+        for line in lines
+        if float(line.get("x1", 0)) > float(line.get("x0", 0))
+        and float(line.get("x1", 0)) - float(line.get("x0", 0)) < page_width * 0.72
+        and len(clean_text(str(line.get("text") or ""))) >= 8
+    ]
+    if len(body_lines) < 18 or page_width <= 0:
+        return []
+
+    bucket_count = 96
+    buckets = [0] * bucket_count
+    for line in body_lines:
+        start = max(0, min(bucket_count - 1, int(float(line["x0"]) / page_width * bucket_count)))
+        end = max(start, min(bucket_count - 1, int(float(line["x1"]) / page_width * bucket_count)))
+        for bucket_index in range(start, end + 1):
+            buckets[bucket_index] += 1
+
+    threshold = max(2, int(len(body_lines) * 0.045))
+    raw_segments: list[tuple[int, int]] = []
+    start: int | None = None
+    for index, count in enumerate(buckets):
+        if count >= threshold and start is None:
+            start = index
+        elif count < threshold and start is not None:
+            raw_segments.append((start, index - 1))
+            start = None
+    if start is not None:
+        raw_segments.append((start, bucket_count - 1))
+
+    merged_segments: list[tuple[int, int]] = []
+    for segment_start, segment_end in raw_segments:
+        if not merged_segments or segment_start - merged_segments[-1][1] > 2:
+            merged_segments.append((segment_start, segment_end))
+        else:
+            previous_start, _ = merged_segments[-1]
+            merged_segments[-1] = (previous_start, segment_end)
+
+    bands: list[tuple[float, float]] = []
+    for segment_start, segment_end in merged_segments:
+        x0 = segment_start / bucket_count * page_width
+        x1 = (segment_end + 1) / bucket_count * page_width
+        if x1 - x0 >= page_width * 0.08:
+            bands.append((x0, x1))
+
+    if 2 <= len(bands) <= 4:
+        return bands
+
+    return detect_column_bands_from_starts(body_lines, page_width)
+
+
+def detect_column_bands_from_starts(
+    lines: list[dict[str, Any]], page_width: float
+) -> list[tuple[float, float]]:
+    clusters: list[dict[str, float]] = []
+    for line in sorted(lines, key=lambda item: float(item.get("x0", 0))):
+        x0 = float(line.get("x0", 0))
+        matched = False
+        for cluster in clusters:
+            if abs(x0 - cluster["center"]) <= max(18, page_width * 0.035):
+                count = cluster["count"] + 1
+                cluster["center"] = ((cluster["center"] * cluster["count"]) + x0) / count
+                cluster["count"] = count
+                cluster["min"] = min(cluster["min"], x0)
+                cluster["max"] = max(cluster["max"], float(line.get("x1", x0)))
+                matched = True
+                break
+        if not matched:
+            clusters.append({"center": x0, "count": 1, "min": x0, "max": float(line.get("x1", x0))})
+
+    significant = [
+        cluster
+        for cluster in clusters
+        if cluster["count"] >= max(6, len(lines) * 0.12)
+    ]
+    significant.sort(key=lambda cluster: cluster["center"])
+    if not 2 <= len(significant) <= 4:
+        return []
+
+    bands: list[tuple[float, float]] = []
+    for index, cluster in enumerate(significant):
+        left = 0 if index == 0 else (significant[index - 1]["center"] + cluster["center"]) / 2
+        right = (
+            page_width
+            if index == len(significant) - 1
+            else (cluster["center"] + significant[index + 1]["center"]) / 2
+        )
+        bands.append((left, right))
+
+    return bands
+
+
+def order_page_lines(lines: list[dict[str, Any]], page_width: float) -> list[dict[str, Any]]:
+    bands = detect_column_bands(lines, page_width)
+    if len(bands) < 2:
+        for line in lines:
+            line["columnIndex"] = 0
+            line["columnCount"] = 1
+        return sorted(lines, key=lambda line: (line["y0"], line["x0"]))
+
+    ordered: list[dict[str, Any]] = []
+    for line in lines:
+        x0 = float(line.get("x0", 0))
+        x1 = float(line.get("x1", x0))
+        center = (x0 + x1) / 2
+        column_index = min(
+            range(len(bands)),
+            key=lambda index: abs(center - ((bands[index][0] + bands[index][1]) / 2)),
+        )
+        line["columnIndex"] = column_index
+        line["columnCount"] = len(bands)
+        ordered.append(line)
+
+    return sorted(ordered, key=lambda line: (line["columnIndex"], line["y0"], line["x0"]))
+
+
 def merge_lines(lines: list[dict[str, Any]]) -> list[dict[str, Any]]:
     paragraphs: list[dict[str, Any]] = []
     current: list[str] = []
@@ -359,6 +476,8 @@ def extract_pdf(request: ExtractRequest) -> dict[str, Any]:
         for page_index, page in enumerate(document):
             page_dict = page.get_text("dict", sort=True)
             height = float(page.rect.height)
+            width = float(page.rect.width)
+            page_lines: list[dict[str, Any]] = []
             for block in page_dict.get("blocks", []):
                 if block.get("type") != 0:
                     continue
@@ -372,17 +491,19 @@ def extract_pdf(request: ExtractRequest) -> dict[str, Any]:
                     if bbox[1] < 30 or bbox[3] > height - 30:
                         continue
                     sizes.append(size)
-                    lines.append(
+                    page_lines.append(
                         {
                             "page": page_index + 1,
                             "text": text,
                             "x0": float(bbox[0]),
+                            "x1": float(bbox[2]),
                             "y0": float(bbox[1]),
                             "y1": float(bbox[3]),
                             "size": size,
                             "heading": False,
                         }
                     )
+            lines.extend(order_page_lines(page_lines, width))
 
         median_size = median(sizes) if sizes else 10
         for line in lines:
