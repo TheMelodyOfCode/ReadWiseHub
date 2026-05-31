@@ -211,7 +211,8 @@ def split_bible_paragraphs(paragraph: dict[str, Any]) -> list[dict[str, Any]]:
 
     text = re.sub(r"\s+(Chapter\s+\d{1,3})\b", r"\n\n\1", text, flags=re.I)
     text = re.sub(r"([,.;!?])\s+(\d{1,3})\s+(?=[a-zäöüß])", r"\1\n\n\2 ", text)
-    text = re.sub(r"(\D)\s+(\d{1,3})\s+Und\b", r"\1\n\n\2 Und", text)
+    text = re.sub(r"\s+(\d{1,3})\s+Und\b", r"\n\n\1 Und", text)
+    text = re.sub(r"\s+(\d{1,3})\s+(?=[A-ZÄÖÜ][a-zäöüß])", r"\n\n\1 ", text)
 
     parts = [clean_text(part) for part in re.split(r"\n{2,}", text) if clean_text(part)]
     if len(parts) <= 1:

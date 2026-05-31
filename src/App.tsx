@@ -1758,6 +1758,46 @@ export function App() {
     }
   }
 
+  async function repairAdminBookReaderText(bookId: string) {
+    const confirmed = window.confirm(
+      "Repair reader text and source TOC for this PDF? Chunks, vectors, conversations, highlights, and article drafts stay untouched."
+    );
+    if (!confirmed) {
+      return;
+    }
+
+    setAdminBusy(true);
+    setAdminMessage("");
+
+    try {
+      const repairBookReaderText = httpsCallable<
+        { bookId: string; confirmation: string; reason: string },
+        {
+          ok: boolean;
+          bookId: string;
+          pageTextCount: number;
+          sourceTocEntryCount: number;
+          structureQuality: string;
+          preferredReaderMode: string;
+        }
+      >(functions, "adminRepairBookReaderText");
+      const response = await repairBookReaderText({
+        bookId,
+        confirmation: "REPAIR_READER_TEXT_ONLY",
+        reason: "Admin console reader text repair after extractor improvement.",
+      });
+      await openAdminBook(bookId);
+      await loadAdminBooks();
+      setAdminMessage(
+        `Reader text repaired: ${response.data.pageTextCount} pages, ${response.data.sourceTocEntryCount} TOC entries, ${response.data.structureQuality}.`
+      );
+    } catch (error) {
+      setAdminMessage(getErrorMessage(error, "Reader text repair failed"));
+    } finally {
+      setAdminBusy(false);
+    }
+  }
+
   async function openAdminBook(bookId: string) {
     setAdminBusy(true);
     setAdminMessage("");
@@ -4174,6 +4214,19 @@ export function App() {
               <div className="section-heading">
                 <p className="eyebrow">Book detail</p>
                 <h2>Metadata, ingestion jobs, and structure previews</h2>
+                <button
+                  className="button secondary-button"
+                  type="button"
+                  onClick={() => {
+                    const bookId = String(adminBookDebug.book.id || "");
+                    if (bookId) {
+                      void repairAdminBookReaderText(bookId);
+                    }
+                  }}
+                  disabled={adminBusy || String(adminBookDebug.book.mimeType || "") !== "application/pdf"}
+                >
+                  Repair reader text
+                </button>
               </div>
               <div className="admin-debug-grid">
                 <article className="admin-card">

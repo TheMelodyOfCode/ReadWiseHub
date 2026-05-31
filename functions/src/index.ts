@@ -3969,6 +3969,70 @@ async function writeSourceTocArtifact(
   });
 }
 
+async function reprocessBookReaderTextForBook(
+  userId: string,
+  bookId: string,
+  bookSnapshot: FirebaseFirestore.DocumentSnapshot
+) {
+  const storagePath = assertString(bookSnapshot.get("storagePath"), "storagePath");
+  const mimeType = assertString(bookSnapshot.get("mimeType"), "mimeType");
+
+  if (mimeType !== "application/pdf") {
+    throw new HttpsError("failed-precondition", "Only PDF books can use reader text repair.");
+  }
+
+  const bookScope = resolveBookScope(userId, bookSnapshot);
+  const bucket = getStorage().bucket();
+  const maxBytes = Number(bookSnapshot.get("sizeBytes")) || PLAN_LIMITS.pro.maxFileBytes;
+  const extraction = await extractPdfWithLayoutService(bucket.name, storagePath, maxBytes);
+  if (!extraction?.text) {
+    throw new HttpsError("failed-precondition", "Could not re-extract reader text for this PDF.");
+  }
+
+  const sections =
+    extraction.sections && extraction.sections.length > 0
+      ? extraction.sections
+      : createBookSections(extraction.text);
+  const structureAssessment = assessDocumentStructure(mimeType, extraction, sections);
+  const outline =
+    extraction.outline && extraction.outline.length > 0
+      ? extraction.outline
+      : buildBookOutline(sections);
+
+  await clearBookPageText(bookId);
+  await db.collection("bookArtifacts").doc(`${bookId}_source_toc`).delete().catch(() => undefined);
+  await writeBookPageText(extraction.pageTexts || [], userId, bookId, bookScope);
+  await writeSourceTocArtifact(
+    extraction.tocEntries || [],
+    userId,
+    bookId,
+    String(bookSnapshot.get("displayTitle") || bookSnapshot.get("title") || "Untitled"),
+    bookScope
+  );
+
+  await bookSnapshot.ref.update({
+    pageCount: extraction.pageCount,
+    textLength: extraction.text.length,
+    pageTextCount: (extraction.pageTexts || []).length,
+    sourceTocEntryCount: (extraction.tocEntries || []).length,
+    structureQuality: structureAssessment.structureQuality,
+    formatWarning: structureAssessment.formatWarning,
+    preferredReaderMode: structureAssessment.preferredReaderMode,
+    outline,
+    readerTextRepairedAt: FieldValue.serverTimestamp(),
+    readerTextRepairExtractorVersion: EXTRACTOR_VERSION,
+    updatedAt: FieldValue.serverTimestamp(),
+  });
+
+  return {
+    pageCount: extraction.pageCount,
+    pageTextCount: (extraction.pageTexts || []).length,
+    sourceTocEntryCount: (extraction.tocEntries || []).length,
+    structureQuality: structureAssessment.structureQuality,
+    preferredReaderMode: structureAssessment.preferredReaderMode,
+  };
+}
+
 async function backfillPdfPageImagesForBook(
   userId: string,
   bookId: string,
@@ -5776,6 +5840,55 @@ export const processQueuedIngestionJob = onDocumentCreated(
     }
 
     await processIngestionJobById(jobId);
+  }
+);
+
+export const adminRepairBookReaderText = onCall(
+  { region: "us-central1", timeoutSeconds: 540, memory: "1GiB" },
+  async (request) => {
+    const viewer = requireAdmin(request.auth?.token
+      ? {
+          uid: request.auth.uid,
+          email: request.auth.token.email,
+          name: request.auth.token.name,
+          picture: request.auth.token.picture,
+        }
+      : undefined);
+
+    const confirmation = assertString(request.data?.confirmation, "confirmation");
+    if (confirmation !== "REPAIR_READER_TEXT_ONLY") {
+      throw new HttpsError(
+        "failed-precondition",
+        "Use the confirmation phrase REPAIR_READER_TEXT_ONLY."
+      );
+    }
+
+    const bookId = assertString(request.data?.bookId, "bookId");
+    const bookSnapshot = await db.collection("books").doc(bookId).get();
+    if (!bookSnapshot.exists) {
+      throw new HttpsError("not-found", "Book was not found.");
+    }
+
+    const userId = assertString(bookSnapshot.get("userId"), "userId");
+    const result = await reprocessBookReaderTextForBook(userId, bookId, bookSnapshot);
+    await writeAdminAuditEvent({
+      viewer,
+      action: "adminRepairBookReaderText",
+      targetUserId: userId,
+      targetBookId: bookId,
+      reason:
+        typeof request.data?.reason === "string"
+          ? request.data.reason.slice(0, 240)
+          : "Admin reader text repair only; chunks and vectors untouched.",
+    });
+
+    return {
+      ok: true,
+      bookId,
+      userId,
+      mode: "readerTextOnly",
+      ...result,
+    };
   }
 );
 
