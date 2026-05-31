@@ -476,6 +476,10 @@ function isReaderStandaloneHeading(text: string) {
   return /^(chapter|kapitel)\s+\d+[a-z]?$/i.test(trimmed);
 }
 
+function isReaderNumberedParagraph(text: string) {
+  return /^\d{1,3}\s+\S/.test(text.trim());
+}
+
 function formatReaderParagraphs(chunks: ReaderChunk[]): ReaderParagraph[] {
   const paragraphs: ReaderParagraph[] = [];
   let currentText = "";
@@ -512,7 +516,10 @@ function formatReaderParagraphs(chunks: ReaderChunk[]): ReaderParagraph[] {
         return;
       }
 
-      if (shouldContinueParagraph(currentText)) {
+      if (
+        shouldContinueParagraph(currentText) &&
+        !(isReaderNumberedParagraph(currentText) && isReaderNumberedParagraph(part))
+      ) {
         currentText = `${currentText} ${part}`;
         currentIndexes = Array.from(new Set([...currentIndexes, chunk.chunkIndex]));
         return;
@@ -846,6 +853,12 @@ export function App() {
   const [adminConversationBackendFilter, setAdminConversationBackendFilter] = useState("all");
   const [adminBusy, setAdminBusy] = useState(false);
   const [adminMessage, setAdminMessage] = useState("");
+  const [adminRepairBookId, setAdminRepairBookId] = useState("");
+  const [adminRepairRunning, setAdminRepairRunning] = useState(false);
+  const [adminRepairProgress, setAdminRepairProgress] = useState(0);
+  const [adminRepairMessage, setAdminRepairMessage] = useState("");
+  const [adminRepairError, setAdminRepairError] = useState("");
+  const [signingOut, setSigningOut] = useState(false);
 
   const t = useMemo(() => dictionaries[locale], [locale]);
   const authActionParams = useMemo(() => new URLSearchParams(window.location.search), []);
@@ -1779,15 +1792,20 @@ export function App() {
   }
 
   async function repairAdminBookReaderText(bookId: string) {
-    const confirmed = window.confirm(
-      "Repair reader text and source TOC for this PDF? Chunks, vectors, conversations, highlights, and article drafts stay untouched."
-    );
-    if (!confirmed) {
-      return;
-    }
-
     setAdminBusy(true);
+    setAdminRepairRunning(true);
+    setAdminRepairProgress(8);
+    setAdminRepairMessage("Preparing a reader text repair for this PDF.");
+    setAdminRepairError("");
     setAdminMessage("");
+    const progressTimer = window.setInterval(() => {
+      setAdminRepairProgress((progress) => Math.min(92, progress + (progress < 50 ? 12 : 6)));
+      setAdminRepairMessage((message) =>
+        message === "Preparing a reader text repair for this PDF."
+          ? "Extracting fresh reader pages and source TOC."
+          : "Updating the reader text preview. Existing chunks, vectors, highlights, and drafts stay untouched."
+      );
+    }, 1400);
 
     try {
       const repairBookReaderText = httpsCallable<
@@ -1808,12 +1826,17 @@ export function App() {
       });
       await openAdminBook(bookId);
       await loadAdminBooks();
-      setAdminMessage(
-        `Reader text repaired: ${response.data.pageTextCount} pages, ${response.data.sourceTocEntryCount} TOC entries, ${response.data.structureQuality}.`
-      );
+      const successMessage = `Reader text repaired: ${response.data.pageTextCount} pages, ${response.data.sourceTocEntryCount} TOC entries, ${response.data.structureQuality}.`;
+      setAdminRepairProgress(100);
+      setAdminRepairMessage(successMessage);
+      setAdminMessage(successMessage);
     } catch (error) {
-      setAdminMessage(getErrorMessage(error, "Reader text repair failed"));
+      const errorMessage = getErrorMessage(error, "Reader text repair failed");
+      setAdminRepairError(errorMessage);
+      setAdminMessage(errorMessage);
     } finally {
+      window.clearInterval(progressTimer);
+      setAdminRepairRunning(false);
       setAdminBusy(false);
     }
   }
@@ -3466,11 +3489,25 @@ export function App() {
   }
 
   async function handleSignOut() {
+    if (signingOut) {
+      return;
+    }
+
     signingOutRef.current = true;
+    setSigningOut(true);
     setAuthError("");
     setStatus("");
     closeMenu();
-    await signOut(auth);
+    try {
+      await signOut(auth);
+      setUser(null);
+      setAdminAccess(false);
+    } catch (error) {
+      signingOutRef.current = false;
+      setAuthError(getErrorMessage(error, "Sign out failed"));
+    } finally {
+      setSigningOut(false);
+    }
   }
 
   async function registerCurrentSession() {
@@ -3884,6 +3921,109 @@ export function App() {
     );
   });
 
+  function openAdminRepairDialog(bookId: string) {
+    setAdminRepairBookId(bookId);
+    setAdminRepairProgress(0);
+    setAdminRepairRunning(false);
+    setAdminRepairMessage("");
+    setAdminRepairError("");
+  }
+
+  function closeAdminRepairDialog() {
+    if (adminRepairRunning) {
+      return;
+    }
+    setAdminRepairBookId("");
+    setAdminRepairProgress(0);
+    setAdminRepairMessage("");
+    setAdminRepairError("");
+  }
+
+  function renderAdminRepairDialog() {
+    if (!adminRepairBookId) {
+      return null;
+    }
+
+    const debugBookTitle =
+      adminBookDebug && String(adminBookDebug.book.id || "") === adminRepairBookId
+        ? String(adminBookDebug.book.displayTitle || adminBookDebug.book.title || "Selected PDF")
+        : "";
+    const listBookTitle =
+      adminBooks.find((book) => book.id === adminRepairBookId)?.displayTitle || "";
+    const repairBookTitle = debugBookTitle || listBookTitle || "Selected PDF";
+    const canClose = !adminRepairRunning;
+
+    return (
+      <div className="modal-backdrop" role="presentation">
+        <section
+          className="modal-panel admin-repair-modal"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="admin-repair-modal-title"
+        >
+          <div className="modal-heading">
+            <div>
+              <p className="eyebrow">Admin repair</p>
+              <h3 id="admin-repair-modal-title">Repair reader text and source TOC</h3>
+            </div>
+            <button
+              className="button compact secondary"
+              type="button"
+              aria-label="Close"
+              onClick={closeAdminRepairDialog}
+              disabled={!canClose}
+            >
+              ×
+            </button>
+          </div>
+          <p>
+            <strong>{repairBookTitle}</strong>
+          </p>
+          <p>
+            This reprocesses the PDF reader pages and source table of contents only. Chunks,
+            vectors, conversations, highlights, and article drafts stay untouched.
+          </p>
+          {adminRepairRunning || adminRepairProgress > 0 ? (
+            <div className="task-progress compact-progress" role="status" aria-live="polite">
+              <div>
+                <strong>{adminRepairMessage || "Repairing reader text..."}</strong>
+                <span>{adminRepairProgress}%</span>
+              </div>
+              <progress value={adminRepairProgress} max="100" />
+            </div>
+          ) : null}
+          {adminRepairError ? <p className="error-text">{adminRepairError}</p> : null}
+          <div className="modal-actions">
+            {adminRepairProgress === 100 && !adminRepairError ? (
+              <button className="button primary" type="button" onClick={closeAdminRepairDialog}>
+                Done
+              </button>
+            ) : (
+              <>
+                <button
+                  className="button primary"
+                  type="button"
+                  onClick={() => void repairAdminBookReaderText(adminRepairBookId)}
+                  disabled={adminRepairRunning || adminBusy}
+                >
+                  {adminRepairRunning ? "Repairing..." : "Start repair"}
+                </button>
+                <button
+                  className="button secondary"
+                  type="button"
+                  onClick={closeAdminRepairDialog}
+                  disabled={!canClose}
+                >
+                  Cancel
+                </button>
+              </>
+            )}
+          </div>
+        </section>
+      </div>
+    );
+  }
+
   function renderAdminConsole() {
     const counts = adminDashboard?.counts ?? {};
 
@@ -3914,8 +4054,9 @@ export function App() {
               className="button header-button sign-out-button"
               type="button"
               onClick={() => void handleSignOut()}
+              disabled={signingOut}
             >
-              {t.signOut}
+              {signingOut ? t.loading : t.signOut}
             </button>
           </div>
         </header>
@@ -4240,7 +4381,7 @@ export function App() {
                   onClick={() => {
                     const bookId = String(adminBookDebug.book.id || "");
                     if (bookId) {
-                      void repairAdminBookReaderText(bookId);
+                      openAdminRepairDialog(bookId);
                     }
                   }}
                   disabled={adminBusy || String(adminBookDebug.book.mimeType || "") !== "application/pdf"}
@@ -4439,6 +4580,7 @@ export function App() {
               </div>
             </section>
           ) : null}
+          {renderAdminRepairDialog()}
         </main>
       </div>
     );
@@ -4613,8 +4755,9 @@ export function App() {
                 className="button header-button sign-out-button"
                 type="button"
                 onClick={() => void handleSignOut()}
+                disabled={signingOut}
               >
-                {t.signOut}
+                {signingOut ? t.loading : t.signOut}
               </button>
             </div>
           </div>
@@ -6446,8 +6589,8 @@ export function App() {
               {profileMessage ? <p className="small-note">{profileMessage}</p> : null}
             </form>
 
-            <button className="button secondary" type="button" onClick={() => void handleSignOut()}>
-              {t.signOut}
+            <button className="button secondary" type="button" onClick={() => void handleSignOut()} disabled={signingOut}>
+              {signingOut ? t.loading : t.signOut}
             </button>
             <section className="account-security-panel">
               <div className="section-heading">

@@ -2612,6 +2612,10 @@ select {
   border-color: color-mix(in srgb, var(--primary) 34%, var(--border));
 }
 
+.admin-repair-modal {
+  border-color: color-mix(in srgb, var(--accent) 36%, var(--border));
+}
+
 .uploaded-book-card,
 .recent-upload {
   border-color: color-mix(in srgb, var(--primary) 62%, var(--border));
