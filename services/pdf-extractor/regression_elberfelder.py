@@ -88,6 +88,15 @@ def main_cli() -> int:
     assert_contains(page_9_text, "in die Arche gehen, du und deine Söhne")
     assert_contains(page_9_text, "Männliches und ein Weibliches von allem")
 
+    page_11_text = extract_page_text(pdf_path, 11)
+    assert_contains(page_11_text, "Abram zog nach Ägypten hinab, um sich daselbst aufzuhalten")
+
+    page_30_text = extract_page_text(pdf_path, 30)
+    assert_contains(page_30_text, "So spricht Jehova, der Gott Israels: Laß mein Volk ziehen")
+
+    page_56_text = extract_page_text(pdf_path, 56)
+    assert_contains(page_56_text, "keinerlei Dienstarbeit")
+
     print("Elberfelder extractor regression passed.")
     return 0
 

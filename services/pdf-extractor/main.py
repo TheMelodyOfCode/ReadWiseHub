@@ -199,10 +199,75 @@ GERMAN_GLUE_REPLACEMENTS = [
     ("duunddeinganzesHaus", "du und dein ganzes Haus"),
     ("ännlichesundeinWeiblichesvonallem", "Männliches und ein Weibliches von allem"),
     ("menschlichenHerzensistbösevonseiner", "menschlichen Herzens ist böse von seiner"),
+    ("umsichdaselbstaufzuhalten", "um sich daselbst aufzuhalten"),
+    ("PharaoerzählteihnenseineTräume", "Pharao erzählte ihnen seine Träume"),
+    ("IsaakundJakobzugeschworen", "Isaak und Jakob zugeschworen"),
+    ("sprichtJehova", "spricht Jehova"),
+    ("GottIsraels", "Gott Israels"),
+    ("Laßmein", "Laß mein"),
+    ("heraufüber", "herauf über"),
+    ("nichtzuEitlemaussprechen", "nicht zu Eitlem aussprechen"),
+    ("Ephodverrückte", "Ephod verrückte"),
+    ("sowieJehovadem", "sowie Jehova dem"),
+    ("keinÖl", "kein Öl"),
+    ("undmeinHeiligtumsolltihrfürchten", "und mein Heiligtum sollt ihr fürchten"),
+    ("nachihrenHeeren", "nach ihren Heeren"),
+    ("KönigsderAmoriter", "Königs der Amoriter"),
+    ("unddieserhatte", "und dieser hatte"),
+    ("vondenGeschlechtern", "von den Geschlechtern"),
+    ("undüberdasViehundüberdieganzeErde", "und über das Vieh und über die ganze Erde"),
+    ("7UndJehovaGottbildetedenMenschen", "7 Und Jehova Gott bildete den Menschen"),
+    ("VonjedemBaume", "Von jedem Baume"),
+    ("DassinddieHelden", "Das sind die Helden"),
+    ("welchevon", "welche von"),
+    ("UnddieKanaaniterwarendamals", "Und die Kanaaniter waren damals"),
+    ("nachÄgyptenzukommen", "nach Ägypten zu kommen"),
+    ("Königevon", "Könige von"),
+    ("Könige vonSodom", "Könige von Sodom"),
+    ("Könige vonAdama", "Könige von Adama"),
+    ("Könige vonZeboim", "Könige von Zeboim"),
+    ("undmit", "und mit"),
+    ("undSchemaeber", "und Schemaeber"),
+    ("diezu", "die zu"),
+    ("ZiegeundeinendreijährigenWidderund", "Ziege und einen dreijährigen Widder und"),
+    ("StromeÄgyptens", "Strome Ägyptens"),
+    ("UndsiehatteeineägyptischeMagd", "Und sie hatte eine ägyptische Magd"),
+    ("14DarumnanntemandenBrunnen", "14 Darum nannte man den Brunnen"),
+    ("nachdirdasLanddeinerFremdlingschaft", "nach dir das Land deiner Fremdlingschaft"),
+    ("HausgeboreneundderfürGeldErkaufte", "Hausgeborene und der für Geld Erkaufte"),
+    ("schlugensiemitBlindheit", "schlugen sie mit Blindheit"),
+    ("15UndsowiedieMorgenröteaufging", "15 Und sowie die Morgenröte aufging"),
+    ("8UndAbimelechstanddesMorgensfrüh", "8 Und Abimelech stand des Morgens früh"),
+    ("GottheilteAbimelechundsein", "Gott heilte Abimelech und sein"),
+    ("nichtübelseinindeinenAugenwegendes", "nicht übel sein in deinen Augen wegen des"),
+    ("OhrendesVolkesdesLandesundsprach", "Ohren des Volkes des Landes und sprach"),
+    ("14UndEphronantwortetedemAbraham", "14 Und Ephron antwortete dem Abraham"),
+    ("dasistHebron", "das ist Hebron"),
+    ("diedemBethuelgeborenworden", "die dem Bethuel geboren worden"),
+    ("TochterdesBrudersmeinesHerrnfür", "Tochter des Bruders meines Herrn für"),
+    ("werdezutausendmalZehntausenden", "werde zu tausendmal Zehntausenden"),
+    ("gabAbrahamGeschenke", "gab Abraham Geschenke"),
+    ("DerErstgeboreneIsmaels", "Der Erstgeborene Ismaels"),
+    ("SchwesterLabans", "Schwester Labans"),
+    ("dennsiewarunfruchtbar", "denn sie war unfruchtbar"),
+    ("ganzenLeibewieeinhärenerMantel", "ganzen Leibe wie ein härener Mantel"),
+    ("außerdervorigenHungersnot", "außer der vorigen Hungersnot"),
+    ("nichtsÜbles", "nichts Übles"),
+    ("Fluchkommeaufmich", "Fluch komme auf mich"),
+    ("meinSohn", "mein Sohn"),
+    ("seinerMutter", "seiner Mutter"),
+    ("UndseineMutterbereitete", "Und seine Mutter bereitete"),
 ]
 
 
-def repair_extracted_text_spacing(text: str) -> str:
+def is_likely_bible_text(text: str) -> bool:
+    return bool(
+        re.search(r"\b(Chapter\s+\d{1,3}|Jehova|Gott|Mose|Israel|Pharao|Abraham|Jakob)\b", text, re.I)
+        or re.search(r"\b\d{1,3}\s*[A-ZÄÖÜ]", text)
+    )
+
+
+def repair_extracted_text_spacing(text: str, aggressive: bool = False) -> str:
     repaired = clean_text(text)
     if not repaired:
         return ""
@@ -215,12 +280,19 @@ def repair_extracted_text_spacing(text: str) -> str:
     repaired = re.sub(r"\b(und|oder|aber)(der|die|das|den|dem|des|ein|eine|einem|einen|kein|keine|sie|er|es|ich|wir)\b", r"\1 \2", repaired, flags=re.I)
     repaired = re.sub(r"\b(der|die|das|den|dem|des|ein|eine|einem|einen)(?=[A-ZÄÖÜ])", r"\1 ", repaired)
     repaired = re.sub(r"(?<=[a-zäöüß])(?=Jahre\b)", " ", repaired)
+    repaired = re.sub(r"(?<=[a-zäöüß])(?=(Ägypten|Ägyptens|Ägypter|Ägyptern|Ähren|Ältesten|Äußerstes|Öl|Öles|Öffnung)\b)", " ", repaired)
+    repaired = re.sub(r"\b(fünf|sieben|zwei|drei|vierzehn)(?=(Widder|Böcke|Kelche|Ähren|einjährige)\b)", r"\1 ", repaired, flags=re.I)
+    if aggressive:
+        repaired = re.sub(r"(?<=\d)(?=[A-ZÄÖÜ])", " ", repaired)
+        repaired = re.sub(r"(?<=[a-zäöüß])(?=[A-ZÄÖÜ][a-zäöüß]{2,})", " ", repaired)
     repaired = re.sub(r"\s+", " ", repaired).strip()
     return repaired
 
 
 def split_bible_paragraphs(paragraph: dict[str, Any]) -> list[dict[str, Any]]:
-    text = repair_extracted_text_spacing(str(paragraph.get("text") or ""))
+    raw_text = str(paragraph.get("text") or "")
+    aggressive_spacing = is_likely_bible_text(raw_text)
+    text = repair_extracted_text_spacing(raw_text, aggressive=aggressive_spacing)
     if not text:
         return []
 
@@ -234,7 +306,10 @@ def split_bible_paragraphs(paragraph: dict[str, Any]) -> list[dict[str, Any]]:
         repaired = dict(paragraph)
         repaired["text"] = text
         if repaired.get("title") and str(repaired.get("title")) != str(paragraph.get("text")):
-            repaired["title"] = repair_extracted_text_spacing(str(repaired.get("title") or ""))
+            repaired["title"] = repair_extracted_text_spacing(
+                str(repaired.get("title") or ""),
+                aggressive=aggressive_spacing,
+            )
         return [repaired]
 
     split_paragraphs: list[dict[str, Any]] = []
