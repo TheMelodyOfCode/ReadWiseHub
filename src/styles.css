@@ -1917,6 +1917,17 @@ select {
   overflow-wrap: anywhere;
 }
 
+.reader-paragraph-heading {
+  padding-top: 18px;
+  padding-bottom: 0;
+}
+
+.reader-paragraph-heading p {
+  font-size: 1.08rem;
+  font-weight: 900;
+  line-height: 1.35;
+}
+
 @media (max-width: 640px) {
   .content-section,
   .workspace-hero {

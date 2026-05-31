@@ -123,6 +123,7 @@ type ReaderParagraph = {
   id: string;
   chunkIndexes: number[];
   text: string;
+  isHeading?: boolean;
 };
 
 type ReaderSelection = {
@@ -463,13 +464,30 @@ function shouldContinueParagraph(text: string) {
     return false;
   }
 
+  if (isReaderStandaloneHeading(trimmed)) {
+    return false;
+  }
+
   return !/[.!?]"?$/.test(trimmed) && !/[:;]$/.test(trimmed);
+}
+
+function isReaderStandaloneHeading(text: string) {
+  const trimmed = text.trim();
+  return /^(chapter|kapitel)\s+\d+[a-z]?$/i.test(trimmed);
 }
 
 function formatReaderParagraphs(chunks: ReaderChunk[]): ReaderParagraph[] {
   const paragraphs: ReaderParagraph[] = [];
   let currentText = "";
   let currentIndexes: number[] = [];
+  const pushParagraph = (text: string, chunkIndexes: number[], isHeading = false) => {
+    paragraphs.push({
+      id: `${chunkIndexes[0]}-${paragraphs.length}`,
+      chunkIndexes,
+      text,
+      isHeading,
+    });
+  };
 
   chunks.forEach((chunk) => {
     const parts = chunk.text
@@ -478,6 +496,16 @@ function formatReaderParagraphs(chunks: ReaderChunk[]): ReaderParagraph[] {
       .filter(Boolean);
 
     parts.forEach((part) => {
+      if (isReaderStandaloneHeading(part)) {
+        if (currentText) {
+          pushParagraph(currentText, currentIndexes);
+          currentText = "";
+          currentIndexes = [];
+        }
+        pushParagraph(part, [chunk.chunkIndex], true);
+        return;
+      }
+
       if (!currentText) {
         currentText = part;
         currentIndexes = [chunk.chunkIndex];
@@ -490,22 +518,14 @@ function formatReaderParagraphs(chunks: ReaderChunk[]): ReaderParagraph[] {
         return;
       }
 
-      paragraphs.push({
-        id: `${currentIndexes[0]}-${paragraphs.length}`,
-        chunkIndexes: currentIndexes,
-        text: currentText,
-      });
+      pushParagraph(currentText, currentIndexes);
       currentText = part;
       currentIndexes = [chunk.chunkIndex];
     });
   });
 
   if (currentText) {
-    paragraphs.push({
-      id: `${currentIndexes[0]}-${paragraphs.length}`,
-      chunkIndexes: currentIndexes,
-      text: currentText,
-    });
+    pushParagraph(currentText, currentIndexes);
   }
 
   return paragraphs;
@@ -5586,7 +5606,7 @@ export function App() {
                                 <div key={paragraph.id} className="reader-paragraph-group">
                                   <article
                                     id={`reader-passage-${paragraph.id}`}
-                                    className="reader-paragraph"
+                                    className={`reader-paragraph${paragraph.isHeading ? " reader-paragraph-heading" : ""}`}
                                   >
                                     <p>
                                       {getHighlightedParts(paragraph.text, paragraphHighlights.map((highlight) => highlight.text)).map(
