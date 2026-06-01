@@ -1202,7 +1202,8 @@ select {
   border-style: dashed;
 }
 
-.reader-source-panel {
+.reader-source-panel,
+.reader-source-results {
   width: min(100%, 760px);
   margin: 0 auto;
 }
@@ -1376,11 +1377,45 @@ select {
   margin: 0;
 }
 
+.reader-nav-area {
+  display: grid;
+  gap: 8px;
+}
+
 .reader-controls {
   display: grid;
-  grid-template-columns: 44px minmax(0, 1fr) 44px 44px 44px;
+  grid-template-columns: 44px minmax(0, 1fr) 44px 44px 44px 44px;
   align-items: center;
   gap: 8px;
+}
+
+.reader-source-compact {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.reader-source-compact input {
+  width: 100%;
+  min-height: 40px;
+}
+
+.reader-source-compact button {
+  min-height: 40px;
+  white-space: nowrap;
+}
+
+.reader-info-box {
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, var(--primary) 25%, var(--border));
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--primary) 8%, transparent);
+  color: var(--muted);
+  font-size: 0.88rem;
+  font-weight: 750;
+  line-height: 1.35;
 }
 
 .reader-controls .reader-jump {
@@ -1961,7 +1996,7 @@ select {
   }
 
   .reader-controls {
-    grid-template-columns: 40px minmax(0, 1fr) 40px 40px 40px;
+    grid-template-columns: 40px minmax(0, 1fr) 40px 40px 40px 40px;
     gap: 6px;
   }
 
@@ -2773,7 +2808,7 @@ select {
   }
 
   .reader-controls {
-    grid-template-columns: 44px minmax(0, 1fr) 44px 44px 44px;
+    grid-template-columns: 44px minmax(0, 1fr) 44px 44px 44px 44px;
   }
 
   .workspace-tabs {

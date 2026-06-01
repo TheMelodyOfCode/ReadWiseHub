@@ -5370,33 +5370,34 @@ export function App() {
                       ) : null}
                     </div>
                     {readerBook ? (
-                      <div className="reader-controls">
-                        <button
-                          className="reader-icon-button"
-                          type="button"
-                          disabled={readerBusy || readerPage === 0}
-                          onClick={() => turnReaderPage(-1)}
-                          aria-label={t.previousPage}
-                          title={t.previousPage}
-                        >
-                          <span aria-hidden="true">←</span>
-                        </button>
-                        <label className="reader-jump">
-                          <span className="visually-hidden">
-                            {readerSourceToc ? t.sourceOutline : readerUsesPhysicalPages ? t.page : t.chapter}
-                          </span>
-                          <select
-                            value={readerPage}
-                            onChange={(event) => goToReaderPage(Number(event.target.value))}
-                            disabled={readerBusy || activeReaderPageCount === 0}
+                      <div className="reader-nav-area">
+                        <div className="reader-controls">
+                          <button
+                            className="reader-icon-button"
+                            type="button"
+                            disabled={readerBusy || readerPage === 0}
+                            onClick={() => turnReaderPage(-1)}
+                            aria-label={t.previousPage}
+                            title={t.previousPage}
                           >
-                            {readerNavigationEntries.map((entry, index) => (
-                              <option key={`${entry.page}-${index}`} value={entry.page}>
-                                {entry.label}
-                              </option>
-                            ))}
-                          </select>
-                        </label>
+                            <span aria-hidden="true">←</span>
+                          </button>
+                          <label className="reader-jump">
+                            <span className="visually-hidden">
+                              {readerSourceToc ? t.sourceOutline : readerUsesPhysicalPages ? t.page : t.chapter}
+                            </span>
+                            <select
+                              value={readerPage}
+                              onChange={(event) => goToReaderPage(Number(event.target.value))}
+                              disabled={readerBusy || activeReaderPageCount === 0}
+                            >
+                              {readerNavigationEntries.map((entry, index) => (
+                                <option key={`${entry.page}-${index}`} value={entry.page}>
+                                  {entry.label}
+                                </option>
+                              ))}
+                            </select>
+                          </label>
                         <div className="reader-bookmark-menu" ref={bookmarkMenuRef}>
                           <button
                             className={`reader-icon-button reader-bookmark-button ${
@@ -5526,15 +5527,34 @@ export function App() {
                         >
                           <span aria-hidden="true">→</span>
                         </button>
-                        <button
-                          className="reader-icon-button"
-                          type="button"
-                          onClick={chooseAnotherReaderBook}
-                          aria-label={t.switchBook}
-                          title={t.switchBook}
-                        >
-                          <span aria-hidden="true">☰</span>
-                        </button>
+                          <button
+                            className="reader-icon-button"
+                            type="button"
+                            onClick={chooseAnotherReaderBook}
+                            aria-label={t.switchBook}
+                            title={t.switchBook}
+                          >
+                            <span aria-hidden="true">☰</span>
+                          </button>
+                        </div>
+                        <form className="reader-source-compact" onSubmit={searchCurrentReaderBook}>
+                          <input
+                            type="search"
+                            value={readerSourceQuestion}
+                            onChange={(event) => setReaderSourceQuestion(event.target.value)}
+                            placeholder={t.readerSearchPlaceholder}
+                            aria-label={t.searchTitle}
+                            disabled={!readerBook}
+                          />
+                          <button
+                            className="button secondary compact"
+                            type="submit"
+                            disabled={!emailVerified || readerSourceBusy || !readerBook || !readerSourceQuestion.trim()}
+                          >
+                            {readerSourceBusy ? t.searching : t.readerSearchButton}
+                          </button>
+                        </form>
+                        <p className="reader-info-box">{t.readerQuickHelp}</p>
                       </div>
                     ) : null}
                   </div>
@@ -5588,49 +5608,24 @@ export function App() {
                     </div>
                   ) : (
                     <>
-                      <form className="search-panel reader-source-panel" onSubmit={searchCurrentReaderBook}>
-                        <div>
-                          <p className="eyebrow">{t.advancedTool}</p>
-                          <h3>{t.searchTitle}</h3>
-                          <p>{t.searchCopy}</p>
-                          <p className="advanced-source-warning">{t.searchNoAiWarning}</p>
-                        </div>
-                        <label>
-                          {t.searchLabel}
-                          <input
-                            type="search"
-                            value={readerSourceQuestion}
-                            onChange={(event) => setReaderSourceQuestion(event.target.value)}
-                            placeholder={t.searchPlaceholder}
-                            disabled={!readerBook}
-                          />
-                        </label>
-                        <button
-                          className="button secondary"
-                          type="submit"
-                          disabled={!emailVerified || readerSourceBusy || !readerBook || !readerSourceQuestion.trim()}
-                        >
-                          {readerSourceBusy ? t.searching : t.searchButton}
-                        </button>
-                        <div ref={readerSourceResultsRef}>
-                          {readerSourceMessage ? <p className="error-text">{readerSourceMessage}</p> : null}
-                          {readerSourceResults.length > 0 ? (
-                            <div className="search-results">
-                              <div className="search-results-header">
-                                <h4>{t.sourcePassagesTitle}</h4>
-                                <span>{t.noAiBadge}</span>
-                              </div>
-                              {readerSourceResults.map((result) => (
-                                <article key={result.bookId + "-" + result.chunkIndex}>
-                                  <h4>{result.bookTitle}</h4>
-                                  <p>{result.excerpt}</p>
-                                  <span>{getSourceLabel(result, t)}</span>
-                                </article>
-                              ))}
+                      <div ref={readerSourceResultsRef} className="reader-source-results">
+                        {readerSourceMessage ? <p className="error-text">{readerSourceMessage}</p> : null}
+                        {readerSourceResults.length > 0 ? (
+                          <div className="search-results">
+                            <div className="search-results-header">
+                              <h4>{t.sourcePassagesTitle}</h4>
+                              <span>{t.noAiBadge}</span>
                             </div>
-                          ) : null}
-                        </div>
-                      </form>
+                            {readerSourceResults.map((result) => (
+                              <article key={result.bookId + "-" + result.chunkIndex}>
+                                <h4>{result.bookTitle}</h4>
+                                <p>{result.excerpt}</p>
+                                <span>{getSourceLabel(result, t)}</span>
+                              </article>
+                            ))}
+                          </div>
+                        ) : null}
+                      </div>
                       {readerSelection ? (
                         <div className="selection-toolbar">
                           <span>{t.selectionActions}</span>
