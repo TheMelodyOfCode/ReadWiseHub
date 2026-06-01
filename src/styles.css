@@ -1197,8 +1197,14 @@ select {
   flex-wrap: wrap;
 }
 
-.advanced-source-panel {
+.advanced-source-panel,
+.reader-source-panel {
   border-style: dashed;
+}
+
+.reader-source-panel {
+  width: min(100%, 760px);
+  margin: 0 auto;
 }
 
 .advanced-source-warning {

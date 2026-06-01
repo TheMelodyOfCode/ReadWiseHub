@@ -379,6 +379,9 @@ type AdminBookSummary = {
   vectorBackendCandidate: string;
   structureQuality: string;
   formatWarning: string;
+  readerTextRepairStatus: string;
+  readerTextRepairJobId: string;
+  readerTextRepairError: string;
   language: string;
   createdAt?: string;
   updatedAt?: string;
@@ -706,6 +709,10 @@ export function App() {
   const [readerAskMode, setReaderAskMode] = useState("");
   const [readerAskSources, setReaderAskSources] = useState<LibrarySearchResult[]>([]);
   const [readerAskQuestion, setReaderAskQuestion] = useState("");
+  const [readerSourceQuestion, setReaderSourceQuestion] = useState("");
+  const [readerSourceBusy, setReaderSourceBusy] = useState(false);
+  const [readerSourceMessage, setReaderSourceMessage] = useState("");
+  const [readerSourceResults, setReaderSourceResults] = useState<LibrarySearchResult[]>([]);
   const [readerReturnParagraphId, setReaderReturnParagraphId] = useState("");
   const [readerReturnScrollY, setReaderReturnScrollY] = useState<number | null>(null);
   const [readerBookmarkMessage, setReaderBookmarkMessage] = useState("");
@@ -990,6 +997,9 @@ export function App() {
   const bookmarkMenuRef = useRef<HTMLDivElement | null>(null);
   const highlightMenuRef = useRef<HTMLDivElement | null>(null);
   const bookDetailRef = useRef<HTMLElement | null>(null);
+  const sourceSearchResultsRef = useRef<HTMLDivElement | null>(null);
+  const readerSourceResultsRef = useRef<HTMLDivElement | null>(null);
+  const adminBookResultsRef = useRef<HTMLDivElement | null>(null);
   const readerScrollTimeoutRef = useRef<number | null>(null);
   const readerTouchStartRef = useRef<{ x: number; y: number; time: number } | null>(null);
   const signingOutRef = useRef(false);
@@ -1477,6 +1487,16 @@ export function App() {
   }, [adminBookDebug]);
 
   useEffect(() => {
+    if (!adminSearch.trim() && adminBookStatusFilter === "all") {
+      return;
+    }
+
+    window.setTimeout(() => {
+      adminBookResultsRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }, 0);
+  }, [adminBookStatusFilter, adminSearch]);
+
+  useEffect(() => {
     let cancelled = false;
     setReaderOriginalPageUrl("");
 
@@ -1735,7 +1755,9 @@ export function App() {
           pageTextCount: number;
           sourceTocEntryCount: number;
           structureQuality: string;
-          preferredReaderMode: string;
+          preferredReaderMode?: string;
+          queued?: boolean;
+          jobId?: string;
         }
       >(functions, "adminRepairBookReaderText");
       const response = await repairBookReaderText({
@@ -1745,7 +1767,9 @@ export function App() {
       });
       await openAdminBook(bookId);
       await loadAdminBooks();
-      const successMessage = `Reader text repaired: ${response.data.pageTextCount} pages, ${response.data.sourceTocEntryCount} TOC entries, ${response.data.structureQuality}.`;
+      const successMessage = response.data.queued
+        ? `Reader text repair queued. Job ${response.data.jobId || "started"} will continue in the background.`
+        : `Reader text repaired: ${response.data.pageTextCount} pages, ${response.data.sourceTocEntryCount} TOC entries, ${response.data.structureQuality}.`;
       setAdminRepairProgress(100);
       setAdminRepairMessage(successMessage);
       setAdminMessage(successMessage);
@@ -2285,10 +2309,52 @@ export function App() {
       const results = response.data.results ?? [];
       setSearchResults(results);
       setSearchMessage(results.length === 0 ? t.noSearchResults : "");
+      window.setTimeout(() => {
+        sourceSearchResultsRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+      }, 0);
     } catch (error) {
       setSearchMessage(getErrorMessage(error, "Search failed"));
     } finally {
       setSearchBusy(false);
+    }
+  }
+
+  async function searchCurrentReaderBook(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+
+    if (!readerBook || !readerSourceQuestion.trim()) {
+      return;
+    }
+    if (!requireVerifiedUi(setReaderSourceMessage)) {
+      return;
+    }
+
+    setReaderSourceBusy(true);
+    setReaderSourceMessage("");
+    setReaderSourceResults([]);
+
+    try {
+      const searchLibrary = httpsCallable<
+        { query: string; bookId?: string },
+        { ok: boolean; results: LibrarySearchResult[] }
+      >(functions, "searchLibrary");
+      const response = await searchLibrary(withSession({
+        query: readerSourceQuestion.trim(),
+        bookId: readerBook.id,
+      }));
+      const results = response.data.results ?? [];
+      setReaderSourceResults(results);
+      setReaderSourceMessage(results.length === 0 ? t.noSearchResults : "");
+      window.setTimeout(() => {
+        readerSourceResultsRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+      }, 0);
+    } catch (error) {
+      setReaderSourceMessage(getErrorMessage(error, "Search failed"));
+      window.setTimeout(() => {
+        readerSourceResultsRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+      }, 0);
+    } finally {
+      setReaderSourceBusy(false);
     }
   }
 
@@ -4213,7 +4279,7 @@ export function App() {
               <p className="eyebrow">Library operations</p>
               <h2>Books and ingestion metadata</h2>
             </div>
-            <div className="admin-table-wrap">
+            <div className="admin-table-wrap" ref={adminBookResultsRef}>
               <table className="admin-table admin-books-table">
                 <thead>
                   <tr>
@@ -4241,6 +4307,12 @@ export function App() {
                       <td data-label="Structure">
                         {book.structureQuality || "-"}
                         {book.formatWarning ? <small>{book.formatWarning}</small> : null}
+                        {book.readerTextRepairStatus ? (
+                          <small>Repair: {book.readerTextRepairStatus}</small>
+                        ) : null}
+                        {book.readerTextRepairError ? (
+                          <small>{book.readerTextRepairError}</small>
+                        ) : null}
                       </td>
                       <td data-label="Chunks">
                         {book.chunkCount}
@@ -5516,6 +5588,49 @@ export function App() {
                     </div>
                   ) : (
                     <>
+                      <form className="search-panel reader-source-panel" onSubmit={searchCurrentReaderBook}>
+                        <div>
+                          <p className="eyebrow">{t.advancedTool}</p>
+                          <h3>{t.searchTitle}</h3>
+                          <p>{t.searchCopy}</p>
+                          <p className="advanced-source-warning">{t.searchNoAiWarning}</p>
+                        </div>
+                        <label>
+                          {t.searchLabel}
+                          <input
+                            type="search"
+                            value={readerSourceQuestion}
+                            onChange={(event) => setReaderSourceQuestion(event.target.value)}
+                            placeholder={t.searchPlaceholder}
+                            disabled={!readerBook}
+                          />
+                        </label>
+                        <button
+                          className="button secondary"
+                          type="submit"
+                          disabled={!emailVerified || readerSourceBusy || !readerBook || !readerSourceQuestion.trim()}
+                        >
+                          {readerSourceBusy ? t.searching : t.searchButton}
+                        </button>
+                        <div ref={readerSourceResultsRef}>
+                          {readerSourceMessage ? <p className="error-text">{readerSourceMessage}</p> : null}
+                          {readerSourceResults.length > 0 ? (
+                            <div className="search-results">
+                              <div className="search-results-header">
+                                <h4>{t.sourcePassagesTitle}</h4>
+                                <span>{t.noAiBadge}</span>
+                              </div>
+                              {readerSourceResults.map((result) => (
+                                <article key={result.bookId + "-" + result.chunkIndex}>
+                                  <h4>{result.bookTitle}</h4>
+                                  <p>{result.excerpt}</p>
+                                  <span>{getSourceLabel(result, t)}</span>
+                                </article>
+                              ))}
+                            </div>
+                          ) : null}
+                        </div>
+                      </form>
                       {readerSelection ? (
                         <div className="selection-toolbar">
                           <span>{t.selectionActions}</span>
@@ -6447,7 +6562,7 @@ export function App() {
                   ) : null}
                   {searchMessage ? <p className="error-text">{searchMessage}</p> : null}
                   {searchResults.length > 0 ? (
-                    <div className="search-results">
+                    <div className="search-results" ref={sourceSearchResultsRef}>
                       <div className="search-results-header">
                         <h4>{t.sourcePassagesTitle}</h4>
                         <span>{t.noAiBadge}</span>

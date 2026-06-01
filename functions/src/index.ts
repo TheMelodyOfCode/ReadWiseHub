@@ -5843,8 +5843,39 @@ export const processQueuedIngestionJob = onDocumentCreated(
   }
 );
 
+async function enqueueReaderTextRepairJob(input: {
+  viewer: AuthContext;
+  bookId: string;
+  userId: string;
+  reason: string;
+}) {
+  const jobRef = db.collection("adminBackfillJobs").doc();
+  const now = FieldValue.serverTimestamp();
+  await jobRef.set({
+    kind: "readerTextRepair",
+    status: "queued",
+    confirmation: "REPAIR_READER_TEXT_ONLY",
+    bookId: input.bookId,
+    userId: input.userId,
+    requestedByUid: input.viewer.uid,
+    requestedByEmail: input.viewer.email || "",
+    reason: input.reason.slice(0, 240),
+    createdAt: now,
+    updatedAt: now,
+  });
+
+  await db.collection("books").doc(input.bookId).update({
+    readerTextRepairStatus: "queued",
+    readerTextRepairJobId: jobRef.id,
+    readerTextRepairQueuedAt: now,
+    updatedAt: now,
+  });
+
+  return jobRef.id;
+}
+
 export const adminRepairBookReaderText = onCall(
-  { region: "us-central1", timeoutSeconds: 540, memory: "1GiB" },
+  { region: "us-central1", timeoutSeconds: 60, memory: "256MiB" },
   async (request) => {
     const viewer = requireAdmin(request.auth?.token
       ? {
@@ -5869,25 +5900,32 @@ export const adminRepairBookReaderText = onCall(
       throw new HttpsError("not-found", "Book was not found.");
     }
 
+    const mimeType = assertString(bookSnapshot.get("mimeType"), "mimeType");
+    if (mimeType !== "application/pdf") {
+      throw new HttpsError("failed-precondition", "Only PDF books can use reader text repair.");
+    }
+
     const userId = assertString(bookSnapshot.get("userId"), "userId");
-    const result = await reprocessBookReaderTextForBook(userId, bookId, bookSnapshot);
+    const reason =
+      typeof request.data?.reason === "string"
+        ? request.data.reason.slice(0, 240)
+        : "Admin reader text repair only; chunks and vectors untouched.";
+    const jobId = await enqueueReaderTextRepairJob({ viewer, bookId, userId, reason });
     await writeAdminAuditEvent({
       viewer,
-      action: "adminRepairBookReaderText",
+      action: "adminRepairBookReaderTextQueued",
       targetUserId: userId,
       targetBookId: bookId,
-      reason:
-        typeof request.data?.reason === "string"
-          ? request.data.reason.slice(0, 240)
-          : "Admin reader text repair only; chunks and vectors untouched.",
+      reason,
     });
 
     return {
       ok: true,
+      queued: true,
+      mode: "readerTextOnly",
+      jobId,
       bookId,
       userId,
-      mode: "readerTextOnly",
-      ...result,
     };
   }
 );
@@ -5991,6 +6029,84 @@ export const processPdfPageImageBackfillJob = onDocumentCreated(
         updatedAt: FieldValue.serverTimestamp(),
       });
       throw error;
+    }
+  }
+);
+
+export const processReaderTextRepairJob = onDocumentCreated(
+  {
+    document: "adminBackfillJobs/{jobId}",
+    region: "us-central1",
+    timeoutSeconds: 540,
+    memory: "1GiB",
+  },
+  async (event) => {
+    const jobSnapshot = event.data;
+    if (!jobSnapshot) {
+      return;
+    }
+
+    const kind = jobSnapshot.get("kind");
+    const status = jobSnapshot.get("status");
+    const confirmation = jobSnapshot.get("confirmation");
+    if (
+      kind !== "readerTextRepair" ||
+      status !== "queued" ||
+      confirmation !== "REPAIR_READER_TEXT_ONLY"
+    ) {
+      return;
+    }
+
+    const bookId = assertString(jobSnapshot.get("bookId"), "bookId");
+    const now = FieldValue.serverTimestamp();
+    await jobSnapshot.ref.update({
+      status: "processing",
+      startedAt: now,
+      updatedAt: now,
+    });
+    await db.collection("books").doc(bookId).update({
+      readerTextRepairStatus: "processing",
+      readerTextRepairStartedAt: now,
+      updatedAt: now,
+    });
+
+    try {
+      const bookSnapshot = await db.collection("books").doc(bookId).get();
+      if (!bookSnapshot.exists) {
+        throw new HttpsError("not-found", "Book was not found.");
+      }
+
+      const userId = assertString(bookSnapshot.get("userId"), "userId");
+      const result = await reprocessBookReaderTextForBook(userId, bookId, bookSnapshot);
+      const completedAt = FieldValue.serverTimestamp();
+      await jobSnapshot.ref.update({
+        status: "done",
+        userId,
+        ...result,
+        completedAt,
+        updatedAt: completedAt,
+      });
+      await bookSnapshot.ref.update({
+        readerTextRepairStatus: "done",
+        readerTextRepairCompletedAt: completedAt,
+        readerTextRepairError: FieldValue.delete(),
+        updatedAt: completedAt,
+      });
+    } catch (error) {
+      const safeMessage = error instanceof Error ? error.message.slice(0, 500) : "Reader text repair failed.";
+      const failedAt = FieldValue.serverTimestamp();
+      await jobSnapshot.ref.update({
+        status: "failed",
+        errorMessage: safeMessage,
+        failedAt,
+        updatedAt: failedAt,
+      });
+      await db.collection("books").doc(bookId).update({
+        readerTextRepairStatus: "failed",
+        readerTextRepairError: safeMessage,
+        readerTextRepairFailedAt: failedAt,
+        updatedAt: failedAt,
+      });
     }
   }
 );
@@ -6296,6 +6412,9 @@ export const adminListBooks = onCall(
       vectorBackendCandidate: bookSnapshot.get("vectorBackendCandidate") || "",
       structureQuality: bookSnapshot.get("structureQuality") || "",
       formatWarning: bookSnapshot.get("formatWarning") || "",
+      readerTextRepairStatus: bookSnapshot.get("readerTextRepairStatus") || "",
+      readerTextRepairJobId: bookSnapshot.get("readerTextRepairJobId") || "",
+      readerTextRepairError: bookSnapshot.get("readerTextRepairError") || "",
       language: bookSnapshot.get("language") || "",
       createdAt: normalizeFirestoreValue(bookSnapshot.get("createdAt")),
       updatedAt: normalizeFirestoreValue(bookSnapshot.get("updatedAt")),
