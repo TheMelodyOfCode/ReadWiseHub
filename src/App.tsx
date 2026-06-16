@@ -598,11 +598,11 @@ async function ensureUserRecord(user: User, locale: Locale, theme: Theme) {
       locale,
       theme,
       limits: {
-        maxBooks: 2,
-        maxStorageBytes: 20 * 1024 * 1024,
-        maxFileBytes: 20 * 1024 * 1024,
-        monthlyMessages: 20,
-        monthlyIngestions: 2,
+        maxBooks: 1,
+        maxStorageBytes: 10 * 1024 * 1024,
+        maxFileBytes: 10 * 1024 * 1024,
+        monthlyMessages: 10,
+        monthlyIngestions: 1,
       },
       usageCurrentPeriod: {
         messages: 0,
@@ -756,12 +756,12 @@ export function App() {
   const [usage, setUsage] = useState<UserUsage>({
     plan: "free",
     messages: 0,
-    monthlyMessages: 20,
+    monthlyMessages: 10,
     articleGenerations: 0,
     books: 0,
-    maxBooks: 2,
+    maxBooks: 1,
     storageBytes: 0,
-    maxStorageBytes: 20 * 1024 * 1024,
+    maxStorageBytes: 10 * 1024 * 1024,
   });
   const [articleBookId, setArticleBookId] = useState("");
   const [articlePrompt, setArticlePrompt] = useState("");
@@ -1340,14 +1340,14 @@ export function App() {
           plan: typeof data?.plan === "string" ? data.plan : "free",
           messages: typeof current.messages === "number" ? current.messages : 0,
           monthlyMessages:
-            typeof limits.monthlyMessages === "number" ? limits.monthlyMessages : 20,
+            typeof limits.monthlyMessages === "number" ? limits.monthlyMessages : 10,
           articleGenerations:
             typeof current.articleGenerations === "number" ? current.articleGenerations : 0,
           books:
             typeof current.books === "number"
               ? Math.max(current.books, books.length)
               : books.length,
-          maxBooks: typeof limits.maxBooks === "number" ? limits.maxBooks : 2,
+          maxBooks: typeof limits.maxBooks === "number" ? limits.maxBooks : 1,
           storageBytes:
             typeof current.storageBytes === "number"
               ? Math.max(current.storageBytes, activeStorageBytes)
@@ -1355,7 +1355,7 @@ export function App() {
           maxStorageBytes:
             typeof limits.maxStorageBytes === "number"
               ? limits.maxStorageBytes
-              : 20 * 1024 * 1024,
+              : 10 * 1024 * 1024,
         });
       },
       (error) => {
@@ -7342,7 +7342,7 @@ export function App() {
             <div className="dashboard-grid">
               <article>
                 <h3>Free</h3>
-                <p>2 books · 20 MB · 20 messages/month</p>
+                <p>1 book · 10 MB · 10 messages/month</p>
               </article>
               <article>
                 <h3>Secure foundation</h3>

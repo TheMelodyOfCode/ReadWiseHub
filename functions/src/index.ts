@@ -31,11 +31,11 @@ const db = getFirestore();
 
 const PLAN_LIMITS = {
   free: {
-    maxBooks: 2,
-    maxStorageBytes: 20 * 1024 * 1024,
-    maxFileBytes: 20 * 1024 * 1024,
-    monthlyMessages: 20,
-    monthlyIngestions: 2,
+    maxBooks: 1,
+    maxStorageBytes: 10 * 1024 * 1024,
+    maxFileBytes: 10 * 1024 * 1024,
+    monthlyMessages: 10,
+    monthlyIngestions: 1,
   },
   plus: {
     maxBooks: 10,
@@ -54,11 +54,11 @@ const PLAN_LIMITS = {
 } as const;
 
 const FREE_LIMITS = {
-  maxBooks: 2,
-  maxStorageBytes: 20 * 1024 * 1024,
-  maxFileBytes: 20 * 1024 * 1024,
-  monthlyMessages: 20,
-  monthlyIngestions: 2,
+  maxBooks: 1,
+  maxStorageBytes: 10 * 1024 * 1024,
+  maxFileBytes: 10 * 1024 * 1024,
+  monthlyMessages: 10,
+  monthlyIngestions: 1,
 };
 
 type PlanLimits = typeof FREE_LIMITS;
@@ -2991,19 +2991,7 @@ async function ensureUserProfile(auth: AuthContext) {
     const currentLimits = snapshot.get("limits") ?? {};
     const normalizedFreeLimits =
       plan === "free"
-        ? {
-            maxBooks: Math.max(Number(currentLimits.maxBooks) || 0, FREE_LIMITS.maxBooks),
-            maxStorageBytes: Math.max(
-              Number(currentLimits.maxStorageBytes) || 0,
-              FREE_LIMITS.maxStorageBytes
-            ),
-            maxFileBytes: Math.max(Number(currentLimits.maxFileBytes) || 0, FREE_LIMITS.maxFileBytes),
-            monthlyMessages: FREE_LIMITS.monthlyMessages,
-            monthlyIngestions: Math.max(
-              Number(currentLimits.monthlyIngestions) || 0,
-              FREE_LIMITS.monthlyIngestions
-            ),
-          }
+        ? FREE_LIMITS
         : currentLimits;
     await userRef.set(
       {
@@ -3065,6 +3053,10 @@ async function getUserLimits(userId: string): Promise<PlanLimits> {
   const plan = normalizePlan(snapshot.get("plan"));
   const defaults = PLAN_LIMITS[plan];
   const limits = snapshot.get("limits") ?? {};
+
+  if (plan === "free") {
+    return FREE_LIMITS;
+  }
 
   return {
     maxBooks: Math.max(Number(limits.maxBooks) || 0, defaults.maxBooks),
