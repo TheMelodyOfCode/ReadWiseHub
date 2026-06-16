@@ -16,6 +16,7 @@ import {
   signInWithEmailAndPassword,
   signInWithPopup,
   signOut,
+  updatePassword,
   updateProfile,
   verifyBeforeUpdateEmail,
   verifyPasswordResetCode,
@@ -742,6 +743,9 @@ export function App() {
   const [accountBusy, setAccountBusy] = useState(false);
   const [profileDisplayName, setProfileDisplayName] = useState("");
   const [profileMessage, setProfileMessage] = useState("");
+  const [passwordChangeCurrent, setPasswordChangeCurrent] = useState("");
+  const [passwordChangeNew, setPasswordChangeNew] = useState("");
+  const [passwordChangeRepeat, setPasswordChangeRepeat] = useState("");
   const [accountEmailChange, setAccountEmailChange] = useState("");
   const [accountEmailChangePassword, setAccountEmailChangePassword] = useState("");
   const [confirmDeleteAccount, setConfirmDeleteAccount] = useState(false);
@@ -3654,6 +3658,44 @@ export function App() {
       setProfileMessage(t.passwordChangeEmailSent);
     } catch (error) {
       setProfileMessage(getErrorMessage(error, t.passwordChangeEmailFailed));
+    } finally {
+      setAccountBusy(false);
+    }
+  }
+
+  async function changeAccountPassword(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!auth.currentUser?.email) {
+      return;
+    }
+
+    if (passwordChangeNew.length < 8) {
+      setProfileMessage(t.passwordChangeTooShort);
+      return;
+    }
+
+    if (passwordChangeNew !== passwordChangeRepeat) {
+      setProfileMessage(t.passwordChangeMismatch);
+      return;
+    }
+
+    setAccountBusy(true);
+    setAuthError("");
+    setProfileMessage("");
+
+    try {
+      await reauthenticateWithCredential(
+        auth.currentUser,
+        EmailAuthProvider.credential(auth.currentUser.email, passwordChangeCurrent)
+      );
+      await updatePassword(auth.currentUser, passwordChangeNew);
+      await auth.currentUser.getIdToken(true);
+      setPasswordChangeCurrent("");
+      setPasswordChangeNew("");
+      setPasswordChangeRepeat("");
+      setProfileMessage(t.passwordChangeSaved);
+    } catch (error) {
+      setProfileMessage(getErrorMessage(error, t.passwordChangeFailed));
     } finally {
       setAccountBusy(false);
     }
@@ -6842,14 +6884,63 @@ export function App() {
                 </div>
               </div>
               {user.providerData.some((provider) => provider.providerId === "password") ? (
-                <button
-                  className="button secondary"
-                  type="button"
-                  disabled={accountBusy}
-                  onClick={() => void sendPasswordChangeEmail()}
-                >
-                  {accountBusy ? t.loading : t.sendPasswordChangeEmail}
-                </button>
+                <>
+                  <form className="profile-panel" onSubmit={changeAccountPassword}>
+                    <div>
+                      <h4>{t.passwordChangeTitle}</h4>
+                      <p>{t.passwordChangeCopy}</p>
+                    </div>
+                    <label>
+                      {t.currentPassword}
+                      <input
+                        type="password"
+                        autoComplete="current-password"
+                        value={passwordChangeCurrent}
+                        onChange={(event) => setPasswordChangeCurrent(event.target.value)}
+                      />
+                    </label>
+                    <label>
+                      {t.newPassword}
+                      <input
+                        type="password"
+                        autoComplete="new-password"
+                        value={passwordChangeNew}
+                        onChange={(event) => setPasswordChangeNew(event.target.value)}
+                        minLength={8}
+                      />
+                    </label>
+                    <label>
+                      {t.repeatNewPassword}
+                      <input
+                        type="password"
+                        autoComplete="new-password"
+                        value={passwordChangeRepeat}
+                        onChange={(event) => setPasswordChangeRepeat(event.target.value)}
+                        minLength={8}
+                      />
+                    </label>
+                    <button
+                      className="button secondary"
+                      type="submit"
+                      disabled={
+                        accountBusy ||
+                        !passwordChangeCurrent ||
+                        !passwordChangeNew ||
+                        !passwordChangeRepeat
+                      }
+                    >
+                      {accountBusy ? t.loading : t.saveNewPassword}
+                    </button>
+                  </form>
+                  <button
+                    className="auth-text-button"
+                    type="button"
+                    disabled={accountBusy}
+                    onClick={() => void sendPasswordChangeEmail()}
+                  >
+                    {t.sendPasswordChangeEmail}
+                  </button>
+                </>
               ) : (
                 <p className="small-note">{t.passwordChangeProviderNote}</p>
               )}
