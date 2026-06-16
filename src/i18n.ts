@@ -276,6 +276,28 @@ export const dictionaries: Record<Locale, Dictionary> = {
     saveProfile: "Save name",
     profileSaved: "Name saved.",
     profileNameInvalid: "Use 2-40 letters, numbers, spaces, hyphens, or underscores.",
+    accountAccessTitle: "Email and password",
+    accountAccessCopy: "Manage sign-in emails with Firebase-native confirmation links.",
+    sendPasswordChangeEmail: "Send password change email",
+    passwordChangeEmailSent:
+      "Password change email sent. Open the link in your inbox to choose a new password.",
+    passwordChangeEmailFailed: "Password change email could not be sent.",
+    passwordChangeProviderNote:
+      "This account signs in with Google. Change the password in your Google account.",
+    emailChangeTitle: "Change email address",
+    emailChangeCopy:
+      "Enter a new email address. ReadWiseHub sends a confirmation link before the email is changed.",
+    newEmail: "New email address",
+    currentPassword: "Current password",
+    sendEmailChangeVerification: "Send email change link",
+    emailChangeVerificationSent:
+      "Email change link sent. Open the link in the new inbox to finish the change.",
+    emailChangeInvalid: "Enter a different valid email address.",
+    emailChangePasswordRequired: "Enter your current password before changing your email.",
+    emailChangeGoogleReauth: "Google will ask you to confirm this account before sending the email change link.",
+    emailChangeReauthUnsupported:
+      "This sign-in method cannot be confirmed here. Sign out, sign in again, and retry the email change.",
+    emailChangeFailed: "Email change link could not be sent.",
     exportData: "Download my ReadWiseHub data",
     privacyDataTitle: "Privacy and data",
     privacyDataCopy:
@@ -347,6 +369,14 @@ export const dictionaries: Record<Locale, Dictionary> = {
     emailVerificationCompleteTitle: "Email verified",
     emailVerificationCompleteCopy:
       "Your email address is confirmed. You can now sign in and use ReadWiseHub.",
+    emailChangeActionTitle: "Confirm email change",
+    emailChangeCompleteTitle: "Email changed",
+    emailChangeCompleteCopy:
+      "Your email address has been updated. Sign in with the new address next time.",
+    emailRecoveryActionTitle: "Recover email address",
+    emailRecoveryCompleteTitle: "Email change reverted",
+    emailRecoveryCompleteCopy:
+      "The email address change was reverted. If you did not request this, reset your password.",
     unexpectedRegistrationCopy:
       "If you did not request this account, ignore the email. The account cannot use ReadWiseHub features until the email address is verified.",
     resendVerification: "Resend verification email",
@@ -716,6 +746,29 @@ export const dictionaries: Record<Locale, Dictionary> = {
     saveProfile: "Namen speichern",
     profileSaved: "Name gespeichert.",
     profileNameInvalid: "Nutze 2-40 Buchstaben, Zahlen, Leerzeichen, Bindestriche oder Unterstriche.",
+    accountAccessTitle: "E-Mail und Passwort",
+    accountAccessCopy: "Verwalte Anmelde-E-Mails mit Firebase-Bestätigungslinks.",
+    sendPasswordChangeEmail: "E-Mail zum Passwort ändern senden",
+    passwordChangeEmailSent:
+      "E-Mail zum Ändern des Passworts gesendet. Öffne den Link im Postfach, um ein neues Passwort zu wählen.",
+    passwordChangeEmailFailed: "Die E-Mail zum Ändern des Passworts konnte nicht gesendet werden.",
+    passwordChangeProviderNote:
+      "Dieses Konto meldet sich mit Google an. Ändere das Passwort in deinem Google-Konto.",
+    emailChangeTitle: "E-Mail-Adresse ändern",
+    emailChangeCopy:
+      "Gib eine neue E-Mail-Adresse ein. ReadWiseHub sendet einen Bestätigungslink, bevor die E-Mail geändert wird.",
+    newEmail: "Neue E-Mail-Adresse",
+    currentPassword: "Aktuelles Passwort",
+    sendEmailChangeVerification: "Link zur E-Mail-Änderung senden",
+    emailChangeVerificationSent:
+      "Link zur E-Mail-Änderung gesendet. Öffne den Link im neuen Postfach, um die Änderung abzuschließen.",
+    emailChangeInvalid: "Gib eine andere gültige E-Mail-Adresse ein.",
+    emailChangePasswordRequired: "Gib dein aktuelles Passwort ein, bevor du die E-Mail änderst.",
+    emailChangeGoogleReauth:
+      "Google wird dich bitten, dieses Konto zu bestätigen, bevor der Link zur E-Mail-Änderung gesendet wird.",
+    emailChangeReauthUnsupported:
+      "Diese Anmeldemethode kann hier nicht bestätigt werden. Melde dich ab, melde dich erneut an und versuche die E-Mail-Änderung noch einmal.",
+    emailChangeFailed: "Der Link zur E-Mail-Änderung konnte nicht gesendet werden.",
     exportData: "Meine ReadWiseHub-Daten herunterladen",
     privacyDataTitle: "Datenschutz und Daten",
     privacyDataCopy:
@@ -787,6 +840,14 @@ export const dictionaries: Record<Locale, Dictionary> = {
     emailVerificationCompleteTitle: "E-Mail bestätigt",
     emailVerificationCompleteCopy:
       "Deine E-Mail-Adresse ist bestätigt. Du kannst dich jetzt anmelden und ReadWiseHub nutzen.",
+    emailChangeActionTitle: "E-Mail-Änderung bestätigen",
+    emailChangeCompleteTitle: "E-Mail geändert",
+    emailChangeCompleteCopy:
+      "Deine E-Mail-Adresse wurde aktualisiert. Melde dich das nächste Mal mit der neuen Adresse an.",
+    emailRecoveryActionTitle: "E-Mail-Adresse wiederherstellen",
+    emailRecoveryCompleteTitle: "E-Mail-Änderung rückgängig gemacht",
+    emailRecoveryCompleteCopy:
+      "Die E-Mail-Änderung wurde rückgängig gemacht. Wenn du das nicht angefordert hast, setze dein Passwort zurück.",
     unexpectedRegistrationCopy:
       "Wenn du dieses Konto nicht angefordert hast, ignoriere die E-Mail. Das Konto kann ReadWiseHub-Funktionen erst nach Bestätigung der E-Mail-Adresse nutzen.",
     resendVerification: "Bestätigungs-E-Mail erneut senden",

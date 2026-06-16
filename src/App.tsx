@@ -4,6 +4,7 @@ import {
   EmailAuthProvider,
   User,
   applyActionCode,
+  checkActionCode,
   confirmPasswordReset,
   createUserWithEmailAndPassword,
   onAuthStateChanged,
@@ -16,6 +17,7 @@ import {
   signInWithPopup,
   signOut,
   updateProfile,
+  verifyBeforeUpdateEmail,
   verifyPasswordResetCode,
 } from "firebase/auth";
 import {
@@ -740,6 +742,8 @@ export function App() {
   const [accountBusy, setAccountBusy] = useState(false);
   const [profileDisplayName, setProfileDisplayName] = useState("");
   const [profileMessage, setProfileMessage] = useState("");
+  const [accountEmailChange, setAccountEmailChange] = useState("");
+  const [accountEmailChangePassword, setAccountEmailChangePassword] = useState("");
   const [confirmDeleteAccount, setConfirmDeleteAccount] = useState(false);
   const [deleteConfirmationText, setDeleteConfirmationText] = useState("");
   const [deleteAccountPassword, setDeleteAccountPassword] = useState("");
@@ -800,7 +804,16 @@ export function App() {
     window.location.pathname.startsWith("/auth-action") &&
     authActionMode === "verifyEmail" &&
     Boolean(authActionCode);
-  const isKnownAuthAction = isPasswordResetAction || isVerifyEmailAction;
+  const isVerifyAndChangeEmailAction =
+    window.location.pathname.startsWith("/auth-action") &&
+    authActionMode === "verifyAndChangeEmail" &&
+    Boolean(authActionCode);
+  const isRecoverEmailAction =
+    window.location.pathname.startsWith("/auth-action") &&
+    authActionMode === "recoverEmail" &&
+    Boolean(authActionCode);
+  const isEmailApplyAction = isVerifyEmailAction || isVerifyAndChangeEmailAction || isRecoverEmailAction;
+  const isKnownAuthAction = isPasswordResetAction || isEmailApplyAction;
   const textReadyBooks = useMemo(
     () => books.filter((book) => book.status === "text_ready"),
     [books]
@@ -1099,14 +1112,18 @@ export function App() {
   }, [authActionCode, isPasswordResetAction, t.passwordResetInvalidLink]);
 
   useEffect(() => {
-    if (!isVerifyEmailAction) {
+    if (!isEmailApplyAction) {
       return;
     }
 
     setVerifyActionChecked(false);
     setVerifyActionError("");
     setVerifyActionComplete(false);
-    applyActionCode(auth, authActionCode)
+    const applyEmailAction = isRecoverEmailAction
+      ? checkActionCode(auth, authActionCode).then(() => applyActionCode(auth, authActionCode))
+      : applyActionCode(auth, authActionCode);
+
+    applyEmailAction
       .then(async () => {
         if (auth.currentUser) {
           await reload(auth.currentUser);
@@ -1120,7 +1137,14 @@ export function App() {
         setVerifyActionError(t.emailVerificationInvalidLink);
         setVerifyActionChecked(true);
       });
-  }, [authActionCode, isVerifyEmailAction, locale, theme, t.emailVerificationInvalidLink]);
+  }, [
+    authActionCode,
+    isEmailApplyAction,
+    isRecoverEmailAction,
+    locale,
+    theme,
+    t.emailVerificationInvalidLink,
+  ]);
 
   useEffect(() => {
     return onAuthStateChanged(auth, async (currentUser) => {
@@ -3613,6 +3637,82 @@ export function App() {
     }
   }
 
+  async function sendPasswordChangeEmail() {
+    if (!auth.currentUser?.email) {
+      return;
+    }
+
+    setAccountBusy(true);
+    setAuthError("");
+    setProfileMessage("");
+
+    try {
+      auth.languageCode = locale;
+      await sendPasswordResetEmail(auth, auth.currentUser.email, {
+        url: AUTH_ACTION_URL,
+      });
+      setProfileMessage(t.passwordChangeEmailSent);
+    } catch (error) {
+      setProfileMessage(getErrorMessage(error, t.passwordChangeEmailFailed));
+    } finally {
+      setAccountBusy(false);
+    }
+  }
+
+  async function requestAccountEmailChange(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!auth.currentUser) {
+      return;
+    }
+
+    const nextEmail = accountEmailChange.trim();
+    if (!nextEmail || nextEmail === auth.currentUser.email) {
+      setProfileMessage(t.emailChangeInvalid);
+      return;
+    }
+
+    setAccountBusy(true);
+    setAuthError("");
+    setProfileMessage("");
+
+    try {
+      const hasPasswordProvider = auth.currentUser.providerData.some(
+        (provider) => provider.providerId === "password"
+      );
+      const hasGoogleProvider = auth.currentUser.providerData.some(
+        (provider) => provider.providerId === "google.com"
+      );
+
+      if (hasPasswordProvider) {
+        if (!auth.currentUser.email || !accountEmailChangePassword) {
+          setProfileMessage(t.emailChangePasswordRequired);
+          return;
+        }
+
+        await reauthenticateWithCredential(
+          auth.currentUser,
+          EmailAuthProvider.credential(auth.currentUser.email, accountEmailChangePassword)
+        );
+      } else if (hasGoogleProvider) {
+        await reauthenticateWithPopup(auth.currentUser, googleProvider);
+      } else {
+        setProfileMessage(t.emailChangeReauthUnsupported);
+        return;
+      }
+
+      await auth.currentUser.getIdToken(true);
+      auth.languageCode = locale;
+      await verifyBeforeUpdateEmail(auth.currentUser, nextEmail, getEmailActionSettings());
+      setAccountEmailChange("");
+      setAccountEmailChangePassword("");
+      setProfileMessage(t.emailChangeVerificationSent);
+    } catch (error) {
+      setProfileMessage(getErrorMessage(error, t.emailChangeFailed));
+    } finally {
+      setAccountBusy(false);
+    }
+  }
+
   function openMenuTab(tab: WorkspaceTab) {
     setWorkspaceTab(tab);
     closeMenu();
@@ -4684,10 +4784,18 @@ export function App() {
             <p className="eyebrow">
               {isPasswordResetAction ? t.passwordResetEyebrow : t.emailVerificationEyebrow}
             </p>
-            <h1>{isPasswordResetAction ? t.passwordResetTitle : t.emailVerificationActionTitle}</h1>
+            <h1>
+              {isPasswordResetAction
+                ? t.passwordResetTitle
+                : isRecoverEmailAction
+                  ? t.emailRecoveryActionTitle
+                  : isVerifyAndChangeEmailAction
+                    ? t.emailChangeActionTitle
+                    : t.emailVerificationActionTitle}
+            </h1>
 
             {isPasswordResetAction && !resetActionChecked ? <p>{t.loading}</p> : null}
-            {isVerifyEmailAction && !verifyActionChecked ? <p>{t.loading}</p> : null}
+            {isEmailApplyAction && !verifyActionChecked ? <p>{t.loading}</p> : null}
 
             {isPasswordResetAction && resetActionChecked && resetActionError ? (
               <div className="auth-status-card error-text">
@@ -4699,7 +4807,7 @@ export function App() {
               </div>
             ) : null}
 
-            {isVerifyEmailAction && verifyActionChecked && verifyActionError ? (
+            {isEmailApplyAction && verifyActionChecked && verifyActionError ? (
               <div className="auth-status-card error-text">
                 <h2>{t.emailVerificationLinkProblemTitle}</h2>
                 <p>{verifyActionError}</p>
@@ -4709,10 +4817,22 @@ export function App() {
               </div>
             ) : null}
 
-            {isVerifyEmailAction && verifyActionComplete ? (
+            {isEmailApplyAction && verifyActionComplete ? (
               <div className="auth-status-card success-text">
-                <h2>{t.emailVerificationCompleteTitle}</h2>
-                <p>{t.emailVerificationCompleteCopy}</p>
+                <h2>
+                  {isRecoverEmailAction
+                    ? t.emailRecoveryCompleteTitle
+                    : isVerifyAndChangeEmailAction
+                      ? t.emailChangeCompleteTitle
+                      : t.emailVerificationCompleteTitle}
+                </h2>
+                <p>
+                  {isRecoverEmailAction
+                    ? t.emailRecoveryCompleteCopy
+                    : isVerifyAndChangeEmailAction
+                      ? t.emailChangeCompleteCopy
+                      : t.emailVerificationCompleteCopy}
+                </p>
                 <a className="button primary" href="/">
                   {t.backToSignIn}
                 </a>
@@ -6713,6 +6833,70 @@ export function App() {
               </button>
               {profileMessage ? <p className="small-note">{profileMessage}</p> : null}
             </form>
+
+            <section className="account-security-panel">
+              <div className="section-heading">
+                <div>
+                  <h3>{t.accountAccessTitle}</h3>
+                  <p>{t.accountAccessCopy}</p>
+                </div>
+              </div>
+              {user.providerData.some((provider) => provider.providerId === "password") ? (
+                <button
+                  className="button secondary"
+                  type="button"
+                  disabled={accountBusy}
+                  onClick={() => void sendPasswordChangeEmail()}
+                >
+                  {accountBusy ? t.loading : t.sendPasswordChangeEmail}
+                </button>
+              ) : (
+                <p className="small-note">{t.passwordChangeProviderNote}</p>
+              )}
+
+              <form className="profile-panel" onSubmit={requestAccountEmailChange}>
+                <div>
+                  <h4>{t.emailChangeTitle}</h4>
+                  <p>{t.emailChangeCopy}</p>
+                </div>
+                <label>
+                  {t.newEmail}
+                  <input
+                    type="email"
+                    autoComplete="email"
+                    value={accountEmailChange}
+                    onChange={(event) => setAccountEmailChange(event.target.value)}
+                    placeholder={user.email ?? t.email}
+                  />
+                </label>
+                {user.providerData.some((provider) => provider.providerId === "password") ? (
+                  <label>
+                    {t.currentPassword}
+                    <input
+                      type="password"
+                      autoComplete="current-password"
+                      value={accountEmailChangePassword}
+                      onChange={(event) => setAccountEmailChangePassword(event.target.value)}
+                    />
+                  </label>
+                ) : null}
+                {user.providerData.some((provider) => provider.providerId === "google.com") ? (
+                  <p className="small-note">{t.emailChangeGoogleReauth}</p>
+                ) : null}
+                <button
+                  className="button secondary"
+                  type="submit"
+                  disabled={
+                    accountBusy ||
+                    !accountEmailChange.trim() ||
+                    (user.providerData.some((provider) => provider.providerId === "password") &&
+                      !accountEmailChangePassword)
+                  }
+                >
+                  {accountBusy ? t.loading : t.sendEmailChangeVerification}
+                </button>
+              </form>
+            </section>
 
             <button className="button secondary" type="button" onClick={() => void handleSignOut()} disabled={signingOut}>
               {signingOut ? t.loading : t.signOut}
