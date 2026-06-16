@@ -6763,6 +6763,23 @@ export const adminGetDashboard = onCall(
       indexedChunkCount: Number(bookSnapshot.get("pineconeIndexedChunkCount")) || 0,
       missingChunkCount: Number(bookSnapshot.get("pineconeMissingChunkCount")) || 0,
     }));
+    const stripeWebhookSnapshot = await db
+      .collection("stripeWebhookEvents")
+      .orderBy("processedAt", "desc")
+      .limit(20)
+      .get();
+    const stripeWebhookEvents = stripeWebhookSnapshot.docs.map((eventSnapshot) => ({
+      id: eventSnapshot.id,
+      type: String(eventSnapshot.get("type") || ""),
+      status: String(eventSnapshot.get("status") || ""),
+      livemode: eventSnapshot.get("livemode") === true,
+      created:
+        typeof eventSnapshot.get("created") === "number"
+          ? new Date(Number(eventSnapshot.get("created")) * 1000).toISOString()
+          : normalizeFirestoreValue(eventSnapshot.get("created")),
+      processedAt: normalizeFirestoreValue(eventSnapshot.get("processedAt")),
+      updatedAt: normalizeFirestoreValue(eventSnapshot.get("updatedAt")),
+    }));
 
     await writeAdminAuditEvent({
       viewer,
@@ -6787,6 +6804,7 @@ export const adminGetDashboard = onCall(
         pineconeBooks: pineconeBooks.length,
       },
       pineconeBooks,
+      stripeWebhookEvents,
     };
   }
 );
@@ -6946,6 +6964,12 @@ export const adminListUsers = onCall(
           userLabel: email || displayName || userId,
           plan: userSnapshot.get("plan") || "free",
           subscriptionStatus: userSnapshot.get("subscriptionStatus") || "none",
+          billingProvider: userSnapshot.get("billingProvider") || "none",
+          billingPriceId: userSnapshot.get("billingPriceId") || "",
+          billingCurrentPeriodEnd: normalizeFirestoreValue(
+            userSnapshot.get("billingCurrentPeriodEnd")
+          ),
+          billingCancelAtPeriodEnd: userSnapshot.get("billingCancelAtPeriodEnd") === true,
           emailVerified: userSnapshot.get("emailVerified") === true,
           onboardingStatus: userSnapshot.get("onboardingStatus") || "",
           usageCurrentPeriod: normalizeFirestoreValue(userSnapshot.get("usageCurrentPeriod")),

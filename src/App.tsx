@@ -335,6 +335,15 @@ type AdminDashboardPayload = {
     email: string;
   };
   counts: Record<string, number>;
+  stripeWebhookEvents: Array<{
+    id: string;
+    type: string;
+    status: string;
+    livemode: boolean;
+    created?: string;
+    processedAt?: string;
+    updatedAt?: string;
+  }>;
   pineconeBooks: Array<{
     bookId: string;
     title: string;
@@ -439,6 +448,10 @@ type AdminUserSummary = {
   userLabel: string;
   plan: string;
   subscriptionStatus: string;
+  billingProvider: string;
+  billingPriceId: string;
+  billingCurrentPeriodEnd?: string;
+  billingCancelAtPeriodEnd: boolean;
   emailVerified: boolean;
   onboardingStatus: string;
   usageCurrentPeriod?: Record<string, unknown>;
@@ -551,6 +564,47 @@ function formatDateTime(value: number, locale: Locale) {
     dateStyle: "medium",
     timeStyle: "short",
   }).format(new Date(value));
+}
+
+function formatOptionalDateTime(value: string | undefined, locale: Locale) {
+  if (!value) {
+    return "-";
+  }
+
+  const timestamp = Date.parse(value);
+  return Number.isNaN(timestamp) ? value : formatDateTime(timestamp, locale);
+}
+
+function getBillingStatusLabel(
+  usage: Pick<
+    UserUsage,
+    "subscriptionStatus" | "billingCancelAtPeriodEnd" | "billingCurrentPeriodEnd"
+  >,
+  t: Record<string, string>,
+  locale: Locale
+) {
+  if (usage.billingCancelAtPeriodEnd && usage.billingCurrentPeriodEnd) {
+    return `${t.billingCanceledActiveUntil} ${formatOptionalDateTime(
+      usage.billingCurrentPeriodEnd,
+      locale
+    )}`;
+  }
+
+  switch (usage.subscriptionStatus) {
+    case "active":
+    case "trialing":
+      return t.billingStatusActive;
+    case "past_due":
+    case "unpaid":
+      return t.billingStatusPaymentFailed;
+    case "incomplete":
+    case "incomplete_expired":
+      return t.billingStatusPending;
+    case "canceled":
+      return t.billingStatusCanceled;
+    default:
+      return usage.subscriptionStatus;
+  }
 }
 
 function getDeviceInfo() {
@@ -761,6 +815,7 @@ export function App() {
   const [securityMessage, setSecurityMessage] = useState("");
   const [billingBusy, setBillingBusy] = useState("");
   const [billingMessage, setBillingMessage] = useState("");
+  const [billingMessageTone, setBillingMessageTone] = useState<"info" | "error">("info");
   const [usage, setUsage] = useState<UserUsage>({
     plan: "free",
     subscriptionStatus: "none",
@@ -842,13 +897,7 @@ export function App() {
     ["active", "trialing", "past_due", "unpaid", "incomplete"].includes(
       usage.subscriptionStatus
     );
-  const billingStatusLabel =
-    usage.billingCancelAtPeriodEnd && usage.billingCurrentPeriodEnd
-      ? `${t.billingCanceledActiveUntil} ${formatDateTime(
-          Date.parse(usage.billingCurrentPeriodEnd),
-          locale
-        )}`
-      : usage.subscriptionStatus;
+  const billingStatusLabel = getBillingStatusLabel(usage, t, locale);
   const articleStudioUnlocked =
     usage.plan === "plus" || usage.plan === "pro" || usage.plan === "ultimate";
   const articleReadyBookId = articleBookId || textReadyBooks[0]?.id || "";
@@ -1124,6 +1173,33 @@ export function App() {
     document.documentElement.lang = locale;
     window.localStorage.setItem("readwisehub_locale", locale);
   }, [locale]);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const billingReturn = params.get("billing");
+    if (!billingReturn) {
+      return;
+    }
+
+    if (billingReturn === "success") {
+      setBillingMessageTone("info");
+      setBillingMessage(t.billingReturnSuccess);
+    } else if (billingReturn === "cancelled") {
+      setBillingMessageTone("info");
+      setBillingMessage(t.billingReturnCancelled);
+    }
+
+    params.delete("billing");
+    params.delete("session_id");
+    const nextSearch = params.toString();
+    const nextUrl = `${window.location.pathname}${nextSearch ? `?${nextSearch}` : ""}${
+      window.location.hash
+    }`;
+    window.history.replaceState({}, "", nextUrl);
+    window.setTimeout(() => {
+      document.getElementById("billing")?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }, 100);
+  }, [t.billingReturnCancelled, t.billingReturnSuccess]);
 
   useEffect(() => {
     if (!isPasswordResetAction) {
@@ -3655,6 +3731,7 @@ export function App() {
 
     setBillingBusy(plan);
     setBillingMessage("");
+    setBillingMessageTone("info");
 
     try {
       const createCheckout = httpsCallable<
@@ -3664,6 +3741,7 @@ export function App() {
       const response = await createCheckout(withSession({ plan }));
       window.location.assign(response.data.url);
     } catch (error) {
+      setBillingMessageTone("error");
       setBillingMessage(getErrorMessage(error, t.billingCheckoutFailed));
     } finally {
       setBillingBusy("");
@@ -3677,6 +3755,7 @@ export function App() {
 
     setBillingBusy("portal");
     setBillingMessage("");
+    setBillingMessageTone("info");
 
     try {
       const createPortal = httpsCallable<
@@ -3686,6 +3765,7 @@ export function App() {
       const response = await createPortal(withSession({}));
       window.location.assign(response.data.url);
     } catch (error) {
+      setBillingMessageTone("error");
       setBillingMessage(getErrorMessage(error, t.billingPortalFailed));
     } finally {
       setBillingBusy("");
@@ -4217,6 +4297,9 @@ export function App() {
       userSummary.displayName,
       userSummary.userId,
       userSummary.plan,
+      userSummary.subscriptionStatus,
+      userSummary.billingProvider,
+      userSummary.billingPriceId,
     ])
   );
   const filteredAdminBooks = adminBooks.filter((book) => {
@@ -4523,6 +4606,45 @@ export function App() {
 
           <section className="admin-section">
             <div className="section-heading">
+              <p className="eyebrow">Billing</p>
+              <h2>Recent Stripe webhook events</h2>
+            </div>
+            <div className="admin-table-wrap">
+              <table className="admin-table">
+                <thead>
+                  <tr>
+                    <th>Event</th>
+                    <th>Type</th>
+                    <th>Status</th>
+                    <th>Mode</th>
+                    <th>Processed</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(adminDashboard?.stripeWebhookEvents ?? []).map((event) => (
+                    <tr key={event.id}>
+                      <td data-label="Event">{event.id}</td>
+                      <td data-label="Type">{event.type || "-"}</td>
+                      <td data-label="Status">{event.status || "-"}</td>
+                      <td data-label="Mode">{event.livemode ? "live" : "test"}</td>
+                      <td data-label="Processed">
+                        {formatOptionalDateTime(event.processedAt || event.updatedAt, locale)}
+                        <small>Created: {formatOptionalDateTime(event.created, locale)}</small>
+                      </td>
+                    </tr>
+                  ))}
+                  {adminDashboard && adminDashboard.stripeWebhookEvents.length === 0 ? (
+                    <tr>
+                      <td colSpan={5}>No Stripe webhook events found.</td>
+                    </tr>
+                  ) : null}
+                </tbody>
+              </table>
+            </div>
+          </section>
+
+          <section className="admin-section">
+            <div className="section-heading">
               <p className="eyebrow">Accounts</p>
               <h2>Users overview</h2>
             </div>
@@ -4532,6 +4654,7 @@ export function App() {
                   <tr>
                     <th>User</th>
                     <th>Plan</th>
+                    <th>Stripe</th>
                     <th>Verified</th>
                     <th>Usage</th>
                     <th>Activity</th>
@@ -4548,6 +4671,19 @@ export function App() {
                         <td data-label="Plan">
                           {userSummary.plan}
                           <small>{userSummary.subscriptionStatus}</small>
+                        </td>
+                        <td data-label="Stripe">
+                          {userSummary.billingProvider || "none"}
+                          <small>{userSummary.billingPriceId || "-"}</small>
+                          <small>
+                            {userSummary.billingCancelAtPeriodEnd
+                              ? "Cancel at period end"
+                              : "No scheduled cancel"}
+                          </small>
+                          <small>
+                            Period end:{" "}
+                            {formatOptionalDateTime(userSummary.billingCurrentPeriodEnd, locale)}
+                          </small>
                         </td>
                         <td data-label="Verified">
                           {userSummary.emailVerified ? "yes" : "no"}
@@ -5181,7 +5317,11 @@ export function App() {
                 <div className="book-actions billing-actions">
                   {renderBillingActions()}
                 </div>
-                {billingMessage ? <p className="error-text">{billingMessage}</p> : null}
+                {billingMessage ? (
+                  <p className={billingMessageTone === "error" ? "error-text" : "status-message"}>
+                    {billingMessage}
+                  </p>
+                ) : null}
               </div>
             </div>
           </section>
@@ -7045,7 +7185,11 @@ export function App() {
                 {renderBillingActions()}
               </div>
               <p className="small-note">{t.billingTestMode}</p>
-              {billingMessage ? <p className="error-text">{billingMessage}</p> : null}
+              {billingMessage ? (
+                <p className={billingMessageTone === "error" ? "error-text" : "status-message"}>
+                  {billingMessage}
+                </p>
+              ) : null}
             </section>
 
             <section className="account-security-panel">
