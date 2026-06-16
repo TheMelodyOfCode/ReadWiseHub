@@ -335,6 +335,10 @@ export const dictionaries: Record<Locale, Dictionary> = {
     deleteAccountGoogleReauth: "Google will ask you to confirm this account before deletion starts.",
     deleteAccountReauthUnsupported:
       "This sign-in method cannot be confirmed here. Sign out, sign in again, and retry account deletion.",
+    deleteAccountSubscriptionTitle: "Active subscription",
+    deleteAccountSubscriptionCopy:
+      "Your account still has an active Stripe subscription. Manage or cancel the subscription first, then return here to delete your account.",
+    deleteAccountSubscriptionAction: "Manage subscription",
     deletingAccount: "Deleting account data...",
     securityTitle: "Login security",
     securityCopy: "You can use ReadWiseHub on up to 3 active devices. Recent logins are shown here.",
@@ -830,6 +834,10 @@ export const dictionaries: Record<Locale, Dictionary> = {
     deleteAccountGoogleReauth: "Google wird dich bitten, dieses Konto vor dem Löschen zu bestätigen.",
     deleteAccountReauthUnsupported:
       "Diese Anmeldemethode kann hier nicht bestätigt werden. Melde dich ab, melde dich erneut an und versuche das Löschen noch einmal.",
+    deleteAccountSubscriptionTitle: "Aktives Abo",
+    deleteAccountSubscriptionCopy:
+      "Dein Konto hat noch ein aktives Stripe-Abo. Verwalte oder kündige zuerst das Abo und kehre dann hierher zurück, um dein Konto zu löschen.",
+    deleteAccountSubscriptionAction: "Abo verwalten",
     deletingAccount: "Kontodaten werden gelöscht...",
     securityTitle: "Login-Sicherheit",
     securityCopy: "Du kannst ReadWiseHub auf bis zu 3 aktiven Geräten nutzen. Die letzten Logins stehen hier.",

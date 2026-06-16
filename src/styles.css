@@ -725,6 +725,20 @@ textarea {
   margin: 0;
 }
 
+.subscription-delete-block {
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid color-mix(in srgb, var(--warning) 44%, var(--border));
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--warning) 10%, var(--surface));
+}
+
+.subscription-delete-block h4,
+.subscription-delete-block p {
+  margin: 0;
+}
+
 .section-heading {
   display: grid;
   gap: 12px;

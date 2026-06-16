@@ -4082,6 +4082,11 @@ export function App() {
     let deletionStarted = false;
 
     try {
+      if (hasOpenStripeSubscription) {
+        setAuthError(t.deleteAccountSubscriptionCopy);
+        return;
+      }
+
       const hasPasswordProvider = auth.currentUser.providerData.some(
         (provider) => provider.providerId === "password"
       );
@@ -7196,6 +7201,20 @@ export function App() {
               {confirmDeleteAccount ? (
                 <div className="inline-confirm">
                   <p>{t.deleteAccountConfirm}</p>
+                  {hasOpenStripeSubscription ? (
+                    <div className="subscription-delete-block">
+                      <h4>{t.deleteAccountSubscriptionTitle}</h4>
+                      <p>{t.deleteAccountSubscriptionCopy}</p>
+                      <button
+                        className="button primary compact"
+                        type="button"
+                        disabled={Boolean(billingBusy)}
+                        onClick={() => void openStripePortal()}
+                      >
+                        {billingBusy === "portal" ? t.loading : t.deleteAccountSubscriptionAction}
+                      </button>
+                    </div>
+                  ) : null}
                   <label>
                     {t.deleteAccountPhraseLabel}
                     <input
@@ -7225,6 +7244,7 @@ export function App() {
                       type="button"
                       disabled={
                         accountBusy ||
+                        hasOpenStripeSubscription ||
                         deleteConfirmationText.trim() !== DELETE_CONFIRMATION_PHRASE ||
                         (user.providerData.some((provider) => provider.providerId === "password") &&
                           !deleteAccountPassword)
