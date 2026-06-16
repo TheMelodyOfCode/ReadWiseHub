@@ -3592,6 +3592,96 @@ async function clearIngestionJobs(bookId: string) {
   }
 }
 
+async function clearVectorBackfillJobs(bookId: string) {
+  const snapshot = await db
+    .collection("vectorBackfillJobs")
+    .where("bookId", "==", bookId)
+    .limit(300)
+    .get();
+
+  if (snapshot.empty) {
+    return;
+  }
+
+  const batch = db.batch();
+  snapshot.docs.forEach((docSnapshot) => batch.delete(docSnapshot.ref));
+  await batch.commit();
+
+  if (snapshot.size === 300) {
+    await clearVectorBackfillJobs(bookId);
+  }
+}
+
+async function clearVectorBackfillRuns(bookId: string) {
+  const snapshot = await db
+    .collection("vectorBackfillRuns")
+    .where("bookId", "==", bookId)
+    .limit(300)
+    .get();
+
+  if (snapshot.empty) {
+    return;
+  }
+
+  const batch = db.batch();
+  snapshot.docs.forEach((docSnapshot) => batch.delete(docSnapshot.ref));
+  await batch.commit();
+
+  if (snapshot.size === 300) {
+    await clearVectorBackfillRuns(bookId);
+  }
+}
+
+async function clearBookVectorBackfillState(bookId: string) {
+  await clearVectorBackfillJobs(bookId);
+  await clearVectorBackfillRuns(bookId);
+}
+
+function bookMayHavePineconeVectors(bookSnapshot: FirebaseFirestore.DocumentSnapshot): boolean {
+  return (
+    bookSnapshot.get("vectorBackendCandidate") === "pinecone" ||
+    bookSnapshot.get("vectorBackfillBackend") === "pinecone" ||
+    Number(bookSnapshot.get("pineconeIndexedChunkCount")) > 0 ||
+    Number(bookSnapshot.get("vectorBackfillProcessedChunkCount")) > 0
+  );
+}
+
+async function deleteBookVectorsFromPineconeIfNeeded(
+  userId: string,
+  bookSnapshot: FirebaseFirestore.DocumentSnapshot
+) {
+  if (!bookMayHavePineconeVectors(bookSnapshot)) {
+    return false;
+  }
+
+  const apiKey = getPineconeApiKey();
+  if (!apiKey) {
+    throw new HttpsError("failed-precondition", "Pinecone API key is not configured.");
+  }
+
+  const bookScope = resolveBookScope(userId, bookSnapshot);
+  const backend = new PineconeBookRetrievalBackend({
+    apiKey,
+    firestore: db,
+    indexName: process.env.PINECONE_INDEX_NAME || DEFAULT_VECTOR_INDEX_NAME,
+    indexHost: process.env.PINECONE_INDEX_HOST || "",
+    embeddingModel: OPENAI_EMBEDDING_MODEL,
+    chunkerVersion: CHUNKER_VERSION,
+    extractorVersion: EXTRACTOR_VERSION,
+  });
+
+  await backend.deleteBook({
+    scope: {
+      tenantId: bookScope.tenantId,
+      workspaceId: bookScope.workspaceId,
+      libraryId: bookScope.libraryId,
+    },
+    bookId: bookSnapshot.id,
+  });
+
+  return true;
+}
+
 async function clearBookArtifacts(bookId: string) {
   const snapshot = await db
     .collection("bookArtifacts")
@@ -3781,12 +3871,14 @@ async function clearUserBooks(userId: string) {
     if (storagePath) {
       await getStorage().bucket().file(storagePath).delete({ ignoreNotFound: true });
     }
+    await deleteBookVectorsFromPineconeIfNeeded(userId, bookSnapshot);
     await clearExistingChunks(bookSnapshot.id);
     await clearExistingSections(bookSnapshot.id);
     await clearBookPages(bookSnapshot.id);
     await clearBookPageText(bookSnapshot.id);
     await clearBookInlineMedia(bookSnapshot.id);
     await clearIngestionJobs(bookSnapshot.id);
+    await clearBookVectorBackfillState(bookSnapshot.id);
     await clearBookArtifacts(bookSnapshot.id);
     await clearBookArticleDrafts(userId, bookSnapshot.id);
     await deleteStoragePrefix(`userDerived/${userId}/${bookSnapshot.id}/`);
@@ -6183,6 +6275,7 @@ export const processBookDeletion = onDocumentUpdated(
     region: "us-central1",
     timeoutSeconds: 540,
     memory: "1GiB",
+    secrets: [pineconeApiKey],
   },
   async (event) => {
     const before = event.data?.before;
@@ -6216,6 +6309,7 @@ export const processBookDeletion = onDocumentUpdated(
       if (storagePath) {
         await getStorage().bucket().file(storagePath).delete({ ignoreNotFound: true });
       }
+      await deleteBookVectorsFromPineconeIfNeeded(userId, after);
 
       const linkedConversations = await db
         .collection("conversations")
@@ -6245,6 +6339,7 @@ export const processBookDeletion = onDocumentUpdated(
       await clearBookInlineMedia(bookId);
       await clearNestedBookSections(bookId);
       await clearIngestionJobs(bookId);
+      await clearBookVectorBackfillState(bookId);
       await clearBookArtifacts(bookId);
       await clearBookArticleDrafts(userId, bookId);
       await deleteStoragePrefix(`userDerived/${userId}/${bookId}/`);
@@ -7951,7 +8046,7 @@ export const deleteAllConversations = onCall(
 );
 
 export const deleteAccountData = onCall(
-  { region: "us-central1", timeoutSeconds: 300, memory: "1GiB" },
+  { region: "us-central1", timeoutSeconds: 300, memory: "1GiB", secrets: [pineconeApiKey] },
   async (request) => {
     const auth = requireAuth(request.auth?.token
       ? {
