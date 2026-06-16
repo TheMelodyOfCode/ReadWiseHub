@@ -3676,6 +3676,53 @@ export function App() {
     }
   }
 
+  function renderBillingActions() {
+    if (hasOpenStripeSubscription) {
+      return (
+        <>
+          <button
+            className="button primary compact"
+            type="button"
+            disabled={Boolean(billingBusy)}
+            onClick={() => void openStripePortal()}
+          >
+            {billingBusy === "portal" ? t.loading : t.billingChangePlan}
+          </button>
+          <p className="small-note billing-action-note">{t.billingPortalCopy}</p>
+        </>
+      );
+    }
+
+    return (
+      <>
+        <button
+          className="button secondary compact"
+          type="button"
+          disabled={Boolean(billingBusy) || usage.plan === "plus"}
+          onClick={() => void startStripeCheckout("plus")}
+        >
+          {billingBusy === "plus" ? t.loading : t.billingUpgradePlus}
+        </button>
+        <button
+          className="button secondary compact"
+          type="button"
+          disabled={Boolean(billingBusy) || usage.plan === "pro"}
+          onClick={() => void startStripeCheckout("pro")}
+        >
+          {billingBusy === "pro" ? t.loading : t.billingUpgradePro}
+        </button>
+        <button
+          className="button secondary compact"
+          type="button"
+          disabled={Boolean(billingBusy) || usage.plan === "ultimate"}
+          onClick={() => void startStripeCheckout("ultimate")}
+        >
+          {billingBusy === "ultimate" ? t.loading : t.billingUpgradeUltimate}
+        </button>
+      </>
+    );
+  }
+
   async function saveDisplayName(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!auth.currentUser) {
@@ -5061,6 +5108,9 @@ export function App() {
                     {t.adminSwitch}
                   </a>
                 ) : null}
+                <a href="#billing" onClick={closeMenu}>
+                  {t.billingShortcut}
+                </a>
                 <a href="#account" onClick={closeMenu}>
                   {t.navAccount}
                 </a>
@@ -5102,6 +5152,16 @@ export function App() {
                   {usage.messages}/{usage.monthlyMessages} {t.usageMessagesLabel}
                 </li>
               </ul>
+              <div className="dashboard-billing-actions">
+                <p className="small-note">{t.billingDashboardCopy}</p>
+                <p className="small-note">
+                  {t.billingCurrentPlanNote}: {usage.plan.toUpperCase()}
+                </p>
+                <div className="book-actions billing-actions">
+                  {renderBillingActions()}
+                </div>
+                {billingMessage ? <p className="error-text">{billingMessage}</p> : null}
+              </div>
             </div>
           </section>
 
@@ -6945,7 +7005,7 @@ export function App() {
               {profileMessage ? <p className="small-note">{profileMessage}</p> : null}
             </form>
 
-            <section className="account-security-panel">
+            <section id="billing" className="account-security-panel">
               <div className="section-heading">
                 <div>
                   <h3>{t.billingTitle}</h3>
@@ -6960,41 +7020,8 @@ export function App() {
                   {t.billingSubscriptionStatus}: {usage.subscriptionStatus}
                 </li>
               </ul>
-              <div className="book-actions">
-                <button
-                  className="button secondary compact"
-                  type="button"
-                  disabled={Boolean(billingBusy) || usage.plan === "plus" || hasOpenStripeSubscription}
-                  onClick={() => void startStripeCheckout("plus")}
-                >
-                  {billingBusy === "plus" ? t.loading : t.billingUpgradePlus}
-                </button>
-                <button
-                  className="button secondary compact"
-                  type="button"
-                  disabled={Boolean(billingBusy) || usage.plan === "pro" || hasOpenStripeSubscription}
-                  onClick={() => void startStripeCheckout("pro")}
-                >
-                  {billingBusy === "pro" ? t.loading : t.billingUpgradePro}
-                </button>
-                <button
-                  className="button secondary compact"
-                  type="button"
-                  disabled={Boolean(billingBusy) || usage.plan === "ultimate" || hasOpenStripeSubscription}
-                  onClick={() => void startStripeCheckout("ultimate")}
-                >
-                  {billingBusy === "ultimate" ? t.loading : t.billingUpgradeUltimate}
-                </button>
-                {usage.billingProvider === "stripe" && usage.billingCustomerId ? (
-                  <button
-                    className="button primary compact"
-                    type="button"
-                    disabled={Boolean(billingBusy)}
-                    onClick={() => void openStripePortal()}
-                  >
-                    {billingBusy === "portal" ? t.loading : t.billingManage}
-                  </button>
-                ) : null}
+              <div className="book-actions billing-actions">
+                {renderBillingActions()}
               </div>
               <p className="small-note">{t.billingTestMode}</p>
               {billingMessage ? <p className="error-text">{billingMessage}</p> : null}

@@ -710,6 +710,21 @@ textarea {
   font-weight: 800;
 }
 
+.dashboard-billing-actions {
+  display: grid;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.billing-actions {
+  align-items: center;
+}
+
+.billing-action-note {
+  flex-basis: 100%;
+  margin: 0;
+}
+
 .section-heading {
   display: grid;
   gap: 12px;
