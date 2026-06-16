@@ -3,9 +3,10 @@ import { getAuth } from "firebase-admin/auth";
 import { FieldValue, getFirestore, WriteBatch } from "firebase-admin/firestore";
 import { getStorage } from "firebase-admin/storage";
 import { onDocumentCreated, onDocumentUpdated } from "firebase-functions/v2/firestore";
-import { HttpsError, onCall } from "firebase-functions/v2/https";
+import { HttpsError, onCall, onRequest } from "firebase-functions/v2/https";
 import { defineSecret } from "firebase-functions/params";
 import { PDFParse } from "pdf-parse";
+import Stripe from "stripe";
 import AdmZip from "adm-zip";
 import mammoth from "mammoth";
 import {
@@ -94,6 +95,12 @@ const CHUNKER_VERSION = "rwh_chunker_1";
 const EXTRACTOR_VERSION = "rwh_extractor_1";
 const openAiApiKey = defineSecret("OPENAI_API_KEY");
 const pineconeApiKey = defineSecret("PINECONE_API_KEY");
+const stripeSecretKey = defineSecret("STRIPE_SECRET_KEY");
+const stripeWebhookSecret = defineSecret("STRIPE_WEBHOOK_SECRET");
+const STRIPE_API_VERSION = "2026-05-27.dahlia";
+const BILLING_RETURN_URL = process.env.BILLING_RETURN_URL || "https://readwisehub.com/#account";
+const STRIPE_PLUS_PRICE_ID = process.env.STRIPE_PLUS_PRICE_ID || "";
+const STRIPE_PRO_PRICE_ID = process.env.STRIPE_PRO_PRICE_ID || "";
 const ACTIVE_BOOK_STATUSES = [
   "upload_reserved",
   "uploading",
@@ -112,6 +119,47 @@ type AuthContext = {
 };
 
 type UserPlan = keyof typeof PLAN_LIMITS;
+
+type StripeSubscriptionSnapshot = {
+  id: string;
+  customer: unknown;
+  status: string;
+  livemode: boolean;
+  cancel_at_period_end?: boolean;
+  items: {
+    data: Array<{
+      price?: {
+        id?: string;
+      };
+      current_period_end?: number;
+    }>;
+  };
+};
+
+type StripeCheckoutSessionSnapshot = {
+  metadata?: Record<string, string> | null;
+  customer: unknown;
+  subscription: unknown;
+  livemode: boolean;
+};
+
+type StripeInvoiceSnapshot = {
+  parent?: {
+    subscription_details?: {
+      subscription?: unknown;
+    };
+  } | null;
+};
+
+type StripeWebhookEventSnapshot = {
+  id: string;
+  type: string;
+  livemode: boolean;
+  created: number;
+  data: {
+    object: unknown;
+  };
+};
 
 type LibrarySearchResult = {
   chunkId?: string;
@@ -360,6 +408,199 @@ async function requireActiveSession(auth: AuthContext, rawSessionId: unknown) {
 
 function normalizePlan(plan: unknown): UserPlan {
   return plan === "plus" || plan === "pro" ? plan : "free";
+}
+
+function normalizePaidPlan(plan: unknown): Exclude<UserPlan, "free"> {
+  if (plan !== "plus" && plan !== "pro") {
+    throw new HttpsError("invalid-argument", "Choose Plus or Pro.");
+  }
+
+  return plan;
+}
+
+function getStripePriceId(plan: Exclude<UserPlan, "free">): string {
+  const priceId = plan === "plus" ? STRIPE_PLUS_PRICE_ID : STRIPE_PRO_PRICE_ID;
+  if (!priceId) {
+    throw new HttpsError(
+      "failed-precondition",
+      "Stripe test price IDs are not configured yet."
+    );
+  }
+
+  return priceId;
+}
+
+function getPlanForStripePrice(priceId: string | null | undefined): UserPlan {
+  if (priceId && priceId === STRIPE_PLUS_PRICE_ID) {
+    return "plus";
+  }
+
+  if (priceId && priceId === STRIPE_PRO_PRICE_ID) {
+    return "pro";
+  }
+
+  return "free";
+}
+
+function isPaidStripeStatus(status: string): boolean {
+  return status === "active" || status === "trialing";
+}
+
+function isOpenStripeSubscriptionStatus(status: string): boolean {
+  return ["active", "trialing", "past_due", "unpaid", "incomplete"].includes(status);
+}
+
+function getStripeClient(): Stripe.Stripe {
+  const secretKey = stripeSecretKey.value();
+  if (!secretKey) {
+    throw new HttpsError("failed-precondition", "Stripe secret key is not configured.");
+  }
+
+  return new Stripe(secretKey, {
+    apiVersion: STRIPE_API_VERSION,
+    appInfo: {
+      name: "ReadWiseHub",
+      version: "0.1.0",
+    },
+  });
+}
+
+function getStripeCustomerId(value: unknown): string {
+  if (typeof value === "string") {
+    return value;
+  }
+
+  if (value && typeof value === "object" && "id" in value && typeof value.id === "string") {
+    return value.id;
+  }
+
+  return "";
+}
+
+function getStripeSubscriptionId(value: unknown): string {
+  if (typeof value === "string") {
+    return value;
+  }
+
+  if (value && typeof value === "object" && "id" in value && typeof value.id === "string") {
+    return value.id;
+  }
+
+  return "";
+}
+
+function getSubscriptionPrimaryPriceId(subscription: StripeSubscriptionSnapshot): string {
+  return subscription.items.data[0]?.price?.id ?? "";
+}
+
+function getSubscriptionPeriodEnd(subscription: StripeSubscriptionSnapshot) {
+  const periodEnd = subscription.items.data[0]?.current_period_end;
+  return typeof periodEnd === "number"
+    ? new Date(periodEnd * 1000).toISOString()
+    : null;
+}
+
+async function findUserByStripeCustomerId(customerId: string) {
+  const users = await db
+    .collection("users")
+    .where("billingCustomerId", "==", customerId)
+    .limit(1)
+    .get();
+
+  return users.docs[0] ?? null;
+}
+
+async function getOrCreateStripeCustomer(stripe: Stripe.Stripe, auth: AuthContext): Promise<string> {
+  const userRef = await ensureUserProfile(auth);
+  const userSnapshot = await userRef.get();
+  const existingCustomerId = sanitizeClientLabel(userSnapshot.get("billingCustomerId"));
+
+  if (existingCustomerId) {
+    return existingCustomerId;
+  }
+
+  const customer = await stripe.customers.create({
+    email: auth.email,
+    name: auth.name,
+    metadata: {
+      firebaseUid: auth.uid,
+    },
+  });
+
+  await userRef.set(
+    {
+      billingProvider: "stripe",
+      billingCustomerId: customer.id,
+      billingMode: customer.livemode ? "live" : "test",
+      updatedAt: FieldValue.serverTimestamp(),
+    },
+    { merge: true }
+  );
+
+  return customer.id;
+}
+
+async function applyStripeSubscriptionToUser(
+  subscription: StripeSubscriptionSnapshot,
+  fallbackUid?: string
+) {
+  const customerId = getStripeCustomerId(subscription.customer);
+  const subscriptionId = subscription.id;
+  const priceId = getSubscriptionPrimaryPriceId(subscription);
+  const stripePlan = getPlanForStripePrice(priceId);
+  const nextPlan = isPaidStripeStatus(subscription.status) ? stripePlan : "free";
+  const userRef = fallbackUid
+    ? db.collection("users").doc(fallbackUid)
+    : (await findUserByStripeCustomerId(customerId))?.ref;
+
+  if (!userRef) {
+    console.warn("Stripe subscription has no matching ReadWiseHub user", {
+      customerId,
+      subscriptionId,
+    });
+    return;
+  }
+
+  await userRef.set(
+    {
+      plan: nextPlan,
+      subscriptionStatus: subscription.status,
+      billingProvider: "stripe",
+      billingCustomerId: customerId,
+      billingSubscriptionId: subscriptionId,
+      billingPriceId: priceId,
+      billingMode: subscription.livemode ? "live" : "test",
+      billingCancelAtPeriodEnd: subscription.cancel_at_period_end === true,
+      billingCurrentPeriodEnd: getSubscriptionPeriodEnd(subscription),
+      limits: PLAN_LIMITS[nextPlan],
+      updatedAt: FieldValue.serverTimestamp(),
+    },
+    { merge: true }
+  );
+}
+
+async function applyStripeCheckoutSession(session: StripeCheckoutSessionSnapshot) {
+  const uid = session.metadata?.firebaseUid;
+  const customerId = getStripeCustomerId(session.customer);
+  const subscriptionId = getStripeSubscriptionId(session.subscription);
+
+  if (uid && customerId) {
+    await db.collection("users").doc(uid).set(
+      {
+        billingProvider: "stripe",
+        billingCustomerId: customerId,
+        billingMode: session.livemode ? "live" : "test",
+        updatedAt: FieldValue.serverTimestamp(),
+      },
+      { merge: true }
+    );
+  }
+
+  if (subscriptionId) {
+    const stripe = getStripeClient();
+    const subscription = await stripe.subscriptions.retrieve(subscriptionId);
+    await applyStripeSubscriptionToUser(subscription, uid);
+  }
 }
 
 function assertString(value: unknown, fieldName: string): string {
@@ -4876,6 +5117,226 @@ export const getUserCapabilities = onCall(
   }
 );
 
+export const createStripeCheckoutSession = onCall(
+  {
+    region: "us-central1",
+    timeoutSeconds: 60,
+    memory: "256MiB",
+    secrets: [stripeSecretKey],
+  },
+  async (request) => {
+    const auth = requireAuth(request.auth?.token
+      ? {
+          uid: request.auth.uid,
+          email: request.auth.token.email,
+          name: request.auth.token.name,
+          picture: request.auth.token.picture,
+        }
+      : undefined);
+    await requireVerifiedEmail(auth);
+    await requireActiveSession(auth, request.data?.sessionId);
+
+    const plan = normalizePaidPlan(request.data?.plan);
+    const priceId = getStripePriceId(plan);
+    const stripe = getStripeClient();
+    const userRef = await ensureUserProfile(auth);
+    const userSnapshot = await userRef.get();
+    const subscriptionStatus = String(userSnapshot.get("subscriptionStatus") ?? "none");
+    if (
+      userSnapshot.get("billingProvider") === "stripe" &&
+      sanitizeClientLabel(userSnapshot.get("billingSubscriptionId")) &&
+      isOpenStripeSubscriptionStatus(subscriptionStatus)
+    ) {
+      throw new HttpsError(
+        "failed-precondition",
+        "Use the billing portal to change an existing Stripe subscription."
+      );
+    }
+    const customerId = await getOrCreateStripeCustomer(stripe, auth);
+    const checkoutSession = await stripe.checkout.sessions.create({
+      mode: "subscription",
+      customer: customerId,
+      client_reference_id: auth.uid,
+      line_items: [
+        {
+          price: priceId,
+          quantity: 1,
+        },
+      ],
+      allow_promotion_codes: true,
+      success_url: `${BILLING_RETURN_URL}?billing=success&session_id={CHECKOUT_SESSION_ID}`,
+      cancel_url: `${BILLING_RETURN_URL}?billing=cancelled`,
+      metadata: {
+        firebaseUid: auth.uid,
+        selectedPlan: plan,
+      },
+      subscription_data: {
+        metadata: {
+          firebaseUid: auth.uid,
+          selectedPlan: plan,
+        },
+      },
+    });
+
+    if (!checkoutSession.url) {
+      throw new HttpsError("internal", "Stripe did not return a Checkout URL.");
+    }
+
+    return {
+      ok: true,
+      url: checkoutSession.url,
+    };
+  }
+);
+
+export const createStripePortalSession = onCall(
+  {
+    region: "us-central1",
+    timeoutSeconds: 60,
+    memory: "256MiB",
+    secrets: [stripeSecretKey],
+  },
+  async (request) => {
+    const auth = requireAuth(request.auth?.token
+      ? {
+          uid: request.auth.uid,
+          email: request.auth.token.email,
+          name: request.auth.token.name,
+          picture: request.auth.token.picture,
+        }
+      : undefined);
+    await requireVerifiedEmail(auth);
+    await requireActiveSession(auth, request.data?.sessionId);
+    const userRef = await ensureUserProfile(auth);
+    const userSnapshot = await userRef.get();
+    const customerId = sanitizeClientLabel(userSnapshot.get("billingCustomerId"));
+
+    if (!customerId || userSnapshot.get("billingProvider") !== "stripe") {
+      throw new HttpsError(
+        "failed-precondition",
+        "No Stripe customer exists for this account yet."
+      );
+    }
+
+    const stripe = getStripeClient();
+    const portalSession = await stripe.billingPortal.sessions.create({
+      customer: customerId,
+      return_url: BILLING_RETURN_URL,
+    });
+
+    return {
+      ok: true,
+      url: portalSession.url,
+    };
+  }
+);
+
+export const stripeWebhook = onRequest(
+  {
+    region: "us-central1",
+    timeoutSeconds: 60,
+    memory: "256MiB",
+    secrets: [stripeSecretKey, stripeWebhookSecret],
+  },
+  async (request, response) => {
+    if (request.method !== "POST") {
+      response.set("Allow", "POST").status(405).send("Method Not Allowed");
+      return;
+    }
+
+    const signature = request.header("stripe-signature");
+    if (!signature) {
+      response.status(400).send("Missing Stripe signature.");
+      return;
+    }
+
+    let event: StripeWebhookEventSnapshot;
+    try {
+      const stripe = getStripeClient();
+      event = stripe.webhooks.constructEvent(
+        request.rawBody,
+        signature,
+        stripeWebhookSecret.value()
+      ) as StripeWebhookEventSnapshot;
+    } catch (error) {
+      console.error("Stripe webhook signature verification failed", {
+        message: error instanceof Error ? error.message : "Unknown error",
+      });
+      response.status(400).send("Invalid Stripe webhook signature.");
+      return;
+    }
+
+    const eventRef = db.collection("stripeWebhookEvents").doc(event.id);
+    if ((await eventRef.get()).exists) {
+      response.json({ received: true, duplicate: true });
+      return;
+    }
+
+    try {
+      await eventRef.create({
+        type: event.type,
+        livemode: event.livemode,
+        created: event.created,
+        processedAt: FieldValue.serverTimestamp(),
+      });
+
+      switch (event.type) {
+        case "checkout.session.completed":
+        case "checkout.session.async_payment_succeeded":
+          await applyStripeCheckoutSession(event.data.object as StripeCheckoutSessionSnapshot);
+          break;
+        case "customer.subscription.created":
+        case "customer.subscription.updated":
+        case "customer.subscription.deleted":
+        case "customer.subscription.paused":
+        case "customer.subscription.resumed":
+        case "customer.subscription.pending_update_applied":
+        case "customer.subscription.pending_update_expired":
+          await applyStripeSubscriptionToUser(event.data.object as StripeSubscriptionSnapshot);
+          break;
+        case "invoice.payment_failed": {
+          const invoice = event.data.object as StripeInvoiceSnapshot;
+          const subscriptionId = getStripeSubscriptionId(
+            invoice.parent?.subscription_details?.subscription
+          );
+          if (subscriptionId) {
+            const stripe = getStripeClient();
+            const subscription = await stripe.subscriptions.retrieve(subscriptionId);
+            await applyStripeSubscriptionToUser(subscription);
+          }
+          break;
+        }
+        default:
+          break;
+      }
+
+      await eventRef.set(
+        {
+          status: "processed",
+          updatedAt: FieldValue.serverTimestamp(),
+        },
+        { merge: true }
+      );
+      response.json({ received: true });
+    } catch (error) {
+      await eventRef.set(
+        {
+          status: "failed",
+          errorMessage: error instanceof Error ? error.message.slice(0, 500) : "Unknown error",
+          updatedAt: FieldValue.serverTimestamp(),
+        },
+        { merge: true }
+      );
+      console.error("Stripe webhook processing failed", {
+        eventId: event.id,
+        eventType: event.type,
+        message: error instanceof Error ? error.message : "Unknown error",
+      });
+      response.status(500).send("Stripe webhook processing failed.");
+    }
+  }
+);
+
 export const exportAccountData = onCall(
   { region: "us-central1", timeoutSeconds: 60, memory: "512MiB" },
   async (request) => {
@@ -7464,6 +7925,18 @@ export const deleteAccountData = onCall(
       );
     }
     requireRecentAuth(request.auth?.token?.auth_time);
+    const userSnapshot = await db.collection("users").doc(auth.uid).get();
+    const subscriptionStatus = String(userSnapshot.get("subscriptionStatus") ?? "none");
+    const billingProvider = String(userSnapshot.get("billingProvider") ?? "none");
+    if (
+      billingProvider === "stripe" &&
+      isOpenStripeSubscriptionStatus(subscriptionStatus)
+    ) {
+      throw new HttpsError(
+        "failed-precondition",
+        "Manage or cancel your Stripe subscription before deleting this account."
+      );
+    }
 
     await clearUserBooks(auth.uid);
     await clearUserConversations(auth.uid);

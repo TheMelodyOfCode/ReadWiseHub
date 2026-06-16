@@ -313,6 +313,10 @@ type AccountSession = {
 
 type UserUsage = {
   plan: string;
+  subscriptionStatus: string;
+  billingProvider: string;
+  billingCustomerId: string;
+  billingSubscriptionId: string;
   messages: number;
   monthlyMessages: number;
   articleGenerations: number;
@@ -753,8 +757,14 @@ export function App() {
   const [deleteAccountPassword, setDeleteAccountPassword] = useState("");
   const [accountSessions, setAccountSessions] = useState<AccountSession[]>([]);
   const [securityMessage, setSecurityMessage] = useState("");
+  const [billingBusy, setBillingBusy] = useState("");
+  const [billingMessage, setBillingMessage] = useState("");
   const [usage, setUsage] = useState<UserUsage>({
     plan: "free",
+    subscriptionStatus: "none",
+    billingProvider: "none",
+    billingCustomerId: "",
+    billingSubscriptionId: "",
     messages: 0,
     monthlyMessages: 10,
     articleGenerations: 0,
@@ -822,6 +832,12 @@ export function App() {
     () => books.filter((book) => book.status === "text_ready"),
     [books]
   );
+  const hasOpenStripeSubscription =
+    usage.billingProvider === "stripe" &&
+    Boolean(usage.billingSubscriptionId) &&
+    ["active", "trialing", "past_due", "unpaid", "incomplete"].includes(
+      usage.subscriptionStatus
+    );
   const articleStudioUnlocked = usage.plan === "plus" || usage.plan === "pro";
   const articleReadyBookId = articleBookId || textReadyBooks[0]?.id || "";
   const activeBookIds = useMemo(() => new Set(books.map((book) => book.id)), [books]);
@@ -1338,6 +1354,14 @@ export function App() {
 
         setUsage({
           plan: typeof data?.plan === "string" ? data.plan : "free",
+          subscriptionStatus:
+            typeof data?.subscriptionStatus === "string" ? data.subscriptionStatus : "none",
+          billingProvider:
+            typeof data?.billingProvider === "string" ? data.billingProvider : "none",
+          billingCustomerId:
+            typeof data?.billingCustomerId === "string" ? data.billingCustomerId : "",
+          billingSubscriptionId:
+            typeof data?.billingSubscriptionId === "string" ? data.billingSubscriptionId : "",
           messages: typeof current.messages === "number" ? current.messages : 0,
           monthlyMessages:
             typeof limits.monthlyMessages === "number" ? limits.monthlyMessages : 10,
@@ -3604,6 +3628,50 @@ export function App() {
       setSecurityMessage("");
     } catch (error) {
       setSecurityMessage(getErrorMessage(error, "Security data failed"));
+    }
+  }
+
+  async function startStripeCheckout(plan: "plus" | "pro") {
+    if (!requireVerifiedUi(setBillingMessage)) {
+      return;
+    }
+
+    setBillingBusy(plan);
+    setBillingMessage("");
+
+    try {
+      const createCheckout = httpsCallable<
+        { plan: "plus" | "pro"; sessionId: string },
+        { ok: boolean; url: string }
+      >(functions, "createStripeCheckoutSession");
+      const response = await createCheckout(withSession({ plan }));
+      window.location.assign(response.data.url);
+    } catch (error) {
+      setBillingMessage(getErrorMessage(error, t.billingCheckoutFailed));
+    } finally {
+      setBillingBusy("");
+    }
+  }
+
+  async function openStripePortal() {
+    if (!requireVerifiedUi(setBillingMessage)) {
+      return;
+    }
+
+    setBillingBusy("portal");
+    setBillingMessage("");
+
+    try {
+      const createPortal = httpsCallable<
+        { sessionId: string },
+        { ok: boolean; url: string }
+      >(functions, "createStripePortalSession");
+      const response = await createPortal(withSession({}));
+      window.location.assign(response.data.url);
+    } catch (error) {
+      setBillingMessage(getErrorMessage(error, t.billingPortalFailed));
+    } finally {
+      setBillingBusy("");
     }
   }
 
@@ -6875,6 +6943,53 @@ export function App() {
               </button>
               {profileMessage ? <p className="small-note">{profileMessage}</p> : null}
             </form>
+
+            <section className="account-security-panel">
+              <div className="section-heading">
+                <div>
+                  <h3>{t.billingTitle}</h3>
+                  <p>{t.billingCopy}</p>
+                </div>
+              </div>
+              <ul className="usage-list">
+                <li>
+                  {t.billingCurrentPlan}: {usage.plan.toUpperCase()}
+                </li>
+                <li>
+                  {t.billingSubscriptionStatus}: {usage.subscriptionStatus}
+                </li>
+              </ul>
+              <div className="book-actions">
+                <button
+                  className="button secondary compact"
+                  type="button"
+                  disabled={Boolean(billingBusy) || usage.plan === "plus" || hasOpenStripeSubscription}
+                  onClick={() => void startStripeCheckout("plus")}
+                >
+                  {billingBusy === "plus" ? t.loading : t.billingUpgradePlus}
+                </button>
+                <button
+                  className="button secondary compact"
+                  type="button"
+                  disabled={Boolean(billingBusy) || usage.plan === "pro" || hasOpenStripeSubscription}
+                  onClick={() => void startStripeCheckout("pro")}
+                >
+                  {billingBusy === "pro" ? t.loading : t.billingUpgradePro}
+                </button>
+                {usage.billingProvider === "stripe" && usage.billingCustomerId ? (
+                  <button
+                    className="button primary compact"
+                    type="button"
+                    disabled={Boolean(billingBusy)}
+                    onClick={() => void openStripePortal()}
+                  >
+                    {billingBusy === "portal" ? t.loading : t.billingManage}
+                  </button>
+                ) : null}
+              </div>
+              <p className="small-note">{t.billingTestMode}</p>
+              {billingMessage ? <p className="error-text">{billingMessage}</p> : null}
+            </section>
 
             <section className="account-security-panel">
               <div className="section-heading">
