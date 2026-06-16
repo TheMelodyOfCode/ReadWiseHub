@@ -284,6 +284,11 @@ export const dictionaries: Record<Locale, Dictionary> = {
     deleteAccountConfirm:
       "Delete your ReadWiseHub account, books, extracted text, questions, uploaded files, and login sessions? Type the exact phrase to continue.",
     deleteAccountPhraseLabel: "Type ReadWiseHub 2026",
+    deleteAccountPasswordLabel: "Current password",
+    deleteAccountPasswordRequired: "Enter your current password before deleting this account.",
+    deleteAccountGoogleReauth: "Google will ask you to confirm this account before deletion starts.",
+    deleteAccountReauthUnsupported:
+      "This sign-in method cannot be confirmed here. Sign out, sign in again, and retry account deletion.",
     deletingAccount: "Deleting account data...",
     securityTitle: "Login security",
     securityCopy: "You can use ReadWiseHub on up to 3 active devices. Recent logins are shown here.",
@@ -719,6 +724,11 @@ export const dictionaries: Record<Locale, Dictionary> = {
     deleteAccountConfirm:
       "Dein ReadWiseHub-Konto, Bücher, extrahierten Texte, Fragen, Upload-Dateien und Login-Sitzungen löschen? Tippe den exakten Satz ein, um fortzufahren.",
     deleteAccountPhraseLabel: "Tippe ReadWiseHub 2026",
+    deleteAccountPasswordLabel: "Aktuelles Passwort",
+    deleteAccountPasswordRequired: "Gib dein aktuelles Passwort ein, bevor du dieses Konto löschst.",
+    deleteAccountGoogleReauth: "Google wird dich bitten, dieses Konto vor dem Löschen zu bestätigen.",
+    deleteAccountReauthUnsupported:
+      "Diese Anmeldemethode kann hier nicht bestätigt werden. Melde dich ab, melde dich erneut an und versuche das Löschen noch einmal.",
     deletingAccount: "Kontodaten werden gelöscht...",
     securityTitle: "Login-Sicherheit",
     securityCopy: "Du kannst ReadWiseHub auf bis zu 3 aktiven Geräten nutzen. Die letzten Logins stehen hier.",

@@ -1,11 +1,14 @@
 import { FormEvent, TouchEvent, useEffect, useMemo, useRef, useState } from "react";
 import { FirebaseError } from "firebase/app";
 import {
+  EmailAuthProvider,
   User,
   applyActionCode,
   confirmPasswordReset,
   createUserWithEmailAndPassword,
   onAuthStateChanged,
+  reauthenticateWithCredential,
+  reauthenticateWithPopup,
   reload,
   sendEmailVerification,
   sendPasswordResetEmail,
@@ -739,6 +742,7 @@ export function App() {
   const [profileMessage, setProfileMessage] = useState("");
   const [confirmDeleteAccount, setConfirmDeleteAccount] = useState(false);
   const [deleteConfirmationText, setDeleteConfirmationText] = useState("");
+  const [deleteAccountPassword, setDeleteAccountPassword] = useState("");
   const [accountSessions, setAccountSessions] = useState<AccountSession[]>([]);
   const [securityMessage, setSecurityMessage] = useState("");
   const [usage, setUsage] = useState<UserUsage>({
@@ -3811,23 +3815,57 @@ export function App() {
   }
 
   async function deleteMyAccountData() {
+    if (!auth.currentUser) {
+      return;
+    }
+
     setAccountBusy(true);
     setAuthError("");
+    let deletionStarted = false;
 
     try {
+      const hasPasswordProvider = auth.currentUser.providerData.some(
+        (provider) => provider.providerId === "password"
+      );
+      const hasGoogleProvider = auth.currentUser.providerData.some(
+        (provider) => provider.providerId === "google.com"
+      );
+
+      if (hasPasswordProvider) {
+        if (!auth.currentUser.email || !deleteAccountPassword) {
+          setAuthError(t.deleteAccountPasswordRequired);
+          return;
+        }
+
+        await reauthenticateWithCredential(
+          auth.currentUser,
+          EmailAuthProvider.credential(auth.currentUser.email, deleteAccountPassword)
+        );
+      } else if (hasGoogleProvider) {
+        await reauthenticateWithPopup(auth.currentUser, googleProvider);
+      } else {
+        setAuthError(t.deleteAccountReauthUnsupported);
+        return;
+      }
+
+      await auth.currentUser.getIdToken(true);
       const deleteAccountData = httpsCallable<unknown, { ok: boolean }>(
         functions,
         "deleteAccountData"
       );
       await deleteAccountData(withSession({ confirmationPhrase: deleteConfirmationText }));
+      deletionStarted = true;
       signingOutRef.current = true;
       await signOut(auth).catch(() => undefined);
     } catch (error) {
       setAuthError(getErrorMessage(error, "Account delete failed"));
     } finally {
       setAccountBusy(false);
-      setConfirmDeleteAccount(false);
-      setDeleteConfirmationText("");
+      if (deletionStarted) {
+        setConfirmDeleteAccount(false);
+        setDeleteConfirmationText("");
+        setDeleteAccountPassword("");
+      }
     }
   }
 
@@ -6741,13 +6779,29 @@ export function App() {
                       placeholder={DELETE_CONFIRMATION_PHRASE}
                     />
                   </label>
+                  {user.providerData.some((provider) => provider.providerId === "password") ? (
+                    <label>
+                      {t.deleteAccountPasswordLabel}
+                      <input
+                        type="password"
+                        autoComplete="current-password"
+                        value={deleteAccountPassword}
+                        onChange={(event) => setDeleteAccountPassword(event.target.value)}
+                      />
+                    </label>
+                  ) : null}
+                  {user.providerData.some((provider) => provider.providerId === "google.com") ? (
+                    <p className="small-note">{t.deleteAccountGoogleReauth}</p>
+                  ) : null}
                   <div className="book-actions">
                     <button
                       className="button danger"
                       type="button"
                       disabled={
                         accountBusy ||
-                        deleteConfirmationText.trim() !== DELETE_CONFIRMATION_PHRASE
+                        deleteConfirmationText.trim() !== DELETE_CONFIRMATION_PHRASE ||
+                        (user.providerData.some((provider) => provider.providerId === "password") &&
+                          !deleteAccountPassword)
                       }
                       onClick={deleteMyAccountData}
                     >
@@ -6760,6 +6814,7 @@ export function App() {
                       onClick={() => {
                         setConfirmDeleteAccount(false);
                         setDeleteConfirmationText("");
+                        setDeleteAccountPassword("");
                       }}
                     >
                       {t.cancel}
