@@ -317,6 +317,8 @@ type UserUsage = {
   billingProvider: string;
   billingCustomerId: string;
   billingSubscriptionId: string;
+  billingCancelAtPeriodEnd: boolean;
+  billingCurrentPeriodEnd: string;
   messages: number;
   monthlyMessages: number;
   articleGenerations: number;
@@ -765,6 +767,8 @@ export function App() {
     billingProvider: "none",
     billingCustomerId: "",
     billingSubscriptionId: "",
+    billingCancelAtPeriodEnd: false,
+    billingCurrentPeriodEnd: "",
     messages: 0,
     monthlyMessages: 10,
     articleGenerations: 0,
@@ -838,6 +842,13 @@ export function App() {
     ["active", "trialing", "past_due", "unpaid", "incomplete"].includes(
       usage.subscriptionStatus
     );
+  const billingStatusLabel =
+    usage.billingCancelAtPeriodEnd && usage.billingCurrentPeriodEnd
+      ? `${t.billingCanceledActiveUntil} ${formatDateTime(
+          Date.parse(usage.billingCurrentPeriodEnd),
+          locale
+        )}`
+      : usage.subscriptionStatus;
   const articleStudioUnlocked =
     usage.plan === "plus" || usage.plan === "pro" || usage.plan === "ultimate";
   const articleReadyBookId = articleBookId || textReadyBooks[0]?.id || "";
@@ -1363,6 +1374,11 @@ export function App() {
             typeof data?.billingCustomerId === "string" ? data.billingCustomerId : "",
           billingSubscriptionId:
             typeof data?.billingSubscriptionId === "string" ? data.billingSubscriptionId : "",
+          billingCancelAtPeriodEnd: data?.billingCancelAtPeriodEnd === true,
+          billingCurrentPeriodEnd:
+            typeof data?.billingCurrentPeriodEnd === "string"
+              ? data.billingCurrentPeriodEnd
+              : "",
           messages: typeof current.messages === "number" ? current.messages : 0,
           monthlyMessages:
             typeof limits.monthlyMessages === "number" ? limits.monthlyMessages : 10,
@@ -7022,7 +7038,7 @@ export function App() {
                   {t.billingCurrentPlan}: {usage.plan.toUpperCase()}
                 </li>
                 <li>
-                  {t.billingSubscriptionStatus}: {usage.subscriptionStatus}
+                  {t.billingSubscriptionStatus}: {billingStatusLabel}
                 </li>
               </ul>
               <div className="book-actions billing-actions">
