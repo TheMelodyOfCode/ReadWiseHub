@@ -40,16 +40,23 @@ const PLAN_LIMITS = {
   },
   plus: {
     maxBooks: 10,
-    maxStorageBytes: 200 * 1024 * 1024,
+    maxStorageBytes: 180 * 1024 * 1024,
     maxFileBytes: 20 * 1024 * 1024,
-    monthlyMessages: 200,
+    monthlyMessages: 150,
     monthlyIngestions: 10,
   },
   pro: {
+    maxBooks: 20,
+    maxStorageBytes: 380 * 1024 * 1024,
+    maxFileBytes: 30 * 1024 * 1024,
+    monthlyMessages: 320,
+    monthlyIngestions: 20,
+  },
+  ultimate: {
     maxBooks: 50,
-    maxStorageBytes: 1024 * 1024 * 1024,
+    maxStorageBytes: 800 * 1024 * 1024,
     maxFileBytes: 50 * 1024 * 1024,
-    monthlyMessages: 1000,
+    monthlyMessages: 500,
     monthlyIngestions: 50,
   },
 } as const;
@@ -101,6 +108,7 @@ const STRIPE_API_VERSION = "2026-05-27.dahlia";
 const BILLING_RETURN_URL = process.env.BILLING_RETURN_URL || "https://readwisehub.com/#account";
 const STRIPE_PLUS_PRICE_ID = process.env.STRIPE_PLUS_PRICE_ID || "";
 const STRIPE_PRO_PRICE_ID = process.env.STRIPE_PRO_PRICE_ID || "";
+const STRIPE_ULTIMATE_PRICE_ID = process.env.STRIPE_ULTIMATE_PRICE_ID || "";
 const ACTIVE_BOOK_STATUSES = [
   "upload_reserved",
   "uploading",
@@ -407,19 +415,24 @@ async function requireActiveSession(auth: AuthContext, rawSessionId: unknown) {
 }
 
 function normalizePlan(plan: unknown): UserPlan {
-  return plan === "plus" || plan === "pro" ? plan : "free";
+  return plan === "plus" || plan === "pro" || plan === "ultimate" ? plan : "free";
 }
 
 function normalizePaidPlan(plan: unknown): Exclude<UserPlan, "free"> {
-  if (plan !== "plus" && plan !== "pro") {
-    throw new HttpsError("invalid-argument", "Choose Plus or Pro.");
+  if (plan !== "plus" && plan !== "pro" && plan !== "ultimate") {
+    throw new HttpsError("invalid-argument", "Choose Plus, Pro, or Ultimate.");
   }
 
   return plan;
 }
 
 function getStripePriceId(plan: Exclude<UserPlan, "free">): string {
-  const priceId = plan === "plus" ? STRIPE_PLUS_PRICE_ID : STRIPE_PRO_PRICE_ID;
+  const priceId =
+    plan === "plus"
+      ? STRIPE_PLUS_PRICE_ID
+      : plan === "pro"
+        ? STRIPE_PRO_PRICE_ID
+        : STRIPE_ULTIMATE_PRICE_ID;
   if (!priceId) {
     throw new HttpsError(
       "failed-precondition",
@@ -437,6 +450,10 @@ function getPlanForStripePrice(priceId: string | null | undefined): UserPlan {
 
   if (priceId && priceId === STRIPE_PRO_PRICE_ID) {
     return "pro";
+  }
+
+  if (priceId && priceId === STRIPE_ULTIMATE_PRICE_ID) {
+    return "ultimate";
   }
 
   return "free";
@@ -1365,8 +1382,12 @@ function getArticleTestUserIds(): string[] {
 }
 
 function getMonthlyArticleLimit(plan: UserPlan): number {
-  if (plan === "pro") {
+  if (plan === "ultimate") {
     return 100;
+  }
+
+  if (plan === "pro") {
+    return 40;
   }
 
   if (plan === "plus") {
@@ -1388,7 +1409,7 @@ function requireArticleStudioAccess(userId: string, plan: UserPlan) {
   if (getMonthlyArticleLimit(plan) <= 0) {
     throw new HttpsError(
       "permission-denied",
-      "Article Studio is available for Plus and Pro test accounts."
+      "Article Studio is available for paid test accounts."
     );
   }
 }

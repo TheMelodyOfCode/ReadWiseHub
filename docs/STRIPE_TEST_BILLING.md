@@ -8,6 +8,7 @@ Provide these values before deploying billing:
 
 - Plus recurring test Price ID: `price_...`
 - Pro recurring test Price ID: `price_...`
+- Ultimate recurring test Price ID: `price_...`
 - Stripe test secret key: `sk_test_...`
 - Stripe webhook signing secret after the deployed webhook endpoint is created: `whsec_...`
 
@@ -20,6 +21,7 @@ Set non-secret function environment values in `functions/.env` or equivalent Fir
 ```text
 STRIPE_PLUS_PRICE_ID=price_...
 STRIPE_PRO_PRICE_ID=price_...
+STRIPE_ULTIMATE_PRICE_ID=price_...
 BILLING_RETURN_URL=https://readwisehub.com/#account
 ```
 
@@ -51,11 +53,19 @@ The webhook verifies Stripe signatures using the raw request body and stores pro
 
 ## Behavior
 
-- Free users can start Stripe Checkout for Plus or Pro.
+- Free users can start Stripe Checkout for Plus, Pro, or Ultimate.
 - Users with an existing open Stripe subscription must use the Stripe Customer Portal for plan changes and cancellation.
-- Only Stripe subscription status `active` or `trialing` grants Plus/Pro limits.
+- Only Stripe subscription status `active` or `trialing` grants paid limits.
 - Non-active subscription states fall back to Free limits while preserving Stripe billing metadata.
 - Account deletion is blocked while a Stripe subscription is open; the user must manage/cancel billing first.
+
+Current public test-mode tiers:
+
+- Plus: 9.99 EUR/month, 10 books, 180 MB storage, 150 messages/month, product `prod_UiOVIrFA3C1tX4`.
+- Pro: 19.99 EUR/month, 20 books, 380 MB storage, 320 messages/month, product `prod_UiOZIU85RfFIRV`.
+- Ultimate: 29.99 EUR/month, 50 books, 800 MB storage, 500 messages/month, product `prod_UiOaKGJDScN3tK`.
+
+Checkout uses recurring Stripe Price IDs, not Product IDs. Copy the monthly recurring `price_...` value from each product before deploying billing.
 
 ## Test Matrix
 
@@ -63,8 +73,10 @@ Test in Stripe test mode before live billing:
 
 - Free to Plus
 - Free to Pro
-- Plus to Pro through Customer Portal
-- Pro to Plus through Customer Portal, if enabled in Portal settings
+- Free to Ultimate
+- Plus to Pro/Ultimate through Customer Portal
+- Pro to Plus/Ultimate through Customer Portal, if enabled in Portal settings
+- Ultimate to Plus/Pro through Customer Portal, if enabled in Portal settings
 - cancel at period end
 - immediate cancellation, if enabled
 - payment failure

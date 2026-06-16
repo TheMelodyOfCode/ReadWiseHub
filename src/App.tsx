@@ -838,7 +838,8 @@ export function App() {
     ["active", "trialing", "past_due", "unpaid", "incomplete"].includes(
       usage.subscriptionStatus
     );
-  const articleStudioUnlocked = usage.plan === "plus" || usage.plan === "pro";
+  const articleStudioUnlocked =
+    usage.plan === "plus" || usage.plan === "pro" || usage.plan === "ultimate";
   const articleReadyBookId = articleBookId || textReadyBooks[0]?.id || "";
   const activeBookIds = useMemo(() => new Set(books.map((book) => book.id)), [books]);
   const jobsByBookId = useMemo(() => {
@@ -3631,7 +3632,7 @@ export function App() {
     }
   }
 
-  async function startStripeCheckout(plan: "plus" | "pro") {
+  async function startStripeCheckout(plan: "plus" | "pro" | "ultimate") {
     if (!requireVerifiedUi(setBillingMessage)) {
       return;
     }
@@ -3641,7 +3642,7 @@ export function App() {
 
     try {
       const createCheckout = httpsCallable<
-        { plan: "plus" | "pro"; sessionId: string },
+        { plan: "plus" | "pro" | "ultimate"; sessionId: string },
         { ok: boolean; url: string }
       >(functions, "createStripeCheckoutSession");
       const response = await createCheckout(withSession({ plan }));
@@ -6976,6 +6977,14 @@ export function App() {
                 >
                   {billingBusy === "pro" ? t.loading : t.billingUpgradePro}
                 </button>
+                <button
+                  className="button secondary compact"
+                  type="button"
+                  disabled={Boolean(billingBusy) || usage.plan === "ultimate" || hasOpenStripeSubscription}
+                  onClick={() => void startStripeCheckout("ultimate")}
+                >
+                  {billingBusy === "ultimate" ? t.loading : t.billingUpgradeUltimate}
+                </button>
                 {usage.billingProvider === "stripe" && usage.billingCustomerId ? (
                   <button
                     className="button primary compact"
@@ -7446,6 +7455,10 @@ export function App() {
             <article>
               <h3>{t.proPlan}</h3>
               <p>{t.proPlanCopy}</p>
+            </article>
+            <article>
+              <h3>{t.ultimatePlan}</h3>
+              <p>{t.ultimatePlanCopy}</p>
             </article>
           </div>
         </section>

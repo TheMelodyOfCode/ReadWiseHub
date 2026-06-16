@@ -33,9 +33,11 @@ export const dictionaries: Record<Locale, Dictionary> = {
     freePlan: "Free",
     plusPlan: "Plus",
     proPlan: "Pro",
+    ultimatePlan: "Ultimate",
     freePlanCopy: "One small book, basic chat, and simple citations.",
-    plusPlanCopy: "More books, chapter maps, summaries, and limited cross-book search.",
-    proPlanCopy: "Advanced writing, follow-ups, priority processing, and deeper analysis.",
+    plusPlanCopy: "10 books, 180 MB storage, and 150 messages per month.",
+    proPlanCopy: "20 books, 380 MB storage, and 320 messages per month.",
+    ultimatePlanCopy: "50 books, 800 MB storage, and 500 messages per month.",
     dashboardTitle: "Your reading room",
     dashboardEmpty:
       "Add books, ask gentle source-based questions, and keep your reading notes together in one private place.",
@@ -273,6 +275,7 @@ export const dictionaries: Record<Locale, Dictionary> = {
     billingSubscriptionStatus: "Subscription status",
     billingUpgradePlus: "Upgrade to Plus",
     billingUpgradePro: "Upgrade to Pro",
+    billingUpgradeUltimate: "Upgrade to Ultimate",
     billingManage: "Manage billing",
     billingTestMode: "Stripe billing is in test setup until checkout and webhook lifecycle are verified.",
     billingCheckoutFailed: "Checkout could not be started.",
@@ -441,7 +444,7 @@ export const dictionaries: Record<Locale, Dictionary> = {
       "Write from your books. Start with a book, a section, a chat answer, or selected evidence.",
     articleLockedTitle: "Write source-based articles from your books",
     articleLockedCopy:
-      "Article Studio is available on Plus and Pro. Free accounts can preview the workflow, then upgrade when billing opens.",
+      "Article Studio is available on paid plans. Free accounts can preview the workflow, then upgrade when billing opens.",
     articleLockedPreview:
       "Turn answers, sections, and selected passages into article drafts with sources attached.",
     articleUsedThisMonth: "article drafts this month",
@@ -519,9 +522,11 @@ export const dictionaries: Record<Locale, Dictionary> = {
     freePlan: "Free",
     plusPlan: "Plus",
     proPlan: "Pro",
+    ultimatePlan: "Ultimate",
     freePlanCopy: "Ein kleines Buch, einfacher Chat und klare Quellen.",
-    plusPlanCopy: "Mehr Bücher, Kapitelkarten, Zusammenfassungen und begrenzte buchübergreifende Suche.",
-    proPlanCopy: "Fortgeschrittenes Schreiben, Follow-ups, Priorität und tiefere Analyse.",
+    plusPlanCopy: "10 Bücher, 180 MB Speicher und 150 Nachrichten pro Monat.",
+    proPlanCopy: "20 Bücher, 380 MB Speicher und 320 Nachrichten pro Monat.",
+    ultimatePlanCopy: "50 Bücher, 800 MB Speicher und 500 Nachrichten pro Monat.",
     dashboardTitle: "Dein Lesezimmer",
     dashboardEmpty:
       "Füge Bücher hinzu, stelle entspannte Fragen mit Quellen und sammle deinen Leseverlauf an einem privaten Ort.",
@@ -759,6 +764,7 @@ export const dictionaries: Record<Locale, Dictionary> = {
     billingSubscriptionStatus: "Abo-Status",
     billingUpgradePlus: "Auf Plus upgraden",
     billingUpgradePro: "Auf Pro upgraden",
+    billingUpgradeUltimate: "Auf Ultimate upgraden",
     billingManage: "Abrechnung verwalten",
     billingTestMode: "Stripe-Abrechnung bleibt im Testaufbau, bis Checkout- und Webhook-Lifecycle geprüft sind.",
     billingCheckoutFailed: "Checkout konnte nicht gestartet werden.",
@@ -928,7 +934,7 @@ export const dictionaries: Record<Locale, Dictionary> = {
       "Schreibe aus deinen Büchern. Starte mit einem Buch, einem Abschnitt, einer Chat-Antwort oder markierten Quellen.",
     articleLockedTitle: "Schreibe quellengestützte Artikel aus deinen Büchern",
     articleLockedCopy:
-      "Artikel Studio ist für Plus und Pro verfügbar. Free-Konten können den Ablauf ansehen und später upgraden, wenn Billing aktiv ist.",
+      "Artikel Studio ist für bezahlte Tarife verfügbar. Free-Konten können den Ablauf ansehen und später upgraden, wenn Billing aktiv ist.",
     articleLockedPreview:
       "Mache aus Antworten, Abschnitten und markierten Stellen Artikelentwürfe mit Quellenbezug.",
     articleUsedThisMonth: "Artikelentwürfe diesen Monat",
