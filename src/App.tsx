@@ -2,6 +2,7 @@ import { FormEvent, TouchEvent, useEffect, useMemo, useRef, useState } from "rea
 import { FirebaseError } from "firebase/app";
 import {
   User,
+  applyActionCode,
   confirmPasswordReset,
   createUserWithEmailAndPassword,
   onAuthStateChanged,
@@ -38,6 +39,7 @@ type WorkspaceTab = "ask" | "library" | "read" | "articles" | "history" | "help"
 const DELETE_CONFIRMATION_PHRASE = "ReadWiseHub 2026";
 const CANONICAL_ORIGIN = "https://readwisehub.com";
 const LARGE_UPLOAD_NOTICE_BYTES = 3 * 1024 * 1024;
+const AUTH_ACTION_URL = `${CANONICAL_ORIGIN}/auth-action`;
 
 type BookRecord = {
   id: string;
@@ -624,6 +626,12 @@ function getErrorMessage(error: unknown, fallback: string) {
   return fallback;
 }
 
+function getEmailActionSettings() {
+  return {
+    url: AUTH_ACTION_URL,
+  };
+}
+
 export function App() {
   const isAdminPath = window.location.pathname.startsWith("/admin");
   const [locale, setLocale] = useState<Locale>(() => detectInitialLocale());
@@ -642,6 +650,9 @@ export function App() {
   const [resetActionComplete, setResetActionComplete] = useState(false);
   const [resetActionError, setResetActionError] = useState("");
   const [resetActionFormError, setResetActionFormError] = useState("");
+  const [verifyActionChecked, setVerifyActionChecked] = useState(false);
+  const [verifyActionComplete, setVerifyActionComplete] = useState(false);
+  const [verifyActionError, setVerifyActionError] = useState("");
   const [verificationBusy, setVerificationBusy] = useState(false);
   const [books, setBooks] = useState<BookRecord[]>([]);
   const [booksReady, setBooksReady] = useState(false);
@@ -781,6 +792,11 @@ export function App() {
     window.location.pathname.startsWith("/auth-action") &&
     authActionMode === "resetPassword" &&
     Boolean(authActionCode);
+  const isVerifyEmailAction =
+    window.location.pathname.startsWith("/auth-action") &&
+    authActionMode === "verifyEmail" &&
+    Boolean(authActionCode);
+  const isKnownAuthAction = isPasswordResetAction || isVerifyEmailAction;
   const textReadyBooks = useMemo(
     () => books.filter((book) => book.status === "text_ready"),
     [books]
@@ -1077,6 +1093,30 @@ export function App() {
         setResetActionChecked(true);
       });
   }, [authActionCode, isPasswordResetAction, t.passwordResetInvalidLink]);
+
+  useEffect(() => {
+    if (!isVerifyEmailAction) {
+      return;
+    }
+
+    setVerifyActionChecked(false);
+    setVerifyActionError("");
+    setVerifyActionComplete(false);
+    applyActionCode(auth, authActionCode)
+      .then(async () => {
+        if (auth.currentUser) {
+          await reload(auth.currentUser);
+          await ensureUserRecord(auth.currentUser, locale, theme);
+          setUser(auth.currentUser);
+        }
+        setVerifyActionComplete(true);
+        setVerifyActionChecked(true);
+      })
+      .catch(() => {
+        setVerifyActionError(t.emailVerificationInvalidLink);
+        setVerifyActionChecked(true);
+      });
+  }, [authActionCode, isVerifyEmailAction, locale, theme, t.emailVerificationInvalidLink]);
 
   useEffect(() => {
     return onAuthStateChanged(auth, async (currentUser) => {
@@ -1822,12 +1862,13 @@ export function App() {
         mode === "signUp"
           ? await createUserWithEmailAndPassword(auth, email, password)
           : await signInWithEmailAndPassword(auth, email, password);
-      await ensureUserRecord(credential.user, locale, theme);
       if (mode === "signUp" && !credential.user.emailVerified) {
-        await sendEmailVerification(credential.user);
+        await sendEmailVerification(credential.user, getEmailActionSettings());
+        await ensureUserRecord(credential.user, locale, theme);
         setStatus(t.verificationEmailSent);
         return;
       }
+      await ensureUserRecord(credential.user, locale, theme);
       setStatus(credential.user.emailVerified ? t.userCreated : t.verifyEmailPrompt);
     } catch (error) {
       setAuthError(getErrorMessage(error, t.authError));
@@ -1846,7 +1887,7 @@ export function App() {
 
     try {
       await sendPasswordResetEmail(auth, resetEmail, {
-        url: `${CANONICAL_ORIGIN}/auth-action`,
+        url: AUTH_ACTION_URL,
       });
       setStatus(t.passwordResetSent);
     } catch (error) {
@@ -1907,7 +1948,7 @@ export function App() {
     setAuthError("");
 
     try {
-      await sendEmailVerification(user);
+      await sendEmailVerification(user, getEmailActionSettings());
       setStatus(t.verificationEmailSent);
     } catch (error) {
       setAuthError(getErrorMessage(error, t.verificationEmailFailed));
@@ -4571,7 +4612,7 @@ export function App() {
     );
   }
 
-  if (isPasswordResetAction) {
+  if (isKnownAuthAction) {
     const passwordLongEnough = resetActionPassword.length >= 8;
     const passwordsMatch =
       resetActionPassword.length > 0 &&
@@ -4602,12 +4643,15 @@ export function App() {
 
         <main className="auth-action-main">
           <section className="auth-action-card">
-            <p className="eyebrow">{t.passwordResetEyebrow}</p>
-            <h1>{t.passwordResetTitle}</h1>
+            <p className="eyebrow">
+              {isPasswordResetAction ? t.passwordResetEyebrow : t.emailVerificationEyebrow}
+            </p>
+            <h1>{isPasswordResetAction ? t.passwordResetTitle : t.emailVerificationActionTitle}</h1>
 
-            {!resetActionChecked ? <p>{t.loading}</p> : null}
+            {isPasswordResetAction && !resetActionChecked ? <p>{t.loading}</p> : null}
+            {isVerifyEmailAction && !verifyActionChecked ? <p>{t.loading}</p> : null}
 
-            {resetActionChecked && resetActionError ? (
+            {isPasswordResetAction && resetActionChecked && resetActionError ? (
               <div className="auth-status-card error-text">
                 <h2>{t.passwordResetLinkProblemTitle}</h2>
                 <p>{resetActionError}</p>
@@ -4617,7 +4661,27 @@ export function App() {
               </div>
             ) : null}
 
-            {resetActionComplete ? (
+            {isVerifyEmailAction && verifyActionChecked && verifyActionError ? (
+              <div className="auth-status-card error-text">
+                <h2>{t.emailVerificationLinkProblemTitle}</h2>
+                <p>{verifyActionError}</p>
+                <a className="button primary" href="/">
+                  {t.backToSignIn}
+                </a>
+              </div>
+            ) : null}
+
+            {isVerifyEmailAction && verifyActionComplete ? (
+              <div className="auth-status-card success-text">
+                <h2>{t.emailVerificationCompleteTitle}</h2>
+                <p>{t.emailVerificationCompleteCopy}</p>
+                <a className="button primary" href="/">
+                  {t.backToSignIn}
+                </a>
+              </div>
+            ) : null}
+
+            {isPasswordResetAction && resetActionComplete ? (
               <div className="auth-status-card success-text">
                 <h2>{t.passwordResetCompleteTitle}</h2>
                 <p>{t.passwordResetCompleteCopy}</p>
@@ -4627,7 +4691,7 @@ export function App() {
               </div>
             ) : null}
 
-            {resetActionChecked && !resetActionError && !resetActionComplete ? (
+            {isPasswordResetAction && resetActionChecked && !resetActionError && !resetActionComplete ? (
               <form className="auth-panel" onSubmit={submitResetAction}>
                 <p className="small-note">
                   {t.passwordResetFor} <strong>{resetActionEmail}</strong>

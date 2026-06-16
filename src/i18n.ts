@@ -335,6 +335,13 @@ export const dictionaries: Record<Locale, Dictionary> = {
     emailVerificationTitle: "Verify your email to unlock ReadWiseHub",
     emailVerificationCopy:
       "We sent a verification link to your email address. Uploads, search, and AI questions are available after verification.",
+    emailVerificationActionTitle: "Confirm your email",
+    emailVerificationInvalidLink:
+      "This verification link is invalid or has expired. Please sign in and request a new verification email.",
+    emailVerificationLinkProblemTitle: "Verification link problem",
+    emailVerificationCompleteTitle: "Email verified",
+    emailVerificationCompleteCopy:
+      "Your email address is confirmed. You can now sign in and use ReadWiseHub.",
     unexpectedRegistrationCopy:
       "If you did not request this account, ignore the email. The account cannot use ReadWiseHub features until the email address is verified.",
     resendVerification: "Resend verification email",
@@ -763,6 +770,13 @@ export const dictionaries: Record<Locale, Dictionary> = {
     emailVerificationTitle: "Bestätige deine E-Mail, um ReadWiseHub freizuschalten",
     emailVerificationCopy:
       "Wir haben dir einen Bestätigungslink gesendet. Uploads, Suche und KI-Fragen sind nach der Bestätigung verfügbar.",
+    emailVerificationActionTitle: "E-Mail bestätigen",
+    emailVerificationInvalidLink:
+      "Dieser Bestätigungslink ist ungültig oder abgelaufen. Bitte melde dich an und fordere eine neue Bestätigungs-E-Mail an.",
+    emailVerificationLinkProblemTitle: "Problem mit dem Bestätigungslink",
+    emailVerificationCompleteTitle: "E-Mail bestätigt",
+    emailVerificationCompleteCopy:
+      "Deine E-Mail-Adresse ist bestätigt. Du kannst dich jetzt anmelden und ReadWiseHub nutzen.",
     unexpectedRegistrationCopy:
       "Wenn du dieses Konto nicht angefordert hast, ignoriere die E-Mail. Das Konto kann ReadWiseHub-Funktionen erst nach Bestätigung der E-Mail-Adresse nutzen.",
     resendVerification: "Bestätigungs-E-Mail erneut senden",
