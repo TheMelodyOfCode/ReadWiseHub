@@ -7203,10 +7203,13 @@ export function App() {
                   <p>{t.deleteAccountConfirm}</p>
                   {hasOpenStripeSubscription ? (
                     <div className="subscription-delete-block">
-                      <h4>{t.deleteAccountSubscriptionTitle}</h4>
+                      <h4>
+                        <span aria-hidden="true">!</span>
+                        {t.deleteAccountSubscriptionTitle}
+                      </h4>
                       <p>{t.deleteAccountSubscriptionCopy}</p>
                       <button
-                        className="button primary compact"
+                        className="button danger compact"
                         type="button"
                         disabled={Boolean(billingBusy)}
                         onClick={() => void openStripePortal()}
