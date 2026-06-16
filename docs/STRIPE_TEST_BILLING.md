@@ -6,9 +6,9 @@ ReadWiseHub billing is implemented for Stripe test mode first. Do not use live S
 
 Provide these values before deploying billing:
 
-- Plus recurring test Price ID: `price_...`
-- Pro recurring test Price ID: `price_...`
-- Ultimate recurring test Price ID: `price_...`
+- Plus recurring test Price ID: `price_1TixixCwoqdewBDXVcK6PjlU`
+- Pro recurring test Price ID: `price_1Tixm9CwoqdewBDXyrinApZF`
+- Ultimate recurring test Price ID: `price_1Tixn1CwoqdewBDXxAlFehsb`
 - Stripe test secret key: `sk_test_...`
 - Stripe webhook signing secret after the deployed webhook endpoint is created: `whsec_...`
 
@@ -19,9 +19,9 @@ Do not commit secret values.
 Set non-secret function environment values in `functions/.env` or equivalent Firebase environment configuration:
 
 ```text
-STRIPE_PLUS_PRICE_ID=price_...
-STRIPE_PRO_PRICE_ID=price_...
-STRIPE_ULTIMATE_PRICE_ID=price_...
+STRIPE_PLUS_PRICE_ID=price_1TixixCwoqdewBDXVcK6PjlU
+STRIPE_PRO_PRICE_ID=price_1Tixm9CwoqdewBDXyrinApZF
+STRIPE_ULTIMATE_PRICE_ID=price_1Tixn1CwoqdewBDXxAlFehsb
 BILLING_RETURN_URL=https://readwisehub.com/#account
 ```
 
@@ -61,11 +61,9 @@ The webhook verifies Stripe signatures using the raw request body and stores pro
 
 Current public test-mode tiers:
 
-- Plus: 9.99 EUR/month, 10 books, 180 MB storage, 150 messages/month, product `prod_UiOVIrFA3C1tX4`.
-- Pro: 19.99 EUR/month, 20 books, 380 MB storage, 320 messages/month, product `prod_UiOZIU85RfFIRV`.
-- Ultimate: 29.99 EUR/month, 50 books, 800 MB storage, 500 messages/month, product `prod_UiOaKGJDScN3tK`.
-
-Checkout uses recurring Stripe Price IDs, not Product IDs. Copy the monthly recurring `price_...` value from each product before deploying billing.
+- Plus: 9.99 EUR/month, 10 books, 180 MB storage, 150 messages/month, product `prod_UiOVIrFA3C1tX4`, price `price_1TixixCwoqdewBDXVcK6PjlU`.
+- Pro: 19.99 EUR/month, 20 books, 380 MB storage, 320 messages/month, product `prod_UiOZIU85RfFIRV`, price `price_1Tixm9CwoqdewBDXyrinApZF`.
+- Ultimate: 29.99 EUR/month, 50 books, 800 MB storage, 500 messages/month, product `prod_UiOaKGJDScN3tK`, price `price_1Tixn1CwoqdewBDXxAlFehsb`.
 
 ## Test Matrix
 
