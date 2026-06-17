@@ -105,7 +105,10 @@ const pineconeApiKey = defineSecret("PINECONE_API_KEY");
 const stripeSecretKey = defineSecret("STRIPE_SECRET_KEY");
 const stripeWebhookSecret = defineSecret("STRIPE_WEBHOOK_SECRET");
 const STRIPE_API_VERSION = "2026-05-27.dahlia";
-const BILLING_RETURN_URL = process.env.BILLING_RETURN_URL || "https://readwisehub.com/#account";
+const BILLING_RETURN_ORIGIN = normalizeBillingReturnOrigin(
+  process.env.BILLING_RETURN_URL || "https://readwisehub.com"
+);
+const BILLING_ACCOUNT_RETURN_URL = `${BILLING_RETURN_ORIGIN}/#account`;
 const STRIPE_PLUS_PRICE_ID = process.env.STRIPE_PLUS_PRICE_ID || "";
 const STRIPE_PRO_PRICE_ID = process.env.STRIPE_PRO_PRICE_ID || "";
 const STRIPE_ULTIMATE_PRICE_ID = process.env.STRIPE_ULTIMATE_PRICE_ID || "";
@@ -127,6 +130,15 @@ type AuthContext = {
 };
 
 type UserPlan = keyof typeof PLAN_LIMITS;
+
+function normalizeBillingReturnOrigin(value: string): string {
+  try {
+    const parsed = new URL(value);
+    return parsed.origin;
+  } catch {
+    return "https://readwisehub.com";
+  }
+}
 
 type StripeSubscriptionSnapshot = {
   id: string;
@@ -5255,8 +5267,8 @@ export const createStripeCheckoutSession = onCall(
         },
       ],
       allow_promotion_codes: true,
-      success_url: `${BILLING_RETURN_URL}?billing=success&session_id={CHECKOUT_SESSION_ID}`,
-      cancel_url: `${BILLING_RETURN_URL}?billing=cancelled`,
+      success_url: `${BILLING_RETURN_ORIGIN}?billing=success&session_id={CHECKOUT_SESSION_ID}#account`,
+      cancel_url: `${BILLING_RETURN_ORIGIN}?billing=cancelled#account`,
       metadata: {
         firebaseUid: auth.uid,
         selectedPlan: plan,
@@ -5312,7 +5324,7 @@ export const createStripePortalSession = onCall(
     const stripe = getStripeClient();
     const portalSession = await stripe.billingPortal.sessions.create({
       customer: customerId,
-      return_url: BILLING_RETURN_URL,
+      return_url: BILLING_ACCOUNT_RETURN_URL,
     });
 
     return {
