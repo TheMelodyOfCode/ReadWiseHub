@@ -46,6 +46,41 @@ const DELETE_CONFIRMATION_PHRASE = "ReadWiseHub 2026";
 const CANONICAL_ORIGIN = "https://readwisehub.com";
 const LARGE_UPLOAD_NOTICE_BYTES = 3 * 1024 * 1024;
 const AUTH_ACTION_URL = `${CANONICAL_ORIGIN}/auth-action`;
+const SEO_BY_LOCALE: Record<Locale, { title: string; description: string; canonicalPath: string }> = {
+  en: {
+    title: dictionaries.en.seoTitle,
+    description: dictionaries.en.seoDescription,
+    canonicalPath: "/?lang=en",
+  },
+  de: {
+    title: dictionaries.de.seoTitle,
+    description: dictionaries.de.seoDescription,
+    canonicalPath: "/?lang=de",
+  },
+};
+
+function upsertMeta(selector: string, attributes: Record<string, string>) {
+  let element = document.head.querySelector<HTMLMetaElement>(selector);
+  if (!element) {
+    element = document.createElement("meta");
+    document.head.appendChild(element);
+  }
+  Object.entries(attributes).forEach(([name, value]) => element.setAttribute(name, value));
+}
+
+function upsertLink(rel: string, href: string, hreflang?: string) {
+  const selector = hreflang ? `link[rel="${rel}"][hreflang="${hreflang}"]` : `link[rel="${rel}"]:not([hreflang])`;
+  let element = document.head.querySelector<HTMLLinkElement>(selector);
+  if (!element) {
+    element = document.createElement("link");
+    element.rel = rel;
+    if (hreflang) {
+      element.hreflang = hreflang;
+    }
+    document.head.appendChild(element);
+  }
+  element.href = href;
+}
 
 type BookRecord = {
   id: string;
@@ -910,7 +945,7 @@ export function App() {
     ? `${t.deleteAccountSubscriptionCanceledCopy} ${formatOptionalDateTime(
         usage.billingCurrentPeriodEnd,
         locale
-      )}.`
+      )}. ${t.deleteAccountSubscriptionCanceledAfter}`
     : t.deleteAccountSubscriptionCopy;
   const articleStudioUnlocked =
     usage.plan === "plus" || usage.plan === "pro" || usage.plan === "ultimate";
@@ -1153,7 +1188,7 @@ export function App() {
         type="button"
         className={locale === "de" ? "active" : ""}
         aria-pressed={locale === "de"}
-        onClick={() => setLocale("de")}
+        onClick={() => changeLocale("de")}
       >
         DE
       </button>
@@ -1161,7 +1196,7 @@ export function App() {
         type="button"
         className={locale === "en" ? "active" : ""}
         aria-pressed={locale === "en"}
-        onClick={() => setLocale("en")}
+        onClick={() => changeLocale("en")}
       >
         EN
       </button>
@@ -1186,7 +1221,39 @@ export function App() {
   useEffect(() => {
     document.documentElement.lang = locale;
     window.localStorage.setItem("readwisehub_locale", locale);
+    const seo = SEO_BY_LOCALE[locale];
+    const canonicalUrl = `${CANONICAL_ORIGIN}${seo.canonicalPath}`;
+    document.title = seo.title;
+    upsertMeta('meta[name="description"]', { name: "description", content: seo.description });
+    upsertMeta('meta[property="og:title"]', { property: "og:title", content: seo.title });
+    upsertMeta('meta[property="og:description"]', {
+      property: "og:description",
+      content: seo.description,
+    });
+    upsertMeta('meta[property="og:url"]', { property: "og:url", content: canonicalUrl });
+    upsertMeta('meta[property="og:locale"]', {
+      property: "og:locale",
+      content: locale === "de" ? "de_DE" : "en_US",
+    });
+    upsertMeta('meta[name="twitter:title"]', { name: "twitter:title", content: seo.title });
+    upsertMeta('meta[name="twitter:description"]', {
+      name: "twitter:description",
+      content: seo.description,
+    });
+    upsertLink("canonical", canonicalUrl);
+    upsertLink("alternate", `${CANONICAL_ORIGIN}/?lang=en`, "en");
+    upsertLink("alternate", `${CANONICAL_ORIGIN}/?lang=de`, "de");
+    upsertLink("alternate", `${CANONICAL_ORIGIN}/`, "x-default");
   }, [locale]);
+
+  function changeLocale(nextLocale: Locale) {
+    setLocale(nextLocale);
+    const params = new URLSearchParams(window.location.search);
+    params.set("lang", nextLocale);
+    const nextSearch = params.toString();
+    const nextUrl = `${window.location.pathname}?${nextSearch}${window.location.hash}`;
+    window.history.replaceState({}, "", nextUrl);
+  }
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -5518,7 +5585,7 @@ export function App() {
             </div>
 
             {!booksReady ? (
-              <p>Loading...</p>
+              <p>{t.loading}</p>
             ) : books.length === 0 ? (
               <div className="empty-state">
                 <h3>{t.libraryEmptyTitle}</h3>
@@ -6619,7 +6686,7 @@ export function App() {
                     </button>
                   </div>
                   {!conversationsReady ? (
-                    <p>Loading...</p>
+                    <p>{t.loading}</p>
                   ) : conversations.length === 0 ? (
                     <p className="small-note">{t.historyEmpty}</p>
                   ) : (
@@ -6952,7 +7019,7 @@ export function App() {
                 </div>
               ) : null}
               {!conversationsReady ? (
-                <p>Loading...</p>
+                <p>{t.loading}</p>
               ) : conversations.length === 0 ? (
                 <p className="small-note">{t.historyEmpty}</p>
               ) : (
@@ -7419,6 +7486,11 @@ export function App() {
                   {user.providerData.some((provider) => provider.providerId === "google.com") ? (
                     <p className="small-note">{t.deleteAccountGoogleReauth}</p>
                   ) : null}
+                  {hasOpenStripeSubscription ? (
+                    <p className="small-note subscription-delete-note">
+                      {t.deleteAccountSubscriptionDeleteBlocked}
+                    </p>
+                  ) : null}
                   <div className="book-actions">
                     <button
                       className="button danger"
@@ -7557,7 +7629,7 @@ export function App() {
             </div>
 
             {!authReady ? (
-              <p>Loading...</p>
+              <p>{t.loading}</p>
             ) : (
               <div className="auth-panel">
                 <form onSubmit={(event) => handlePasswordAuth(event, "signIn")}>
@@ -7618,13 +7690,11 @@ export function App() {
             )}
           </section>
           <div className="preview-panel" aria-label="Product preview">
-            <div className="chat-card user-card">Was sagt das Buch über Gewohnheiten?</div>
-            <div className="chat-card answer-card">
-              ReadWiseHub antwortet mit Quellen, damit du die Stelle wiederfindest.
-            </div>
+            <div className="chat-card user-card">{t.previewQuestion}</div>
+            <div className="chat-card answer-card">{t.previewAnswer}</div>
             <div className="source-row">
-              <span>Quelle</span>
-              <strong>Kapitel 2, Seite 41</strong>
+              <span>{t.previewSourceLabel}</span>
+              <strong>{t.previewSourceValue}</strong>
             </div>
           </div>
         </section>
@@ -7632,7 +7702,7 @@ export function App() {
         <section className="controls-band" aria-label="Preferences">
           <label>
             {t.language}
-            <select value={locale} onChange={(event) => setLocale(event.target.value as Locale)}>
+            <select value={locale} onChange={(event) => changeLocale(event.target.value as Locale)}>
               <option value="de">{t.german}</option>
               <option value="en">{t.english}</option>
             </select>
@@ -7653,18 +7723,18 @@ export function App() {
           <div className="steps-grid">
             <article>
               <span>1</span>
-              <h3>Upload</h3>
-              <p>Start with one clear document and visible processing status.</p>
+              <h3>{t.howStepUploadTitle}</h3>
+              <p>{t.howStepUploadCopy}</p>
             </article>
             <article>
               <span>2</span>
-              <h3>Ask</h3>
-              <p>Use natural questions instead of technical commands.</p>
+              <h3>{t.howStepAskTitle}</h3>
+              <p>{t.howStepAskCopy}</p>
             </article>
             <article>
               <span>3</span>
-              <h3>Check</h3>
-              <p>Answers should point back to the source before advanced tools are added.</p>
+              <h3>{t.howStepCheckTitle}</h3>
+              <p>{t.howStepCheckCopy}</p>
             </article>
           </div>
         </section>
@@ -7698,11 +7768,11 @@ export function App() {
             <div className="dashboard-grid">
               <article>
                 <h3>Free</h3>
-                <p>1 book · 10 MB · 10 messages/month</p>
+                <p>{t.dashboardFreeSummary}</p>
               </article>
               <article>
-                <h3>Secure foundation</h3>
-                <p>Account records are scoped to the signed-in user.</p>
+                <h3>{t.dashboardSecurityTitle}</h3>
+                <p>{t.dashboardSecurityCopy}</p>
               </article>
             </div>
           </section>
@@ -7710,10 +7780,7 @@ export function App() {
 
         <section id="help" className="content-section help-section">
           <h2>{t.navHelp}</h2>
-          <p>
-            Ask questions in everyday language. The upload and chat workflow will be added after the
-            account and ownership foundation is verified.
-          </p>
+          <p>{t.publicHelpCopy}</p>
         </section>
       </main>
     </div>

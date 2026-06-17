@@ -24,11 +24,24 @@ export const dictionaries: Record<Locale, Dictionary> = {
     welcomeTitle: "Chat with your books without losing the source.",
     welcomeCopy:
       "ReadWiseHub will help readers upload documents, ask simple questions, and get grounded answers with citations.",
+    seoTitle: "ReadWiseHub | Chat with your books and keep the source",
+    seoDescription:
+      "Upload books and documents, ask grounded questions, search exact source passages, and read with citations.",
+    previewQuestion: "What does the book say about habits?",
+    previewAnswer: "ReadWiseHub answers with sources so you can find the passage again.",
+    previewSourceLabel: "Source",
+    previewSourceValue: "Chapter 2, page 41",
     primaryCta: "Open library",
     secondaryCta: "See how it works",
     howTitle: "Simple by design",
     howCopy:
       "Add a book or document, give ReadWiseHub a moment to prepare it, then ask natural questions while you read.",
+    howStepUploadTitle: "Upload",
+    howStepUploadCopy: "Start with one clear document and visible processing status.",
+    howStepAskTitle: "Ask",
+    howStepAskCopy: "Use natural questions instead of technical commands.",
+    howStepCheckTitle: "Check",
+    howStepCheckCopy: "Follow cited answers back to the exact source passage.",
     pricingTitle: "Start small, grow when you need more",
     freePlan: "Free",
     plusPlan: "Plus",
@@ -41,6 +54,11 @@ export const dictionaries: Record<Locale, Dictionary> = {
     dashboardTitle: "Your reading room",
     dashboardEmpty:
       "Add books, ask gentle source-based questions, and keep your reading notes together in one private place.",
+    dashboardFreeSummary: "1 book · 10 MB storage · 10 messages/month",
+    dashboardSecurityTitle: "Secure foundation",
+    dashboardSecurityCopy: "Account records are scoped to the signed-in user.",
+    publicHelpCopy:
+      "Upload a supported book or document, wait until preparation is complete, then ask questions in everyday language. Answers include source references so you can check the original passage.",
     workspaceToolsTitle: "Reading room",
     tabAsk: "Ask",
     tabLibrary: "Library",
@@ -348,6 +366,10 @@ export const dictionaries: Record<Locale, Dictionary> = {
     deleteAccountSubscriptionCanceledTitle: "Subscription canceled",
     deleteAccountSubscriptionCanceledCopy:
       "This Stripe subscription has been canceled and remains active until",
+    deleteAccountSubscriptionCanceledAfter:
+      "Account deletion is possible only after the subscription has ended.",
+    deleteAccountSubscriptionDeleteBlocked:
+      "Account deletion is blocked while the subscription is still active.",
     deleteAccountSubscriptionAction: "Manage subscription",
     deletingAccount: "Deleting account data...",
     securityTitle: "Login security",
@@ -532,11 +554,24 @@ export const dictionaries: Record<Locale, Dictionary> = {
     welcomeTitle: "Chatte mit deinen Büchern, ohne die Quelle zu verlieren.",
     welcomeCopy:
       "ReadWiseHub soll Lesern helfen, Dokumente hochzuladen, einfache Fragen zu stellen und belegte Antworten mit Quellen zu erhalten.",
+    seoTitle: "ReadWiseHub | Mit deinen Büchern chatten und die Quelle behalten",
+    seoDescription:
+      "Lade Bücher und Dokumente hoch, stelle Fragen mit Quellen, suche genaue Textstellen und lies mit Zitaten.",
+    previewQuestion: "Was sagt das Buch über Gewohnheiten?",
+    previewAnswer: "ReadWiseHub antwortet mit Quellen, damit du die Stelle wiederfindest.",
+    previewSourceLabel: "Quelle",
+    previewSourceValue: "Kapitel 2, Seite 41",
     primaryCta: "Bibliothek öffnen",
     secondaryCta: "So funktioniert es",
     howTitle: "Einfach von Anfang an",
     howCopy:
       "Füge ein Buch oder Dokument hinzu, gib ReadWiseHub einen Moment zum Vorbereiten und stelle dann natürliche Fragen beim Lesen.",
+    howStepUploadTitle: "Hochladen",
+    howStepUploadCopy: "Starte mit einem klaren Dokument und sichtbarem Verarbeitungsstatus.",
+    howStepAskTitle: "Fragen",
+    howStepAskCopy: "Stelle natürliche Fragen statt technischer Befehle.",
+    howStepCheckTitle: "Prüfen",
+    howStepCheckCopy: "Folge belegten Antworten zurück zur genauen Textstelle.",
     pricingTitle: "Klein starten, später erweitern",
     freePlan: "Free",
     plusPlan: "Plus",
@@ -549,6 +584,11 @@ export const dictionaries: Record<Locale, Dictionary> = {
     dashboardTitle: "Dein Lesezimmer",
     dashboardEmpty:
       "Füge Bücher hinzu, stelle entspannte Fragen mit Quellen und sammle deinen Leseverlauf an einem privaten Ort.",
+    dashboardFreeSummary: "1 Buch · 10 MB Speicher · 10 Nachrichten/Monat",
+    dashboardSecurityTitle: "Sichere Grundlage",
+    dashboardSecurityCopy: "Kontodaten sind dem angemeldeten Nutzer zugeordnet.",
+    publicHelpCopy:
+      "Lade ein unterstütztes Buch oder Dokument hoch, warte die Vorbereitung ab und stelle dann Fragen in Alltagssprache. Antworten enthalten Quellen, damit du die Originalstelle prüfen kannst.",
     workspaceToolsTitle: "Lesezimmer",
     tabAsk: "Fragen",
     tabLibrary: "Bibliothek",
@@ -857,6 +897,10 @@ export const dictionaries: Record<Locale, Dictionary> = {
     deleteAccountSubscriptionCanceledTitle: "Abo gekündigt",
     deleteAccountSubscriptionCanceledCopy:
       "Dieses Stripe-Abo wurde gekündigt und bleibt aktiv bis",
+    deleteAccountSubscriptionCanceledAfter:
+      "Das Konto kann erst gelöscht werden, nachdem das Abo abgelaufen ist.",
+    deleteAccountSubscriptionDeleteBlocked:
+      "Das Löschen des Kontos ist blockiert, solange das Abo noch aktiv ist.",
     deleteAccountSubscriptionAction: "Abo verwalten",
     deletingAccount: "Kontodaten werden gelöscht...",
     securityTitle: "Login-Sicherheit",
@@ -1023,6 +1067,11 @@ export const dictionaries: Record<Locale, Dictionary> = {
 };
 
 export function detectInitialLocale(): Locale {
+  const searchLocale = new URLSearchParams(window.location.search).get("lang");
+  if (searchLocale === "de" || searchLocale === "en") {
+    return searchLocale;
+  }
+
   const stored = window.localStorage.getItem("readwisehub_locale");
   if (stored === "de" || stored === "en") {
     return stored;

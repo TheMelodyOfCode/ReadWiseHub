@@ -759,6 +759,14 @@ textarea {
   font-weight: 900;
 }
 
+.subscription-delete-note {
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, var(--warning) 44%, var(--border));
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--warning) 12%, var(--surface));
+  color: var(--text);
+}
+
 .section-heading {
   display: grid;
   gap: 12px;
@@ -874,6 +882,11 @@ select {
 
 .inline-confirm .book-actions {
   margin-top: 4px;
+}
+
+.inline-confirm .button[disabled] {
+  cursor: not-allowed;
+  opacity: 0.64;
 }
 
 .upload-panel {
@@ -2753,6 +2766,31 @@ select {
 
 .profile-panel h3,
 .profile-panel p {
+  margin: 0;
+}
+
+.app-error-boundary {
+  display: grid;
+  min-height: 100vh;
+  padding: clamp(20px, 6vw, 72px);
+  place-items: center;
+  background: var(--background);
+  color: var(--text);
+}
+
+.app-error-card {
+  display: grid;
+  width: min(100%, 560px);
+  gap: 16px;
+  padding: clamp(20px, 4vw, 32px);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+
+.app-error-card h1,
+.app-error-card p {
   margin: 0;
 }
 
