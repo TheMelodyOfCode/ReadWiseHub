@@ -16,6 +16,7 @@
   --primary: #216869;
   --primary-strong: #12494a;
   --accent: #d98e04;
+  --warning: #b66a13;
   --danger: #a93226;
   --success: #1f7a4d;
   --shadow: 0 18px 46px rgba(42, 34, 22, 0.13);
@@ -33,6 +34,7 @@
   --primary: #6fc3bd;
   --primary-strong: #91ddd8;
   --accent: #f0b34c;
+  --warning: #f0b34c;
   --danger: #ff9f92;
   --success: #8bd8ad;
   --shadow: 0 18px 46px rgba(0, 0, 0, 0.26);
@@ -725,6 +727,21 @@ textarea {
   margin: 0;
 }
 
+.plan-limit-panel {
+  display: grid;
+  gap: 14px;
+  align-items: center;
+  padding: 16px;
+  border: 1px solid color-mix(in srgb, var(--warning) 48%, var(--border));
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--warning) 12%, var(--surface));
+}
+
+.plan-limit-panel h3,
+.plan-limit-panel p {
+  margin: 0;
+}
+
 .subscription-delete-block {
   display: grid;
   gap: 12px;
@@ -839,6 +856,11 @@ textarea {
   min-width: 0;
 }
 
+.book-list article.inactive-book-card {
+  border-color: color-mix(in srgb, var(--warning) 45%, var(--border));
+  background: color-mix(in srgb, var(--warning) 8%, var(--surface));
+}
+
 .book-list h3,
 .reader-title-block h3,
 .history-list h4,
@@ -859,6 +881,16 @@ select {
   flex-wrap: wrap;
   gap: 10px;
   margin-top: 12px;
+}
+
+.status-plan-active {
+  background: color-mix(in srgb, var(--success) 14%, var(--surface));
+  color: var(--success);
+}
+
+.status-plan-inactive {
+  background: color-mix(in srgb, var(--warning) 16%, var(--surface));
+  color: var(--warning);
 }
 
 .inline-confirm {
@@ -2794,6 +2826,127 @@ select {
   margin: 0;
 }
 
+.pricing-page main {
+  display: grid;
+  gap: 28px;
+  padding: 24px clamp(16px, 5vw, 72px) 56px;
+}
+
+.pricing-hero {
+  display: grid;
+  gap: 12px;
+  max-width: 820px;
+  padding-top: 24px;
+}
+
+.pricing-hero h1,
+.pricing-hero p,
+.pricing-card h2,
+.pricing-card p,
+.pricing-policy h2,
+.pricing-policy h3,
+.pricing-policy p {
+  margin: 0;
+}
+
+.pricing-grid {
+  display: grid;
+  gap: 16px;
+}
+
+.pricing-card {
+  position: relative;
+  display: grid;
+  gap: 16px;
+  align-content: start;
+  min-width: 0;
+  padding: 22px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+
+.pricing-card.featured {
+  border-color: color-mix(in srgb, var(--primary) 58%, var(--border));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary) 14%, transparent), var(--shadow);
+}
+
+.pricing-badge {
+  justify-self: start;
+  padding: 5px 9px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--primary) 14%, var(--surface));
+  color: var(--primary);
+  font-size: 0.78rem;
+  font-weight: 900;
+}
+
+.pricing-price {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.pricing-price strong {
+  font-size: clamp(2.2rem, 7vw, 3.4rem);
+  line-height: 1;
+}
+
+.pricing-feature-list {
+  display: grid;
+  gap: 12px;
+  padding: 0;
+  margin: 0;
+  list-style: none;
+}
+
+.pricing-feature-list li {
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr);
+  gap: 10px;
+  align-items: start;
+}
+
+.pricing-feature-list span {
+  color: var(--primary);
+  font-weight: 900;
+}
+
+.pricing-policy {
+  display: grid;
+  gap: 18px;
+  padding: 22px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.pricing-policy-grid {
+  display: grid;
+  gap: 14px;
+}
+
+.pricing-policy-grid article {
+  display: grid;
+  gap: 8px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-strong);
+}
+
+.pricing-message {
+  max-width: 920px;
+}
+
+.section-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 18px;
+}
+
 .inline-controls {
   padding: 0;
   background: transparent;
@@ -2889,6 +3042,18 @@ select {
     align-items: center;
   }
 
+  .plan-limit-panel {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .pricing-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .pricing-policy-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
   .reader-panel {
     padding: 18px;
   }
@@ -2964,6 +3129,10 @@ select {
 
   .book-list {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .pricing-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
   }
 }
 

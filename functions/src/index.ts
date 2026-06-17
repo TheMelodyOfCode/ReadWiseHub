@@ -611,6 +611,8 @@ async function applyStripeSubscriptionToUser(
     },
     { merge: true }
   );
+
+  await reconcileUserBookPlanAccess(userRef.id, PLAN_LIMITS[nextPlan]);
 }
 
 async function applyStripeCheckoutSession(session: StripeCheckoutSessionSnapshot) {
@@ -1698,7 +1700,8 @@ async function collectSearchableBooks(userId: string, bookId: string) {
     if (
       bookSnapshot.exists &&
       bookSnapshot.get("userId") === userId &&
-      bookSnapshot.get("status") === "text_ready"
+      bookSnapshot.get("status") === "text_ready" &&
+      isPlanActiveBookSnapshot(bookSnapshot)
     ) {
       books.set(bookSnapshot.id, {
         title:
@@ -1720,6 +1723,9 @@ async function collectSearchableBooks(userId: string, bookId: string) {
     .get();
 
   booksSnapshot.docs.forEach((bookSnapshot) => {
+    if (!isPlanActiveBookSnapshot(bookSnapshot)) {
+      return;
+    }
     books.set(bookSnapshot.id, {
       title:
         typeof bookSnapshot.get("displayTitle") === "string" && bookSnapshot.get("displayTitle")
@@ -2494,6 +2500,7 @@ async function createBookSectionMapArtifact(userId: string, bookId: string, targ
   if (bookSnapshot.get("status") !== "text_ready") {
     throw new HttpsError("failed-precondition", "Book text is not ready yet.");
   }
+  requireBookPlanActive(bookSnapshot);
 
   const sectionsSnapshot = await db
     .collection("bookSections")
@@ -2816,6 +2823,7 @@ async function resolveArtifactSectionSearch(
   if (
     !bookSnapshot.exists ||
     bookSnapshot.get("userId") !== userId ||
+    bookSnapshot.get("planActive") === false ||
     !artifactSnapshot.exists ||
     artifactSnapshot.get("userId") !== userId ||
     artifactSnapshot.get("bookId") !== bookId
@@ -3328,27 +3336,105 @@ async function getUserLimits(userId: string): Promise<PlanLimits> {
   return PLAN_LIMITS[plan];
 }
 
-async function getActiveBookCount(userId: string): Promise<number> {
+function isPlanActiveBookSnapshot(bookSnapshot: FirebaseFirestore.DocumentSnapshot): boolean {
+  return bookSnapshot.get("planActive") !== false;
+}
+
+async function getPlanCountedBookSnapshots(userId: string) {
   const snapshot = await db
     .collection("books")
     .where("userId", "==", userId)
     .where("status", "in", ACTIVE_BOOK_STATUSES)
     .get();
 
-  return snapshot.size;
+  return snapshot.docs.filter(isPlanActiveBookSnapshot);
+}
+
+async function getActiveBookCount(userId: string): Promise<number> {
+  return (await getPlanCountedBookSnapshots(userId)).length;
 }
 
 async function getActiveStorageBytes(userId: string): Promise<number> {
+  const activeBooks = await getPlanCountedBookSnapshots(userId);
+  return activeBooks.reduce((total, bookSnapshot) => {
+    const sizeBytes = Number(bookSnapshot.get("sizeBytes"));
+    return total + (Number.isFinite(sizeBytes) && sizeBytes > 0 ? sizeBytes : 0);
+  }, 0);
+}
+
+async function reconcileUserBookPlanAccess(userId: string, limits: PlanLimits) {
   const snapshot = await db
     .collection("books")
     .where("userId", "==", userId)
     .where("status", "in", ACTIVE_BOOK_STATUSES)
     .get();
+  const books = snapshot.docs
+    .map((bookSnapshot) => ({
+      ref: bookSnapshot.ref,
+      planActive: bookSnapshot.get("planActive") !== false,
+      planInactiveReason: String(bookSnapshot.get("planInactiveReason") || ""),
+      sizeBytes: Math.max(0, Number(bookSnapshot.get("sizeBytes")) || 0),
+      updatedAtMs:
+        typeof bookSnapshot.get("updatedAt")?.toMillis === "function"
+          ? bookSnapshot.get("updatedAt").toMillis()
+          : 0,
+      createdAtMs:
+        typeof bookSnapshot.get("createdAt")?.toMillis === "function"
+          ? bookSnapshot.get("createdAt").toMillis()
+          : 0,
+    }))
+    .sort((left, right) => {
+      if (left.planActive !== right.planActive) {
+        return left.planActive ? -1 : 1;
+      }
+      return Math.max(right.updatedAtMs, right.createdAtMs) - Math.max(left.updatedAtMs, left.createdAtMs);
+    });
 
-  return snapshot.docs.reduce((total, bookSnapshot) => {
-    const sizeBytes = Number(bookSnapshot.get("sizeBytes"));
-    return total + (Number.isFinite(sizeBytes) && sizeBytes > 0 ? sizeBytes : 0);
-  }, 0);
+  let activeCount = 0;
+  let activeStorageBytes = 0;
+  const batch = db.batch();
+
+  books.forEach((book) => {
+    const mayAutoActivate = book.planActive || book.planInactiveReason === "plan_limit";
+    const canStayActive =
+      mayAutoActivate &&
+      activeCount < limits.maxBooks &&
+      activeStorageBytes + book.sizeBytes <= limits.maxStorageBytes;
+
+    if (canStayActive) {
+      activeCount += 1;
+      activeStorageBytes += book.sizeBytes;
+      if (!book.planActive || book.planInactiveReason) {
+        batch.update(book.ref, {
+          planActive: true,
+          planInactiveReason: FieldValue.delete(),
+          planAccessUpdatedAt: FieldValue.serverTimestamp(),
+          updatedAt: FieldValue.serverTimestamp(),
+        });
+      }
+      return;
+    }
+
+    if (book.planActive || book.planInactiveReason !== "plan_limit") {
+      batch.update(book.ref, {
+        planActive: false,
+        planInactiveReason: "plan_limit",
+        planAccessUpdatedAt: FieldValue.serverTimestamp(),
+        updatedAt: FieldValue.serverTimestamp(),
+      });
+    }
+  });
+
+  await batch.commit();
+}
+
+function requireBookPlanActive(bookSnapshot: FirebaseFirestore.DocumentSnapshot) {
+  if (bookSnapshot.get("planActive") === false) {
+    throw new HttpsError(
+      "failed-precondition",
+      "This book is inactive because it is outside the current plan limit."
+    );
+  }
 }
 
 async function assertNoDuplicateActiveBook(userId: string, title: string) {
@@ -5528,6 +5614,7 @@ export const getBookDetail = onCall(
     if (!bookSnapshot.exists || bookSnapshot.get("userId") !== auth.uid) {
       throw new HttpsError("not-found", "Book was not found.");
     }
+    requireBookPlanActive(bookSnapshot);
     const chunksSnapshot = await db
       .collection("bookChunks")
       .where("bookId", "==", bookId)
@@ -5590,6 +5677,7 @@ export const getBookReader = onCall(
     if (bookSnapshot.get("status") !== "text_ready") {
       throw new HttpsError("failed-precondition", "Book text is not ready yet.");
     }
+    requireBookPlanActive(bookSnapshot);
 
     const totalPageImages = Number(bookSnapshot.get("renderedPageCount")) || 0;
     const pageCount = Number(bookSnapshot.get("pageCount")) || 0;
@@ -5813,6 +5901,7 @@ export const listBookArtifacts = onCall(
     if (!bookSnapshot.exists || bookSnapshot.get("userId") !== auth.uid) {
       throw new HttpsError("not-found", "Book was not found.");
     }
+    requireBookPlanActive(bookSnapshot);
 
     const snapshot = await db
       .collection("bookArtifacts")
@@ -6066,6 +6155,7 @@ export const createUploadReservation = onCall(
       author: "",
       language: "",
       status: "upload_reserved",
+      planActive: true,
       sourceType: "web_upload",
       storagePath,
       originalFileName: fileName,
@@ -6168,6 +6258,8 @@ export const finalizeUploadReservation = onCall(
 
     await db.runTransaction(async (transaction) => {
       transaction.update(bookRef, {
+        planActive: true,
+        planInactiveReason: FieldValue.delete(),
         status: "queued",
         sizeBytes,
         mimeType: contentType,
@@ -6255,6 +6347,85 @@ export const deleteBook = onCall(
       ok: true,
       bookId,
       status: "deleting",
+    };
+  }
+);
+
+export const setBookPlanActive = onCall(
+  { region: "us-central1", timeoutSeconds: 60, memory: "256MiB" },
+  async (request) => {
+    const auth = requireAuth(request.auth?.token
+      ? {
+          uid: request.auth.uid,
+          email: request.auth.token.email,
+          name: request.auth.token.name,
+          picture: request.auth.token.picture,
+      }
+      : undefined);
+    const bookId = assertString(request.data?.bookId, "bookId");
+    const nextActive = request.data?.active === true;
+    await requireActiveSession(auth, request.data?.sessionId);
+    await requireVerifiedEmail(auth);
+
+    const bookRef = db.collection("books").doc(bookId);
+    const bookSnapshot = await bookRef.get();
+    if (!bookSnapshot.exists || bookSnapshot.get("userId") !== auth.uid) {
+      throw new HttpsError("not-found", "Book was not found.");
+    }
+    const status = String(bookSnapshot.get("status") || "");
+    if (!ACTIVE_BOOK_STATUSES.includes(status)) {
+      throw new HttpsError("failed-precondition", "This book cannot be activated.");
+    }
+
+    if (!nextActive) {
+      await bookRef.update({
+        planActive: false,
+        planInactiveReason: "user",
+        planAccessUpdatedAt: FieldValue.serverTimestamp(),
+        updatedAt: FieldValue.serverTimestamp(),
+      });
+      return {
+        ok: true,
+        bookId,
+        planActive: false,
+      };
+    }
+
+    const limits = await getUserLimits(auth.uid);
+    const activeBooks = await getPlanCountedBookSnapshots(auth.uid);
+    const alreadyActive = bookSnapshot.get("planActive") !== false;
+    const activeBookCount = activeBooks.length;
+    const activeStorageBytes = activeBooks.reduce((total, activeBook) => {
+      const sizeBytes = Number(activeBook.get("sizeBytes"));
+      return total + (Number.isFinite(sizeBytes) && sizeBytes > 0 ? sizeBytes : 0);
+    }, 0);
+    const nextSizeBytes = Math.max(0, Number(bookSnapshot.get("sizeBytes")) || 0);
+
+    if (!alreadyActive && activeBookCount >= limits.maxBooks) {
+      throw new HttpsError(
+        "resource-exhausted",
+        `The current plan allows ${limits.maxBooks} active books.`
+      );
+    }
+
+    if (!alreadyActive && activeStorageBytes + nextSizeBytes > limits.maxStorageBytes) {
+      throw new HttpsError(
+        "resource-exhausted",
+        "Activating this book would exceed the current plan storage limit."
+      );
+    }
+
+    await bookRef.update({
+      planActive: true,
+      planInactiveReason: FieldValue.delete(),
+      planAccessUpdatedAt: FieldValue.serverTimestamp(),
+      updatedAt: FieldValue.serverTimestamp(),
+    });
+
+    return {
+      ok: true,
+      bookId,
+      planActive: true,
     };
   }
 );
@@ -7615,6 +7786,7 @@ export const createArticleDraftTest = onCall(
     if (bookSnapshot.get("status") !== "text_ready") {
       throw new HttpsError("failed-precondition", "This book is not ready for article writing yet.");
     }
+    requireBookPlanActive(bookSnapshot);
 
     const sectionScopedSearch =
       articleContext.activeArtifactId && articleContext.activeSectionNumber

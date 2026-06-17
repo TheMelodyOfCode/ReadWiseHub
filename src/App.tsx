@@ -42,6 +42,7 @@ import { UAParser } from "ua-parser-js";
 
 type Theme = "light" | "dark";
 type WorkspaceTab = "ask" | "library" | "read" | "articles" | "history" | "help";
+type BillingPlanId = "free" | "plus" | "pro" | "ultimate";
 const DELETE_CONFIRMATION_PHRASE = "ReadWiseHub 2026";
 const CANONICAL_ORIGIN = "https://readwisehub.com";
 const LARGE_UPLOAD_NOTICE_BYTES = 3 * 1024 * 1024;
@@ -87,6 +88,8 @@ type BookRecord = {
   title: string;
   displayTitle: string;
   status: string;
+  planActive: boolean;
+  planInactiveReason: string;
   sizeBytes: number;
   chunkCount: number;
   sectionCount: number;
@@ -642,6 +645,67 @@ function getBillingStatusLabel(
   }
 }
 
+function getPricingPlans(t: Record<string, string>) {
+  return [
+    {
+      id: "free" as BillingPlanId,
+      name: t.freePlan,
+      price: "0",
+      cta: t.pricingCurrentFree,
+      summary: t.pricingFreeSummary,
+      features: [
+        t.pricingFreeFeatureBooks,
+        t.pricingFreeFeatureStorage,
+        t.pricingFreeFeatureMessages,
+        t.pricingFeatureSourceAnswers,
+      ],
+    },
+    {
+      id: "plus" as BillingPlanId,
+      name: t.plusPlan,
+      price: "9.99",
+      cta: t.billingUpgradePlus,
+      summary: t.pricingPlusSummary,
+      features: [
+        t.pricingPlusFeatureBooks,
+        t.pricingPlusFeatureStorage,
+        t.pricingPlusFeatureMessages,
+        t.pricingPlusFeatureIngestions,
+        t.pricingFeatureSourceAnswers,
+      ],
+    },
+    {
+      id: "pro" as BillingPlanId,
+      name: t.proPlan,
+      price: "19.99",
+      cta: t.billingUpgradePro,
+      summary: t.pricingProSummary,
+      featured: true,
+      features: [
+        t.pricingProFeatureBooks,
+        t.pricingProFeatureStorage,
+        t.pricingProFeatureMessages,
+        t.pricingProFeatureIngestions,
+        t.pricingFeatureArticleStudio,
+      ],
+    },
+    {
+      id: "ultimate" as BillingPlanId,
+      name: t.ultimatePlan,
+      price: "29.99",
+      cta: t.billingUpgradeUltimate,
+      summary: t.pricingUltimateSummary,
+      features: [
+        t.pricingUltimateFeatureBooks,
+        t.pricingUltimateFeatureStorage,
+        t.pricingUltimateFeatureMessages,
+        t.pricingUltimateFeatureIngestions,
+        t.pricingFeatureArticleStudio,
+      ],
+    },
+  ];
+}
+
 function getDeviceInfo() {
   const parser = new UAParser(navigator.userAgent);
   const browser = parser.getBrowser();
@@ -735,6 +799,7 @@ function getEmailActionSettings() {
 
 export function App() {
   const isAdminPath = window.location.pathname.startsWith("/admin");
+  const isPricingPath = window.location.pathname.startsWith("/pricing");
   const [locale, setLocale] = useState<Locale>(() => detectInitialLocale());
   const [theme, setTheme] = useState<Theme>(() => getInitialTheme());
   const [user, setUser] = useState<User | null>(null);
@@ -782,6 +847,7 @@ export function App() {
   const [conversationDetailBusyId, setConversationDetailBusyId] = useState("");
   const [selectedBookScope, setSelectedBookScope] = useState("");
   const [deleteBusyId, setDeleteBusyId] = useState("");
+  const [bookAccessBusyId, setBookAccessBusyId] = useState("");
   const [bookDeleteProgress, setBookDeleteProgress] = useState<Record<string, { label: string; progress: number }>>({});
   const [confirmDeleteBookId, setConfirmDeleteBookId] = useState("");
   const [deleteConversationBusyId, setDeleteConversationBusyId] = useState("");
@@ -923,10 +989,27 @@ export function App() {
     Boolean(authActionCode);
   const isEmailApplyAction = isVerifyEmailAction || isVerifyAndChangeEmailAction || isRecoverEmailAction;
   const isKnownAuthAction = isPasswordResetAction || isEmailApplyAction;
-  const textReadyBooks = useMemo(
-    () => books.filter((book) => book.status === "text_ready"),
+  const activeBooks = useMemo(
+    () => books.filter((book) => book.planActive && book.status !== "deleting"),
     [books]
   );
+  const inactiveBooks = useMemo(
+    () => books.filter((book) => !book.planActive && book.status !== "deleting"),
+    [books]
+  );
+  const textReadyBooks = useMemo(
+    () => activeBooks.filter((book) => book.status === "text_ready"),
+    [activeBooks]
+  );
+  const activeBookStorageBytes = useMemo(
+    () => activeBooks.reduce((total, book) => total + book.sizeBytes, 0),
+    [activeBooks]
+  );
+  const overPlanBookCount = activeBooks.length > usage.maxBooks;
+  const overPlanStorage = activeBookStorageBytes > usage.maxStorageBytes;
+  const hasInactiveBooks = inactiveBooks.length > 0;
+  const libraryPlanNotice = hasInactiveBooks || overPlanBookCount || overPlanStorage;
+  const activeBookIds = useMemo(() => new Set(activeBooks.map((book) => book.id)), [activeBooks]);
   const hasOpenStripeSubscription =
     usage.billingProvider === "stripe" &&
     Boolean(usage.billingSubscriptionId) &&
@@ -950,7 +1033,6 @@ export function App() {
   const articleStudioUnlocked =
     usage.plan === "plus" || usage.plan === "pro" || usage.plan === "ultimate";
   const articleReadyBookId = articleBookId || textReadyBooks[0]?.id || "";
-  const activeBookIds = useMemo(() => new Set(books.map((book) => book.id)), [books]);
   const jobsByBookId = useMemo(() => {
     const jobs = new Map<string, IngestionJobRecord>();
     ingestionJobs.forEach((job) => jobs.set(job.bookId, job));
@@ -1169,10 +1251,7 @@ export function App() {
   const bookCardRefs = useRef(new Map<string, HTMLElement>());
   const askInputRef = useRef<HTMLTextAreaElement | null>(null);
   const askProgressRef = useRef<HTMLDivElement | null>(null);
-  const activeStorageBytes = useMemo(
-    () => books.reduce((total, book) => total + book.sizeBytes, 0),
-    [books]
-  );
+  const activeStorageBytes = activeBookStorageBytes;
   const emailVerified = user?.emailVerified === true;
   const articleMessageIsSuccess = [
     t.articleReady,
@@ -1221,7 +1300,14 @@ export function App() {
   useEffect(() => {
     document.documentElement.lang = locale;
     window.localStorage.setItem("readwisehub_locale", locale);
-    const seo = SEO_BY_LOCALE[locale];
+    const baseSeo = SEO_BY_LOCALE[locale];
+    const seo = isPricingPath
+      ? {
+          title: `${t.billingTitle} | ReadWiseHub`,
+          description: t.pricingPageCopy,
+          canonicalPath: `/pricing?lang=${locale}`,
+        }
+      : baseSeo;
     const canonicalUrl = `${CANONICAL_ORIGIN}${seo.canonicalPath}`;
     document.title = seo.title;
     upsertMeta('meta[name="description"]', { name: "description", content: seo.description });
@@ -1241,10 +1327,10 @@ export function App() {
       content: seo.description,
     });
     upsertLink("canonical", canonicalUrl);
-    upsertLink("alternate", `${CANONICAL_ORIGIN}/?lang=en`, "en");
-    upsertLink("alternate", `${CANONICAL_ORIGIN}/?lang=de`, "de");
-    upsertLink("alternate", `${CANONICAL_ORIGIN}/`, "x-default");
-  }, [locale]);
+    upsertLink("alternate", `${CANONICAL_ORIGIN}${isPricingPath ? "/pricing" : "/"}?lang=en`, "en");
+    upsertLink("alternate", `${CANONICAL_ORIGIN}${isPricingPath ? "/pricing" : "/"}?lang=de`, "de");
+    upsertLink("alternate", `${CANONICAL_ORIGIN}${isPricingPath ? "/pricing" : "/"}`, "x-default");
+  }, [isPricingPath, locale, t.billingTitle, t.pricingPageCopy]);
 
   function changeLocale(nextLocale: Locale) {
     setLocale(nextLocale);
@@ -1384,6 +1470,9 @@ export function App() {
                     ? data.displayTitle
                     : createDisplayTitle(typeof data.title === "string" ? data.title : "Untitled"),
                 status: typeof data.status === "string" ? data.status : "unknown",
+                planActive: data.planActive !== false,
+                planInactiveReason:
+                  typeof data.planInactiveReason === "string" ? data.planInactiveReason : "",
                 sizeBytes:
                   typeof data.sizeBytes === "number" ? data.sizeBytes : 0,
                 chunkCount:
@@ -1541,15 +1630,9 @@ export function App() {
             typeof limits.monthlyMessages === "number" ? limits.monthlyMessages : 10,
           articleGenerations:
             typeof current.articleGenerations === "number" ? current.articleGenerations : 0,
-          books:
-            typeof current.books === "number"
-              ? Math.max(current.books, books.length)
-              : books.length,
+          books: activeBooks.length,
           maxBooks: typeof limits.maxBooks === "number" ? limits.maxBooks : 1,
-          storageBytes:
-            typeof current.storageBytes === "number"
-              ? Math.max(current.storageBytes, activeStorageBytes)
-              : activeStorageBytes,
+          storageBytes: activeStorageBytes,
           maxStorageBytes:
             typeof limits.maxStorageBytes === "number"
               ? limits.maxStorageBytes
@@ -1567,7 +1650,7 @@ export function App() {
         setAuthError(getErrorMessage(error, "Usage sync failed"));
       }
     );
-  }, [activeStorageBytes, books.length, user]);
+  }, [activeBooks.length, activeStorageBytes, user]);
 
   useEffect(() => {
     if (!user) {
@@ -1746,6 +1829,20 @@ export function App() {
       setReaderHighlights({});
     }
   }, [readerBookId]);
+
+  useEffect(() => {
+    if (selectedBookScope && !textReadyBooks.some((book) => book.id === selectedBookScope)) {
+      setSelectedBookScope("");
+    }
+    if (articleBookId && !textReadyBooks.some((book) => book.id === articleBookId)) {
+      setArticleBookId("");
+    }
+    if (readerBookId && !textReadyBooks.some((book) => book.id === readerBookId)) {
+      setReaderBookId("");
+      setReaderChunks([]);
+      setReaderMessage(t.bookInactiveReaderMessage);
+    }
+  }, [articleBookId, readerBookId, selectedBookScope, t.bookInactiveReaderMessage, textReadyBooks]);
 
   useEffect(() => {
     if (!adminBookDebug) {
@@ -2341,7 +2438,7 @@ export function App() {
       return;
     }
 
-    const queuedBooks = books.filter((book) => book.status === "queued");
+    const queuedBooks = books.filter((book) => book.planActive && book.status === "queued");
 
     if (queuedBooks.length === 0) {
       setUploadMessage(t.processQueuedDone);
@@ -3158,6 +3255,28 @@ export function App() {
     }
   }
 
+  async function setLibraryBookPlanActive(book: BookRecord, active: boolean) {
+    if (!requireVerifiedUi(setUploadMessage)) {
+      return;
+    }
+
+    setBookAccessBusyId(book.id);
+    setUploadMessage("");
+
+    try {
+      const setBookActive = httpsCallable<
+        { bookId: string; active: boolean },
+        { ok: boolean; bookId: string; planActive: boolean }
+      >(functions, "setBookPlanActive");
+      await setBookActive(withSession({ bookId: book.id, active }));
+      setUploadMessage(active ? t.bookActivated : t.bookDeactivated);
+    } catch (error) {
+      setUploadMessage(getErrorMessage(error, active ? t.bookActivationFailed : t.bookDeactivationFailed));
+    } finally {
+      setBookAccessBusyId("");
+    }
+  }
+
   async function deleteRecentQuestion(conversationId: string) {
     setDeleteConversationBusyId(conversationId);
     setAskMessage("");
@@ -3198,6 +3317,10 @@ export function App() {
   }
 
   async function openBookDetail(book: BookRecord) {
+    if (!book.planActive) {
+      setBookDetailMessage(t.bookInactiveDetailMessage);
+      return;
+    }
     setSelectedBookDetailId(book.id);
     setBookDetailMessage("");
     setBookChunkPreviews([]);
@@ -3279,6 +3402,10 @@ export function App() {
   }
 
   function askThisBook(book: BookRecord) {
+    if (!book.planActive) {
+      setUploadMessage(t.bookInactiveActionMessage);
+      return;
+    }
     setSelectedBookScope(book.id);
     setWorkspaceTab("ask");
     window.requestAnimationFrame(() => {
@@ -3287,6 +3414,10 @@ export function App() {
   }
 
   async function openBookReader(book: BookRecord, page = -1) {
+    if (!book.planActive) {
+      setReaderMessage(t.bookInactiveReaderMessage);
+      return;
+    }
     const progressKey = user
       ? `readwisehub_reader_progress_${user.uid}_${book.id}`
       : "";
@@ -3901,6 +4032,127 @@ export function App() {
           {billingBusy === "ultimate" ? t.loading : t.billingUpgradeUltimate}
         </button>
       </>
+    );
+  }
+
+  function renderPricingPage() {
+    const plans = getPricingPlans(t);
+    return (
+      <div className="app-shell pricing-page">
+        <header className="site-header">
+          <a className="brand" href={user ? "/#dashboard" : "/"} aria-label="ReadWiseHub home">
+            <img className="brand-mark" src={readWiseHubIcon} alt="" aria-hidden="true" />
+            <span>
+              <strong>ReadWiseHub</strong>
+              <small>{t.brandTagline}</small>
+            </span>
+          </a>
+          <div className="public-header-actions">
+            {languageToggle}
+            {themeToggle}
+            <a className="button header-button" href={user ? "/#account" : "/#account"}>
+              {user ? t.navAccount : t.signIn}
+            </a>
+          </div>
+        </header>
+
+        <main>
+          <section className="pricing-hero">
+            <p className="eyebrow">{t.billingTitle}</p>
+            <h1>{t.pricingPageTitle}</h1>
+            <p>{t.pricingPageCopy}</p>
+          </section>
+
+          <section className="pricing-grid" aria-label={t.pricingTitle}>
+            {plans.map((plan) => {
+              const isCurrent = usage.plan === plan.id;
+              const canCheckout = plan.id !== "free" && !hasOpenStripeSubscription;
+              return (
+                <article
+                  className={`pricing-card ${plan.featured ? "featured" : ""}`}
+                  key={plan.id}
+                >
+                  {plan.featured ? <span className="pricing-badge">{t.pricingRecommended}</span> : null}
+                  <h2>{plan.name}</h2>
+                  <div className="pricing-price">
+                    <span>€</span>
+                    <strong>{plan.price}</strong>
+                    <small>{plan.id === "free" ? t.pricingForever : t.pricingPerMonth}</small>
+                  </div>
+                  <p>{plan.summary}</p>
+                  {plan.id === "free" ? (
+                    <a className="button secondary" href="/#account">
+                      {user && usage.plan === "free"
+                        ? t.billingCurrentPlanNote
+                        : user
+                          ? t.navAccount
+                          : t.createAccount}
+                    </a>
+                  ) : hasOpenStripeSubscription ? (
+                    <button
+                      className="button primary"
+                      type="button"
+                      disabled={Boolean(billingBusy)}
+                      onClick={() => void openStripePortal()}
+                    >
+                      {billingBusy === "portal" ? t.loading : isCurrent ? t.billingManage : t.billingChangePlan}
+                    </button>
+                  ) : user ? (
+                    <button
+                      className="button primary"
+                      type="button"
+                      disabled={Boolean(billingBusy) || isCurrent || !canCheckout}
+                      onClick={() => void startStripeCheckout(plan.id as "plus" | "pro" | "ultimate")}
+                    >
+                      {billingBusy === plan.id ? t.loading : isCurrent ? t.billingCurrentPlanNote : plan.cta}
+                    </button>
+                  ) : (
+                    <a className="button primary" href="/#account">
+                      {t.createAccount}
+                    </a>
+                  )}
+                  <ul className="pricing-feature-list">
+                    {plan.features.map((feature) => (
+                      <li key={feature}>
+                        <span aria-hidden="true">✓</span>
+                        {feature}
+                      </li>
+                    ))}
+                  </ul>
+                </article>
+              );
+            })}
+          </section>
+
+          <section className="pricing-policy">
+            <div>
+              <p className="eyebrow">{t.pricingDowngradeEyebrow}</p>
+              <h2>{t.pricingDowngradeTitle}</h2>
+              <p>{t.pricingDowngradeCopy}</p>
+            </div>
+            <div className="pricing-policy-grid">
+              <article>
+                <h3>{t.pricingDowngradeActiveTitle}</h3>
+                <p>{t.pricingDowngradeActiveCopy}</p>
+              </article>
+              <article>
+                <h3>{t.pricingDowngradeInactiveTitle}</h3>
+                <p>{t.pricingDowngradeInactiveCopy}</p>
+              </article>
+              <article>
+                <h3>{t.pricingDowngradeRestoreTitle}</h3>
+                <p>{t.pricingDowngradeRestoreCopy}</p>
+              </article>
+            </div>
+          </section>
+
+          {billingMessage ? (
+            <p className={billingMessageTone === "error" ? "error-text pricing-message" : "status-message pricing-message"}>
+              {billingMessage}
+            </p>
+          ) : null}
+        </main>
+      </div>
     );
   }
 
@@ -5298,6 +5550,10 @@ export function App() {
     );
   }
 
+  if (isPricingPath) {
+    return renderPricingPage();
+  }
+
   if (user) {
     if (isAdminPath) {
       return renderAdminConsole();
@@ -5350,7 +5606,7 @@ export function App() {
                     {t.adminSwitch}
                   </a>
                 ) : null}
-                <a href="#billing" onClick={closeMenu}>
+                <a href="/pricing" onClick={closeMenu}>
                   {t.billingShortcut}
                 </a>
                 <a href="#account" onClick={closeMenu}>
@@ -5399,9 +5655,12 @@ export function App() {
                 <p className="small-note">
                   {t.billingCurrentPlanNote}: {usage.plan.toUpperCase()}
                 </p>
-                <div className="book-actions billing-actions">
-                  {renderBillingActions()}
-                </div>
+              <div className="book-actions billing-actions">
+                {renderBillingActions()}
+                <a className="button secondary compact" href="/pricing">
+                  {t.viewPlans}
+                </a>
+              </div>
                 {billingMessage ? (
                   <p className={billingMessageTone === "error" ? "error-text" : "status-message"}>
                     {billingMessage}
@@ -5478,6 +5737,22 @@ export function App() {
 
             {workspaceTab === "library" ? (
               <div className="workspace-tab-panel">
+            {libraryPlanNotice ? (
+              <div className="plan-limit-panel">
+                <div>
+                  <h3>{t.libraryPlanLimitTitle}</h3>
+                  <p>
+                    {hasInactiveBooks
+                      ? `${inactiveBooks.length} ${t.libraryInactiveBooksCopy}`
+                      : t.libraryPlanLimitCopy}
+                  </p>
+                  <p className="small-note">{t.libraryPlanLimitDetail}</p>
+                </div>
+                <a className="button secondary compact" href="/pricing">
+                  {t.viewPlans}
+                </a>
+              </div>
+            ) : null}
             <div className="upload-panel">
               <div>
                 <h3>{t.uploadTitle}</h3>
@@ -5569,7 +5844,7 @@ export function App() {
                 disabled={
                   !emailVerified ||
                   processBusy ||
-                  books.every((book) => book.status !== "queued")
+                  books.every((book) => !book.planActive || book.status !== "queued")
                 }
                 onClick={processQueuedJobs}
               >
@@ -5596,6 +5871,10 @@ export function App() {
                 {books.map((book) => {
                   const job = jobsByBookId.get(book.id);
                   const vectorCoverage = getVectorCoverage(book);
+                  const cardClassName = [
+                    book.id === lastUploadedBookId ? "uploaded-book-card" : "",
+                    !book.planActive ? "inactive-book-card" : "",
+                  ].filter(Boolean).join(" ");
                   return (
                   <article
                     key={book.id}
@@ -5606,9 +5885,19 @@ export function App() {
                         bookCardRefs.current.delete(book.id);
                       }
                     }}
-                    className={book.id === lastUploadedBookId ? "uploaded-book-card" : ""}
+                    className={cardClassName}
                   >
                     <h3 title={book.title}>{book.displayTitle}</h3>
+                    <p className={`status-pill ${book.planActive ? "status-plan-active" : "status-plan-inactive"}`}>
+                      {book.planActive ? t.bookActive : t.bookInactive}
+                    </p>
+                    {!book.planActive ? (
+                      <p className="small-note">
+                        {book.planInactiveReason === "plan_limit"
+                          ? t.bookInactivePlanLimit
+                          : t.bookInactiveUser}
+                      </p>
+                    ) : null}
                     <p className={`status-pill status-${book.status.replace(/_/g, "-")}`}>
                       {getBookStatusLabel(book)}
                     </p>
@@ -5663,7 +5952,7 @@ export function App() {
                       <button
                         className="button secondary compact"
                         type="button"
-                        disabled={book.status === "deleting"}
+                        disabled={book.status === "deleting" || !book.planActive}
                         onClick={() => openBookDetail(book)}
                       >
                         {t.viewDetails}
@@ -5672,11 +5961,24 @@ export function App() {
                         <button
                           className="button secondary compact"
                           type="button"
+                          disabled={!book.planActive}
                           onClick={() => openBookReader(book)}
                         >
                           {t.readBook}
                         </button>
                       ) : null}
+                      <button
+                        className="button secondary compact"
+                        type="button"
+                        disabled={bookAccessBusyId === book.id || book.status === "deleting"}
+                        onClick={() => void setLibraryBookPlanActive(book, !book.planActive)}
+                      >
+                        {bookAccessBusyId === book.id
+                          ? t.loading
+                          : book.planActive
+                            ? t.deactivateBook
+                            : t.activateBook}
+                      </button>
                     </div>
                     {confirmDeleteBookId === book.id ? (
                       <div className="inline-confirm">
@@ -7268,6 +7570,9 @@ export function App() {
               </ul>
               <div className="book-actions billing-actions">
                 {renderBillingActions()}
+                <a className="button secondary compact" href="/pricing">
+                  {t.viewPlans}
+                </a>
               </div>
               <p className="small-note">{t.billingTestMode}</p>
               {billingMessage ? (
@@ -7597,7 +7902,7 @@ export function App() {
 
         <nav className="top-nav" aria-label="Main navigation">
           <a href="#how">{t.navHow}</a>
-          <a href="#pricing">{t.navPricing}</a>
+          <a href="/pricing">{t.navPricing}</a>
           <a href="#help">{t.navHelp}</a>
         </nav>
 
@@ -7741,6 +8046,7 @@ export function App() {
 
         <section id="pricing" className="content-section">
           <h2>{t.pricingTitle}</h2>
+          <p>{t.pricingTeaserCopy}</p>
           <div className="plans-grid">
             <article>
               <h3>{t.freePlan}</h3>
@@ -7758,6 +8064,11 @@ export function App() {
               <h3>{t.ultimatePlan}</h3>
               <p>{t.ultimatePlanCopy}</p>
             </article>
+          </div>
+          <div className="section-actions">
+            <a className="button primary" href="/pricing">
+              {t.viewPlans}
+            </a>
           </div>
         </section>
 
