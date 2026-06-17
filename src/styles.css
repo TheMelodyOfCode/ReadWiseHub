@@ -2832,6 +2832,16 @@ select {
   padding: 24px clamp(16px, 5vw, 72px) 56px;
 }
 
+.pricing-page .public-header-actions {
+  grid-template-columns: 112px minmax(82px, 1fr) minmax(92px, auto);
+}
+
+.pricing-page .public-header-actions .button,
+.pricing-page .public-header-actions .theme-toggle {
+  min-height: 38px;
+  padding: 8px 10px;
+}
+
 .pricing-hero {
   display: grid;
   gap: 12px;
