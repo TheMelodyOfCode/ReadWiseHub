@@ -4083,13 +4083,80 @@ export function App() {
               <small>{t.brandTagline}</small>
             </span>
           </a>
-          <div className="public-header-actions">
-            {languageToggle}
-            {themeToggle}
-            <a className="button header-button" href={user ? "/#account" : "/#account"}>
-              {user ? t.navAccount : t.signIn}
-            </a>
-          </div>
+          {user ? (
+            <div className="workspace-header-actions">
+              <button
+                className="button header-button menu-button"
+                type="button"
+                ref={menuButtonRef}
+                aria-expanded={menuOpen}
+                aria-controls="pricing-workspace-menu"
+                onClick={() => setMenuOpen((open) => !open)}
+              >
+                <span aria-hidden="true">{menuOpen ? "×" : "☰"}</span>
+                <span className="visually-hidden">{t.menu}</span>
+              </button>
+
+              <div
+                id="pricing-workspace-menu"
+                ref={workspaceMenuRef}
+                className={`workspace-menu ${menuOpen ? "open" : ""}`}
+              >
+                <nav className="workspace-nav" aria-label={t.workspaceToolsTitle}>
+                  <a href="/#library" onClick={() => openMenuTab("ask")}>
+                    {t.tabAsk}
+                  </a>
+                  <a href="/#library" onClick={() => openMenuTab("library")}>
+                    {t.navLibrary}
+                  </a>
+                  <a href="/#library" onClick={() => openMenuTab("read")}>
+                    {t.tabRead}
+                  </a>
+                  <a href="/#library" onClick={() => openMenuTab("articles")}>
+                    {t.tabArticles}
+                  </a>
+                  {adminAccess ? (
+                    <a href="/admin" onClick={closeMenu}>
+                      {t.adminSwitch}
+                    </a>
+                  ) : null}
+                  <a href="/pricing" onClick={closeMenu}>
+                    {t.billingShortcut}
+                  </a>
+                  <a href="/#account" onClick={closeMenu}>
+                    {t.navAccount}
+                  </a>
+                </nav>
+                <div className="header-preferences menu-controls">
+                  {languageToggle}
+                  {themeToggle}
+                </div>
+                <button
+                  className="button header-button sign-out-button"
+                  type="button"
+                  onClick={() => void handleSignOut()}
+                  disabled={signingOut}
+                >
+                  {signingOut ? t.loading : t.signOut}
+                </button>
+              </div>
+            </div>
+          ) : (
+            <>
+              <nav className="top-nav" aria-label="Main navigation">
+                <a href="/#how">{t.navHow}</a>
+                <a href="/pricing">{t.navPricing}</a>
+                <a href="/#help">{t.navHelp}</a>
+              </nav>
+              <div className="public-header-actions">
+                {languageToggle}
+                {themeToggle}
+                <a className="button header-button" href="/#account">
+                  {t.signIn}
+                </a>
+              </div>
+            </>
+          )}
         </header>
 
         <main>
