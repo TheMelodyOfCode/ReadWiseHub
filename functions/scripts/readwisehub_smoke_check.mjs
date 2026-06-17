@@ -21,8 +21,12 @@ for (const user of users.docs) {
   const data = user.data();
   const books = await db.collection("books").where("userId", "==", user.id).get();
   const maxBooks = Number(data.limits?.maxBooks) || 0;
+  const activeBooks = books.docs.filter((book) => book.get("planActive") !== false);
 
-  check(maxBooks >= books.size, `${user.id} has ${books.size} books but maxBooks is ${maxBooks}.`);
+  check(
+    maxBooks >= activeBooks.length,
+    `${user.id} has ${activeBooks.length} active books but maxBooks is ${maxBooks}.`
+  );
 
   for (const book of books.docs) {
     const bookData = book.data();

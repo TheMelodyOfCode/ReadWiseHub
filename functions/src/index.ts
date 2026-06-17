@@ -544,13 +544,50 @@ async function findUserByStripeCustomerId(customerId: string) {
   return users.docs[0] ?? null;
 }
 
+function isMissingStripeCustomerError(error: unknown): boolean {
+  const stripeError = error as {
+    code?: string;
+    param?: string;
+    raw?: {
+      code?: string;
+      param?: string;
+    };
+  };
+
+  return (
+    (stripeError.code === "resource_missing" || stripeError.raw?.code === "resource_missing") &&
+    (stripeError.param === "customer" || stripeError.raw?.param === "customer")
+  );
+}
+
 async function getOrCreateStripeCustomer(stripe: Stripe.Stripe, auth: AuthContext): Promise<string> {
   const userRef = await ensureUserProfile(auth);
   const userSnapshot = await userRef.get();
   const existingCustomerId = sanitizeClientLabel(userSnapshot.get("billingCustomerId"));
 
   if (existingCustomerId) {
-    return existingCustomerId;
+    try {
+      const existingCustomer = await stripe.customers.retrieve(existingCustomerId);
+      if (!existingCustomer.deleted) {
+        await userRef.set(
+          {
+            billingProvider: "stripe",
+            billingMode: existingCustomer.livemode ? "live" : "test",
+            updatedAt: FieldValue.serverTimestamp(),
+          },
+          { merge: true }
+        );
+        return existingCustomerId;
+      }
+    } catch (error) {
+      if (!isMissingStripeCustomerError(error)) {
+        throw error;
+      }
+
+      console.warn("Stored Stripe customer is unavailable in the active Stripe mode; creating a replacement.", {
+        uid: auth.uid,
+      });
+    }
   }
 
   const customer = await stripe.customers.create({
