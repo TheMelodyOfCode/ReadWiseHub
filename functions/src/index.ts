@@ -48,9 +48,9 @@ const PLAN_LIMITS = {
   pro: {
     maxBooks: 20,
     maxStorageBytes: 380 * 1024 * 1024,
-    maxFileBytes: 30 * 1024 * 1024,
+    maxFileBytes: 50 * 1024 * 1024,
     monthlyMessages: 320,
-    monthlyIngestions: 20,
+    monthlyIngestions: 50,
   },
   ultimate: {
     maxBooks: 50,
@@ -3250,11 +3250,6 @@ async function ensureUserProfile(auth: AuthContext) {
 
   if (snapshot.exists) {
     const plan = normalizePlan(snapshot.get("plan"));
-    const currentLimits = snapshot.get("limits") ?? {};
-    const normalizedFreeLimits =
-      plan === "free"
-        ? FREE_LIMITS
-        : currentLimits;
     await userRef.set(
       {
         email: auth.email ?? snapshot.get("email") ?? "",
@@ -3269,7 +3264,7 @@ async function ensureUserProfile(auth: AuthContext) {
         billingCustomerId: snapshot.get("billingCustomerId") ?? "",
         billingPriceId: snapshot.get("billingPriceId") ?? "",
         billingCurrentPeriodEnd: snapshot.get("billingCurrentPeriodEnd") ?? null,
-        limits: normalizedFreeLimits,
+        limits: PLAN_LIMITS[plan],
         updatedAt: now,
         lastLoginAt: now,
       },
@@ -3313,29 +3308,7 @@ async function ensureUserProfile(auth: AuthContext) {
 async function getUserLimits(userId: string): Promise<PlanLimits> {
   const snapshot = await db.collection("users").doc(userId).get();
   const plan = normalizePlan(snapshot.get("plan"));
-  const defaults = PLAN_LIMITS[plan];
-  const limits = snapshot.get("limits") ?? {};
-
-  if (plan === "free") {
-    return FREE_LIMITS;
-  }
-
-  return {
-    maxBooks: Math.max(Number(limits.maxBooks) || 0, defaults.maxBooks),
-    maxStorageBytes: Math.max(
-      Number(limits.maxStorageBytes) || 0,
-      defaults.maxStorageBytes
-    ),
-    maxFileBytes: Math.max(Number(limits.maxFileBytes) || 0, defaults.maxFileBytes),
-    monthlyMessages: Math.max(
-      Number(limits.monthlyMessages) || 0,
-      defaults.monthlyMessages
-    ),
-    monthlyIngestions: Math.max(
-      Number(limits.monthlyIngestions) || 0,
-      defaults.monthlyIngestions
-    ),
-  };
+  return PLAN_LIMITS[plan];
 }
 
 async function getActiveBookCount(userId: string): Promise<number> {
@@ -8072,9 +8045,15 @@ export const deleteAccountData = onCall(
       billingProvider === "stripe" &&
       isOpenStripeSubscriptionStatus(subscriptionStatus)
     ) {
+      const cancelAtPeriodEnd = userSnapshot.get("billingCancelAtPeriodEnd") === true;
+      const periodEnd = sanitizeClientLabel(userSnapshot.get("billingCurrentPeriodEnd"));
+      const message =
+        cancelAtPeriodEnd && periodEnd
+          ? `This Stripe subscription is canceled but remains active until ${periodEnd}. Delete the account after the subscription period ends.`
+          : "Manage or cancel your Stripe subscription before deleting this account.";
       throw new HttpsError(
         "failed-precondition",
-        "Manage or cancel your Stripe subscription before deleting this account."
+        message
       );
     }
 

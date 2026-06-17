@@ -326,6 +326,7 @@ type UserUsage = {
   maxBooks: number;
   storageBytes: number;
   maxStorageBytes: number;
+  maxFileBytes: number;
 };
 
 type AdminDashboardPayload = {
@@ -465,7 +466,6 @@ type AdminUserSummary = {
 };
 
 const UPLOAD_BACKEND_ENABLED = true;
-const MAX_FREE_FILE_BYTES = 20 * 1024 * 1024;
 const ALLOWED_UPLOAD_TYPES = new Set([
   "application/pdf",
   "text/plain",
@@ -831,6 +831,7 @@ export function App() {
     maxBooks: 1,
     storageBytes: 0,
     maxStorageBytes: 10 * 1024 * 1024,
+    maxFileBytes: 10 * 1024 * 1024,
   });
   const [articleBookId, setArticleBookId] = useState("");
   const [articlePrompt, setArticlePrompt] = useState("");
@@ -897,7 +898,20 @@ export function App() {
     ["active", "trialing", "past_due", "unpaid", "incomplete"].includes(
       usage.subscriptionStatus
     );
+  const hasCanceledOpenStripeSubscription =
+    hasOpenStripeSubscription &&
+    usage.billingCancelAtPeriodEnd &&
+    Boolean(usage.billingCurrentPeriodEnd);
   const billingStatusLabel = getBillingStatusLabel(usage, t, locale);
+  const deleteSubscriptionTitle = hasCanceledOpenStripeSubscription
+    ? t.deleteAccountSubscriptionCanceledTitle
+    : t.deleteAccountSubscriptionTitle;
+  const deleteSubscriptionCopy = hasCanceledOpenStripeSubscription
+    ? `${t.deleteAccountSubscriptionCanceledCopy} ${formatOptionalDateTime(
+        usage.billingCurrentPeriodEnd,
+        locale
+      )}.`
+    : t.deleteAccountSubscriptionCopy;
   const articleStudioUnlocked =
     usage.plan === "plus" || usage.plan === "pro" || usage.plan === "ultimate";
   const articleReadyBookId = articleBookId || textReadyBooks[0]?.id || "";
@@ -1472,6 +1486,10 @@ export function App() {
           maxStorageBytes:
             typeof limits.maxStorageBytes === "number"
               ? limits.maxStorageBytes
+              : 10 * 1024 * 1024,
+          maxFileBytes:
+            typeof limits.maxFileBytes === "number"
+              ? limits.maxFileBytes
               : 10 * 1024 * 1024,
         });
       },
@@ -2144,7 +2162,7 @@ export function App() {
       return;
     }
 
-    if (file.size > MAX_FREE_FILE_BYTES) {
+    if (file.size > usage.maxFileBytes) {
       setSelectedFile(null);
       setUploadMessage(t.fileTooLarge);
       return;
@@ -4179,7 +4197,7 @@ export function App() {
 
     try {
       if (hasOpenStripeSubscription) {
-        setAuthError(t.deleteAccountSubscriptionCopy);
+        setAuthError(deleteSubscriptionCopy);
         return;
       }
 
@@ -7365,9 +7383,9 @@ export function App() {
                     <div className="subscription-delete-block">
                       <h4>
                         <span aria-hidden="true">!</span>
-                        {t.deleteAccountSubscriptionTitle}
+                        {deleteSubscriptionTitle}
                       </h4>
-                      <p>{t.deleteAccountSubscriptionCopy}</p>
+                      <p>{deleteSubscriptionCopy}</p>
                       <button
                         className="button danger compact"
                         type="button"

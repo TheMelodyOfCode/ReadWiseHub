@@ -259,8 +259,8 @@ export const dictionaries: Record<Locale, Dictionary> = {
     structureComplex: "Complex page layout",
     structureLimited: "Limited structure",
     structurePoor: "Difficult source formatting",
-    allowedFiles: "PDF, TXT, Markdown, DOCX, or EPUB up to 10 MB on Free.",
-    fileTooLarge: "This file is larger than the 10 MB Free limit.",
+    allowedFiles: "PDF, TXT, Markdown, DOCX, or EPUB up to your current plan limit.",
+    fileTooLarge: "This file is larger than your current plan limit.",
     fileTypeBlocked: "Only PDF, TXT, Markdown, DOCX, and EPUB files are allowed right now.",
     usageTitle: "Your plan",
     usageBooks: "1 book",
@@ -345,6 +345,9 @@ export const dictionaries: Record<Locale, Dictionary> = {
     deleteAccountSubscriptionTitle: "Active subscription",
     deleteAccountSubscriptionCopy:
       "Your account still has an active Stripe subscription. Manage or cancel the subscription first, then return here to delete your account.",
+    deleteAccountSubscriptionCanceledTitle: "Subscription canceled",
+    deleteAccountSubscriptionCanceledCopy:
+      "This Stripe subscription has been canceled and remains active until",
     deleteAccountSubscriptionAction: "Manage subscription",
     deletingAccount: "Deleting account data...",
     securityTitle: "Login security",
@@ -764,8 +767,8 @@ export const dictionaries: Record<Locale, Dictionary> = {
     structureComplex: "Komplexes Seitenlayout",
     structureLimited: "Begrenzte Struktur",
     structurePoor: "Schwierige Quellformatierung",
-    allowedFiles: "PDF, TXT, Markdown, DOCX oder EPUB bis 10 MB im Free-Tarif.",
-    fileTooLarge: "Diese Datei ist größer als das Free-Limit von 10 MB.",
+    allowedFiles: "PDF, TXT, Markdown, DOCX oder EPUB bis zum Limit deines aktuellen Tarifs.",
+    fileTooLarge: "Diese Datei ist größer als das Limit deines aktuellen Tarifs.",
     fileTypeBlocked: "Aktuell sind PDF, TXT, Markdown, DOCX und EPUB erlaubt.",
     usageTitle: "Dein Plan",
     usageBooks: "1 Buch",
@@ -851,6 +854,9 @@ export const dictionaries: Record<Locale, Dictionary> = {
     deleteAccountSubscriptionTitle: "Aktives Abo",
     deleteAccountSubscriptionCopy:
       "Dein Konto hat noch ein aktives Stripe-Abo. Verwalte oder kündige zuerst das Abo und kehre dann hierher zurück, um dein Konto zu löschen.",
+    deleteAccountSubscriptionCanceledTitle: "Abo gekündigt",
+    deleteAccountSubscriptionCanceledCopy:
+      "Dieses Stripe-Abo wurde gekündigt und bleibt aktiv bis",
     deleteAccountSubscriptionAction: "Abo verwalten",
     deletingAccount: "Kontodaten werden gelöscht...",
     securityTitle: "Login-Sicherheit",
