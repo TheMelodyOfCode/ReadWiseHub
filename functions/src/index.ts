@@ -134,6 +134,7 @@ type StripeSubscriptionSnapshot = {
   status: string;
   livemode: boolean;
   cancel_at_period_end?: boolean;
+  cancel_at?: number | null;
   items: {
     data: Array<{
       price?: {
@@ -511,10 +512,14 @@ function getSubscriptionPrimaryPriceId(subscription: StripeSubscriptionSnapshot)
 }
 
 function getSubscriptionPeriodEnd(subscription: StripeSubscriptionSnapshot) {
-  const periodEnd = subscription.items.data[0]?.current_period_end;
+  const periodEnd = subscription.cancel_at ?? subscription.items.data[0]?.current_period_end;
   return typeof periodEnd === "number"
     ? new Date(periodEnd * 1000).toISOString()
     : null;
+}
+
+function hasScheduledStripeCancellation(subscription: StripeSubscriptionSnapshot): boolean {
+  return subscription.cancel_at_period_end === true || typeof subscription.cancel_at === "number";
 }
 
 async function findUserByStripeCustomerId(customerId: string) {
@@ -587,7 +592,7 @@ async function applyStripeSubscriptionToUser(
       billingSubscriptionId: subscriptionId,
       billingPriceId: priceId,
       billingMode: subscription.livemode ? "live" : "test",
-      billingCancelAtPeriodEnd: subscription.cancel_at_period_end === true,
+      billingCancelAtPeriodEnd: hasScheduledStripeCancellation(subscription),
       billingCurrentPeriodEnd: getSubscriptionPeriodEnd(subscription),
       limits: PLAN_LIMITS[nextPlan],
       updatedAt: FieldValue.serverTimestamp(),
