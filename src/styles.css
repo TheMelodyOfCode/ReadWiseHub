@@ -845,6 +845,28 @@ textarea {
   min-width: 0;
 }
 
+.library-filter {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.library-filter button {
+  min-height: 44px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.library-filter button.active {
+  border-color: var(--primary);
+  background: var(--primary);
+  color: #fff;
+}
+
 .book-list article,
 .book-detail-panel,
 .upload-panel,
@@ -2950,6 +2972,63 @@ select {
   max-width: 920px;
 }
 
+.policy-main {
+  display: grid;
+  gap: 24px;
+  padding: 24px clamp(16px, 5vw, 72px) 56px;
+}
+
+.policy-hero,
+.policy-grid article {
+  display: grid;
+  gap: 12px;
+}
+
+.policy-hero {
+  max-width: 840px;
+  padding-top: 24px;
+}
+
+.policy-hero h1,
+.policy-hero p,
+.policy-grid h2,
+.policy-grid p {
+  margin: 0;
+}
+
+.policy-grid {
+  display: grid;
+  gap: 14px;
+}
+
+.policy-grid article {
+  padding: 18px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+
+.policy-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: center;
+}
+
+.policy-links a {
+  color: var(--muted);
+  font-weight: 800;
+}
+
+.public-policy-links {
+  padding: 0 clamp(16px, 5vw, 72px) 42px;
+}
+
+.safety-note {
+  grid-column: 1 / -1;
+}
+
 .section-actions {
   display: flex;
   flex-wrap: wrap;
@@ -3061,6 +3140,10 @@ select {
   }
 
   .pricing-policy-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .policy-grid {
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 

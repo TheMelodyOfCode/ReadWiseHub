@@ -42,6 +42,7 @@ import { UAParser } from "ua-parser-js";
 
 type Theme = "light" | "dark";
 type WorkspaceTab = "ask" | "library" | "read" | "articles" | "history" | "help";
+type LibraryFilter = "all" | "active" | "inactive";
 type BillingPlanId = "free" | "plus" | "pro" | "ultimate";
 const DELETE_CONFIRMATION_PHRASE = "ReadWiseHub 2026";
 const CANONICAL_ORIGIN = "https://readwisehub.com";
@@ -832,6 +833,9 @@ function getEmailActionSettings() {
 export function App() {
   const isAdminPath = window.location.pathname.startsWith("/admin");
   const isPricingPath = window.location.pathname.startsWith("/pricing");
+  const isTermsPath = window.location.pathname.startsWith("/terms");
+  const isPrivacyPath = window.location.pathname.startsWith("/privacy");
+  const isSafetyPath = window.location.pathname.startsWith("/safety");
   const [locale, setLocale] = useState<Locale>(() => detectInitialLocale());
   const [theme, setTheme] = useState<Theme>(() => getInitialTheme());
   const [user, setUser] = useState<User | null>(null);
@@ -891,6 +895,7 @@ export function App() {
   const [uploadPrepNoticeBookId, setUploadPrepNoticeBookId] = useState("");
   const [dismissedUploadPrepNoticeBookIds, setDismissedUploadPrepNoticeBookIds] = useState<string[]>([]);
   const [workspaceTab, setWorkspaceTab] = useState<WorkspaceTab>("ask");
+  const [libraryFilter, setLibraryFilter] = useState<LibraryFilter>("all");
   const [processingBookId, setProcessingBookId] = useState("");
   const [selectedBookDetailId, setSelectedBookDetailId] = useState("");
   const [bookChunkPreviews, setBookChunkPreviews] = useState<BookChunkPreview[]>([]);
@@ -1042,6 +1047,15 @@ export function App() {
   const hasInactiveBooks = inactiveBooks.length > 0;
   const libraryPlanNotice = hasInactiveBooks || overPlanBookCount || overPlanStorage;
   const activeBookIds = useMemo(() => new Set(activeBooks.map((book) => book.id)), [activeBooks]);
+  const visibleLibraryBooks = useMemo(() => {
+    if (libraryFilter === "active") {
+      return activeBooks;
+    }
+    if (libraryFilter === "inactive") {
+      return inactiveBooks;
+    }
+    return books;
+  }, [activeBooks, books, inactiveBooks, libraryFilter]);
   const hasOpenStripeSubscription =
     usage.billingProvider === "stripe" &&
     Boolean(usage.billingSubscriptionId) &&
@@ -1339,8 +1353,27 @@ export function App() {
           description: t.pricingPageCopy,
           canonicalPath: `/pricing?lang=${locale}`,
         }
+      : isTermsPath
+        ? {
+            title: `${t.termsTitle} | ReadWiseHub`,
+            description: t.termsCopy,
+            canonicalPath: `/terms?lang=${locale}`,
+          }
+        : isPrivacyPath
+          ? {
+              title: `${t.privacyTitle} | ReadWiseHub`,
+              description: t.privacyCopy,
+              canonicalPath: `/privacy?lang=${locale}`,
+            }
+          : isSafetyPath
+            ? {
+                title: `${t.safetyTitle} | ReadWiseHub`,
+                description: t.safetyCopy,
+                canonicalPath: `/safety?lang=${locale}`,
+              }
       : baseSeo;
     const canonicalUrl = `${CANONICAL_ORIGIN}${seo.canonicalPath}`;
+    const routePath = isPricingPath ? "/pricing" : isTermsPath ? "/terms" : isPrivacyPath ? "/privacy" : isSafetyPath ? "/safety" : "/";
     document.title = seo.title;
     upsertMeta('meta[name="description"]', { name: "description", content: seo.description });
     upsertMeta('meta[property="og:title"]', { property: "og:title", content: seo.title });
@@ -1359,10 +1392,24 @@ export function App() {
       content: seo.description,
     });
     upsertLink("canonical", canonicalUrl);
-    upsertLink("alternate", `${CANONICAL_ORIGIN}${isPricingPath ? "/pricing" : "/"}?lang=en`, "en");
-    upsertLink("alternate", `${CANONICAL_ORIGIN}${isPricingPath ? "/pricing" : "/"}?lang=de`, "de");
-    upsertLink("alternate", `${CANONICAL_ORIGIN}${isPricingPath ? "/pricing" : "/"}`, "x-default");
-  }, [isPricingPath, locale, t.billingTitle, t.pricingPageCopy]);
+    upsertLink("alternate", `${CANONICAL_ORIGIN}${routePath}?lang=en`, "en");
+    upsertLink("alternate", `${CANONICAL_ORIGIN}${routePath}?lang=de`, "de");
+    upsertLink("alternate", `${CANONICAL_ORIGIN}${routePath}`, "x-default");
+  }, [
+    isPricingPath,
+    isPrivacyPath,
+    isSafetyPath,
+    isTermsPath,
+    locale,
+    t.billingTitle,
+    t.pricingPageCopy,
+    t.privacyCopy,
+    t.privacyTitle,
+    t.safetyCopy,
+    t.safetyTitle,
+    t.termsCopy,
+    t.termsTitle,
+  ]);
 
   function changeLocale(nextLocale: Locale) {
     setLocale(nextLocale);
@@ -3303,7 +3350,9 @@ export function App() {
       await setBookActive(withSession({ bookId: book.id, active }));
       setUploadMessage(active ? t.bookActivated : t.bookDeactivated);
     } catch (error) {
-      setUploadMessage(getErrorMessage(error, active ? t.bookActivationFailed : t.bookDeactivationFailed));
+      const fallback = active ? t.bookActivationFailed : t.bookDeactivationFailed;
+      const guidance = active ? ` ${t.bookActivationGuidance}` : "";
+      setUploadMessage(`${getErrorMessage(error, fallback)}${guidance}`);
     } finally {
       setBookAccessBusyId("");
     }
@@ -4255,6 +4304,77 @@ export function App() {
               {billingMessage}
             </p>
           ) : null}
+          <nav className="policy-links" aria-label={t.legalLinks}>
+            <a href="/terms">{t.termsTitle}</a>
+            <a href="/privacy">{t.privacyTitle}</a>
+            <a href="/safety">{t.safetyTitle}</a>
+          </nav>
+        </main>
+      </div>
+    );
+  }
+
+  function renderPolicyPage(kind: "terms" | "privacy" | "safety") {
+    const title =
+      kind === "terms" ? t.termsTitle : kind === "privacy" ? t.privacyTitle : t.safetyTitle;
+    const copy =
+      kind === "terms" ? t.termsCopy : kind === "privacy" ? t.privacyCopy : t.safetyCopy;
+    const sections =
+      kind === "terms"
+        ? [
+            [t.termsUseTitle, t.termsUseCopy],
+            [t.termsBillingTitle, t.termsBillingCopy],
+            [t.termsDataTitle, t.termsDataCopy],
+          ]
+        : kind === "privacy"
+          ? [
+              [t.privacyDataWeStoreTitle, t.privacyDataWeStoreCopy],
+              [t.privacyAiTitle, t.privacyAiCopy],
+              [t.privacyDeletionTitle, t.privacyDeletionCopy],
+            ]
+          : [
+              [t.safetyUploadsTitle, t.safetyUploadsCopy],
+              [t.safetyAbuseTitle, t.safetyAbuseCopy],
+              [t.safetyAdminTitle, t.safetyAdminCopy],
+            ];
+
+    return (
+      <div className="app-shell policy-page">
+        <header className="site-header">
+          <a className="brand" href={user ? "/#dashboard" : "/"} aria-label="ReadWiseHub home">
+            <img className="brand-mark" src={readWiseHubIcon} alt="" aria-hidden="true" />
+            <span>
+              <strong>ReadWiseHub</strong>
+              <small>{t.brandTagline}</small>
+            </span>
+          </a>
+          <div className="public-header-actions">
+            {languageToggle}
+            {themeToggle}
+            <a className="button header-button" href={user ? "/#account" : "/#account"}>
+              {user ? t.navAccount : t.signIn}
+            </a>
+          </div>
+        </header>
+        <main className="policy-main">
+          <section className="policy-hero">
+            <p className="eyebrow">ReadWiseHub</p>
+            <h1>{title}</h1>
+            <p>{copy}</p>
+          </section>
+          <section className="policy-grid">
+            {sections.map(([sectionTitle, sectionCopy]) => (
+              <article key={sectionTitle}>
+                <h2>{sectionTitle}</h2>
+                <p>{sectionCopy}</p>
+              </article>
+            ))}
+          </section>
+          <nav className="policy-links" aria-label={t.legalLinks}>
+            <a href="/terms">{t.termsTitle}</a>
+            <a href="/privacy">{t.privacyTitle}</a>
+            <a href="/safety">{t.safetyTitle}</a>
+          </nav>
         </main>
       </div>
     );
@@ -5658,6 +5778,18 @@ export function App() {
     return renderPricingPage();
   }
 
+  if (isTermsPath) {
+    return renderPolicyPage("terms");
+  }
+
+  if (isPrivacyPath) {
+    return renderPolicyPage("privacy");
+  }
+
+  if (isSafetyPath) {
+    return renderPolicyPage("safety");
+  }
+
   if (user) {
     if (isAdminPath) {
       return renderAdminConsole();
@@ -5877,6 +6009,7 @@ export function App() {
                   {t.selectedFile}: <strong>{selectedFile.name}</strong>
                 </div>
               ) : null}
+              <p className="small-note safety-note">{t.uploadSafetyNote}</p>
               {uploadBusy ? (
                 <div className="upload-progress" role="status" aria-live="polite">
                   <div>
@@ -5971,8 +6104,26 @@ export function App() {
                 <p>{t.libraryEmpty}</p>
               </div>
             ) : (
+              <>
+              <div className="library-filter" aria-label={t.libraryFilterLabel}>
+                {(["all", "active", "inactive"] as LibraryFilter[]).map((filter) => (
+                  <button
+                    key={filter}
+                    type="button"
+                    className={libraryFilter === filter ? "active" : ""}
+                    aria-pressed={libraryFilter === filter}
+                    onClick={() => setLibraryFilter(filter)}
+                  >
+                    {filter === "all"
+                      ? `${t.libraryFilterAll} (${books.length})`
+                      : filter === "active"
+                        ? `${t.libraryFilterActive} (${activeBooks.length})`
+                        : `${t.libraryFilterInactive} (${inactiveBooks.length})`}
+                  </button>
+                ))}
+              </div>
               <div className="book-list">
-                {books.map((book) => {
+                {visibleLibraryBooks.map((book) => {
                   const job = jobsByBookId.get(book.id);
                   const vectorCoverage = getVectorCoverage(book);
                   const cardClassName = [
@@ -6138,6 +6289,7 @@ export function App() {
                   );
                 })}
               </div>
+              </>
             )}
             {selectedBookDetailId ? (
               <section className="book-detail-panel" ref={bookDetailRef}>
@@ -6374,6 +6526,17 @@ export function App() {
 
             {workspaceTab === "read" ? (
               <div className="workspace-tab-panel">
+                {hasInactiveBooks ? (
+                  <div className="plan-limit-panel">
+                    <div>
+                      <h3>{t.inactiveWorkflowTitle}</h3>
+                      <p>{t.inactiveReadCopy}</p>
+                    </div>
+                    <button className="button secondary compact" type="button" onClick={() => setWorkspaceTab("library")}>
+                      {t.openLibrary}
+                    </button>
+                  </div>
+                ) : null}
                 <section className="reader-panel">
                   <div className="reader-header">
                     {readerBook ? (
@@ -6955,6 +7118,17 @@ export function App() {
 
             {workspaceTab === "ask" ? (
               <div className="workspace-tab-panel">
+            {hasInactiveBooks ? (
+              <div className="plan-limit-panel">
+                <div>
+                  <h3>{t.inactiveWorkflowTitle}</h3>
+                  <p>{t.inactiveAskCopy}</p>
+                </div>
+                <button className="button secondary compact" type="button" onClick={() => setWorkspaceTab("library")}>
+                  {t.openLibrary}
+                </button>
+              </div>
+            ) : null}
             <form className="ask-panel" onSubmit={askLibraryQuestion}>
               <div>
                 <h3>{t.askTitle}</h3>
@@ -7146,6 +7320,17 @@ export function App() {
 
             {workspaceTab === "articles" ? (
               <div className="workspace-tab-panel">
+                {hasInactiveBooks ? (
+                  <div className="plan-limit-panel">
+                    <div>
+                      <h3>{t.inactiveWorkflowTitle}</h3>
+                      <p>{t.inactiveArticlesCopy}</p>
+                    </div>
+                    <button className="button secondary compact" type="button" onClick={() => setWorkspaceTab("library")}>
+                      {t.openLibrary}
+                    </button>
+                  </div>
+                ) : null}
                 <section className="article-studio-panel">
                   <div className="article-studio-heading">
                     <div>
@@ -8197,6 +8382,11 @@ export function App() {
           <h2>{t.navHelp}</h2>
           <p>{t.publicHelpCopy}</p>
         </section>
+        <nav className="policy-links public-policy-links" aria-label={t.legalLinks}>
+          <a href="/terms">{t.termsTitle}</a>
+          <a href="/privacy">{t.privacyTitle}</a>
+          <a href="/safety">{t.safetyTitle}</a>
+        </nav>
       </main>
     </div>
   );

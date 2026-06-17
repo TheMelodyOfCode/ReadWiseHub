@@ -70,6 +70,10 @@ export const dictionaries: Record<Locale, Dictionary> = {
     libraryEmptyTitle: "No books yet",
     libraryEmpty:
       "Upload a supported document to start building your private reading library.",
+    libraryFilterLabel: "Library filter",
+    libraryFilterAll: "All",
+    libraryFilterActive: "Active",
+    libraryFilterInactive: "Inactive",
     uploadTitle: "Add a book or document",
     uploadCopy:
       "Add PDF, TXT, Markdown, DOCX, or EPUB files. ReadWiseHub prepares the text so you can read and ask questions with sources close by.",
@@ -278,6 +282,8 @@ export const dictionaries: Record<Locale, Dictionary> = {
     structureLimited: "Limited structure",
     structurePoor: "Difficult source formatting",
     allowedFiles: "PDF, TXT, Markdown, DOCX, or EPUB up to your current plan limit.",
+    uploadSafetyNote:
+      "Upload only files you have the right to use. Production-grade virus scanning is still being added, so avoid unknown or untrusted files.",
     fileTooLarge: "This file is larger than your current plan limit.",
     fileTypeBlocked: "Only PDF, TXT, Markdown, DOCX, and EPUB files are allowed right now.",
     usageTitle: "Your plan",
@@ -363,6 +369,8 @@ export const dictionaries: Record<Locale, Dictionary> = {
     bookDeactivated: "Book deactivated.",
     bookActivationFailed: "Book could not be activated.",
     bookDeactivationFailed: "Book could not be deactivated.",
+    bookActivationGuidance:
+      "Deactivate or delete another active book, or upgrade your plan, then try again.",
     bookInactivePlanLimit: "Inactive because it is outside your current plan limit.",
     bookInactiveUser: "Inactive because you deactivated it.",
     bookInactiveActionMessage: "Activate this book before using it.",
@@ -375,6 +383,50 @@ export const dictionaries: Record<Locale, Dictionary> = {
       "books are preserved but inactive because they are outside the current active limit.",
     libraryPlanLimitDetail:
       "Inactive books are not deleted. Delete other books, deactivate active books, or upgrade to make room.",
+    inactiveWorkflowTitle: "Inactive books are excluded",
+    inactiveAskCopy:
+      "Questions only use active books. Open Library to reactivate preserved books or choose which books should stay active.",
+    inactiveReadCopy:
+      "Reader only opens active books. Inactive books are preserved in Library but are unavailable until reactivated.",
+    inactiveArticlesCopy:
+      "Article Studio can use only active prepared books. Reactivate a book in Library before writing from it.",
+    legalLinks: "Legal and safety links",
+    termsTitle: "Terms",
+    termsCopy:
+      "These early ReadWiseHub terms explain acceptable use, subscriptions, and data handling for the public beta.",
+    termsUseTitle: "Acceptable use",
+    termsUseCopy:
+      "Use ReadWiseHub only with documents you may lawfully upload and process. Do not upload malware, illegal material, or other people's confidential data without permission.",
+    termsBillingTitle: "Subscriptions",
+    termsBillingCopy:
+      "Plan limits control active books, storage, file size, and monthly usage. Downgrades preserve books but may make some books inactive.",
+    termsDataTitle: "Service status",
+    termsDataCopy:
+      "ReadWiseHub is still preparing production safety features. Features, limits, and policies may change before full public launch.",
+    privacyTitle: "Privacy",
+    privacyCopy:
+      "This privacy overview describes the data ReadWiseHub needs to provide private reading, search, and AI features.",
+    privacyDataWeStoreTitle: "Data we store",
+    privacyDataWeStoreCopy:
+      "We store account records, uploaded files, extracted text, reader settings, generated answers, articles, usage counters, and billing status needed to operate the app.",
+    privacyAiTitle: "AI processing",
+    privacyAiCopy:
+      "Questions and relevant source passages may be sent to AI providers to generate grounded answers. User libraries remain scoped by account ownership.",
+    privacyDeletionTitle: "Export and deletion",
+    privacyDeletionCopy:
+      "Account export and deletion tools are available in Account. Active subscriptions must end before account deletion can be completed.",
+    safetyTitle: "Safety and support policy",
+    safetyCopy:
+      "ReadWiseHub is adding production safety controls before broader launch. This page documents the current operating policy.",
+    safetyUploadsTitle: "Upload safety",
+    safetyUploadsCopy:
+      "File type and plan checks are enforced. Production-grade malware scanning is still required before broader public upload confidence.",
+    safetyAbuseTitle: "Abuse controls",
+    safetyAbuseCopy:
+      "Usage limits, account verification, and active-session limits are in place. Additional abuse monitoring and rate limits should be reviewed before live billing launch.",
+    safetyAdminTitle: "Admin/support access",
+    safetyAdminCopy:
+      "Admin tooling is for operational support and debugging. Broader public launch still needs a clear support access policy and audit procedure.",
     accountTitle: "Account",
     signedInAs: "Signed in as",
     profileTitle: "Profile",
@@ -665,6 +717,10 @@ export const dictionaries: Record<Locale, Dictionary> = {
     libraryEmptyTitle: "Noch keine Bücher",
     libraryEmpty:
       "Lade ein unterstütztes Dokument hoch, um deine private Lesebibliothek aufzubauen.",
+    libraryFilterLabel: "Bibliotheksfilter",
+    libraryFilterAll: "Alle",
+    libraryFilterActive: "Aktiv",
+    libraryFilterInactive: "Inaktiv",
     uploadTitle: "Buch oder Dokument hinzufügen",
     uploadCopy:
       "Füge PDF, TXT, Markdown, DOCX oder EPUB hinzu. ReadWiseHub bereitet den Text vor, damit du lesen und mit Quellen fragen kannst.",
@@ -873,6 +929,8 @@ export const dictionaries: Record<Locale, Dictionary> = {
     structureLimited: "Begrenzte Struktur",
     structurePoor: "Schwierige Quellformatierung",
     allowedFiles: "PDF, TXT, Markdown, DOCX oder EPUB bis zum Limit deines aktuellen Tarifs.",
+    uploadSafetyNote:
+      "Lade nur Dateien hoch, die du verwenden darfst. Produktionsreifes Virenscanning wird noch ergänzt; vermeide unbekannte oder nicht vertrauenswürdige Dateien.",
     fileTooLarge: "Diese Datei ist größer als das Limit deines aktuellen Tarifs.",
     fileTypeBlocked: "Aktuell sind PDF, TXT, Markdown, DOCX und EPUB erlaubt.",
     usageTitle: "Dein Plan",
@@ -958,6 +1016,8 @@ export const dictionaries: Record<Locale, Dictionary> = {
     bookDeactivated: "Buch deaktiviert.",
     bookActivationFailed: "Buch konnte nicht aktiviert werden.",
     bookDeactivationFailed: "Buch konnte nicht deaktiviert werden.",
+    bookActivationGuidance:
+      "Deaktiviere oder lösche ein anderes aktives Buch oder upgrade deinen Tarif und versuche es erneut.",
     bookInactivePlanLimit: "Inaktiv, weil es außerhalb deines aktuellen Tariflimits liegt.",
     bookInactiveUser: "Inaktiv, weil du es deaktiviert hast.",
     bookInactiveActionMessage: "Aktiviere dieses Buch, bevor du es nutzt.",
@@ -970,6 +1030,50 @@ export const dictionaries: Record<Locale, Dictionary> = {
       "Bücher bleiben erhalten, sind aber inaktiv, weil sie außerhalb des aktuellen Aktiv-Limits liegen.",
     libraryPlanLimitDetail:
       "Inaktive Bücher werden nicht gelöscht. Lösche andere Bücher, deaktiviere aktive Bücher oder upgrade, um Platz zu schaffen.",
+    inactiveWorkflowTitle: "Inaktive Bücher sind ausgeschlossen",
+    inactiveAskCopy:
+      "Fragen nutzen nur aktive Bücher. Öffne die Bibliothek, um erhaltene Bücher zu reaktivieren oder die aktiven Bücher auszuwählen.",
+    inactiveReadCopy:
+      "Der Reader öffnet nur aktive Bücher. Inaktive Bücher bleiben in der Bibliothek erhalten, sind aber bis zur Reaktivierung nicht verfügbar.",
+    inactiveArticlesCopy:
+      "Das Artikelstudio kann nur aktive vorbereitete Bücher nutzen. Reaktiviere ein Buch in der Bibliothek, bevor du daraus schreibst.",
+    legalLinks: "Rechtliche und Sicherheitslinks",
+    termsTitle: "AGB",
+    termsCopy:
+      "Diese frühen ReadWiseHub-Bedingungen erklären Nutzung, Abos und Datenverarbeitung für die öffentliche Beta.",
+    termsUseTitle: "Erlaubte Nutzung",
+    termsUseCopy:
+      "Nutze ReadWiseHub nur mit Dokumenten, die du rechtmäßig hochladen und verarbeiten darfst. Lade keine Malware, illegalen Inhalte oder vertraulichen Daten Dritter ohne Erlaubnis hoch.",
+    termsBillingTitle: "Abos",
+    termsBillingCopy:
+      "Tariflimits steuern aktive Bücher, Speicher, Dateigröße und monatliche Nutzung. Downgrades erhalten Bücher, können aber einige Bücher inaktiv machen.",
+    termsDataTitle: "Status des Dienstes",
+    termsDataCopy:
+      "ReadWiseHub bereitet weiterhin Produktions-Sicherheitsfunktionen vor. Funktionen, Limits und Richtlinien können sich vor dem breiten öffentlichen Start ändern.",
+    privacyTitle: "Datenschutz",
+    privacyCopy:
+      "Diese Datenschutzübersicht beschreibt die Daten, die ReadWiseHub für privates Lesen, Suche und KI-Funktionen benötigt.",
+    privacyDataWeStoreTitle: "Gespeicherte Daten",
+    privacyDataWeStoreCopy:
+      "Wir speichern Kontodaten, Upload-Dateien, extrahierten Text, Reader-Einstellungen, generierte Antworten, Artikel, Nutzungszähler und Abostatus, die für den Betrieb der App nötig sind.",
+    privacyAiTitle: "KI-Verarbeitung",
+    privacyAiCopy:
+      "Fragen und relevante Quelltextstellen können an KI-Anbieter gesendet werden, um Antworten mit Quellen zu erzeugen. Bibliotheken bleiben nach Kontoeigentum getrennt.",
+    privacyDeletionTitle: "Export und Löschung",
+    privacyDeletionCopy:
+      "Export- und Löschwerkzeuge findest du im Konto. Aktive Abos müssen enden, bevor die Kontolöschung abgeschlossen werden kann.",
+    safetyTitle: "Sicherheit und Support",
+    safetyCopy:
+      "ReadWiseHub ergänzt Produktions-Sicherheitskontrollen vor einem breiteren Launch. Diese Seite dokumentiert die aktuelle Betriebspolitik.",
+    safetyUploadsTitle: "Upload-Sicherheit",
+    safetyUploadsCopy:
+      "Dateityp- und Tarifprüfungen werden serverseitig erzwungen. Produktionsreifes Malware-Scanning ist vor breiterem Upload-Vertrauen noch erforderlich.",
+    safetyAbuseTitle: "Missbrauchsschutz",
+    safetyAbuseCopy:
+      "Nutzungslimits, E-Mail-Verifizierung und Geräte-Limits sind aktiv. Zusätzliche Missbrauchsüberwachung und Rate Limits sollten vor Live-Billing geprüft werden.",
+    safetyAdminTitle: "Admin-/Support-Zugriff",
+    safetyAdminCopy:
+      "Admin-Werkzeuge dienen Betriebssupport und Debugging. Vor breiterem Launch braucht es noch eine klare Support-Zugriffsrichtlinie mit Audit-Verfahren.",
     accountTitle: "Konto",
     signedInAs: "Angemeldet als",
     profileTitle: "Profil",
