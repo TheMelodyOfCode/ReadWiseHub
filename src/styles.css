@@ -2945,6 +2945,17 @@ select {
   font-weight: 900;
 }
 
+.pricing-processing-note {
+  max-width: 820px;
+  margin: 0;
+  padding: 14px 16px;
+  border: 1px solid color-mix(in srgb, var(--primary) 34%, var(--border));
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--primary) 7%, var(--surface));
+  color: var(--text);
+  font-size: 0.98rem;
+}
+
 .pricing-policy {
   display: grid;
   gap: 18px;
@@ -3122,7 +3133,7 @@ select {
 
   .workspace-hero {
     grid-template-columns: minmax(0, 1fr) minmax(300px, 420px);
-    align-items: end;
+    align-items: start;
     padding-top: 56px;
   }
 

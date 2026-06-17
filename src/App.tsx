@@ -4277,6 +4277,8 @@ export function App() {
             })}
           </section>
 
+          <p className="pricing-processing-note">{t.pricingProcessedUploadsNote}</p>
+
           <section className="pricing-policy">
             <div>
               <p className="eyebrow">{t.pricingDowngradeEyebrow}</p>
@@ -5891,12 +5893,12 @@ export function App() {
                 <p className="small-note">
                   {t.billingCurrentPlanNote}: {usage.plan.toUpperCase()}
                 </p>
-              <div className="book-actions billing-actions">
-                {renderBillingActions()}
-                <a className="button secondary compact" href="/pricing">
-                  {t.viewPlans}
-                </a>
-              </div>
+                <div className="book-actions billing-actions">
+                  {renderBillingActions()}
+                  <a className="button secondary compact" href="/pricing">
+                    {t.viewPlans}
+                  </a>
+                </div>
                 {billingMessage ? (
                   <p className={billingMessageTone === "error" ? "error-text" : "status-message"}>
                     {billingMessage}
