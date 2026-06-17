@@ -706,6 +706,38 @@ function getPricingPlans(t: Record<string, string>) {
   ];
 }
 
+function getPlanRank(plan: string) {
+  switch (plan) {
+    case "ultimate":
+      return 3;
+    case "pro":
+      return 2;
+    case "plus":
+      return 1;
+    default:
+      return 0;
+  }
+}
+
+function getPlanActionLabel(
+  currentPlan: string,
+  targetPlan: BillingPlanId,
+  targetName: string,
+  t: Record<string, string>
+) {
+  if (currentPlan === targetPlan) {
+    return t.billingCurrentPlanNote;
+  }
+
+  if (targetPlan === "free") {
+    return t.pricingCurrentFree;
+  }
+
+  return getPlanRank(targetPlan) > getPlanRank(currentPlan)
+    ? `${t.billingUpgradeTo} ${targetName}`
+    : `${t.billingDowngradeTo} ${targetName}`;
+}
+
 function getDeviceInfo() {
   const parser = new UAParser(navigator.userAgent);
   const browser = parser.getBrowser();
@@ -3989,6 +4021,10 @@ export function App() {
   }
 
   function renderBillingActions() {
+    const plusLabel = getPlanActionLabel(usage.plan, "plus", t.plusPlan, t);
+    const proLabel = getPlanActionLabel(usage.plan, "pro", t.proPlan, t);
+    const ultimateLabel = getPlanActionLabel(usage.plan, "ultimate", t.ultimatePlan, t);
+
     if (hasOpenStripeSubscription) {
       return (
         <>
@@ -4013,7 +4049,7 @@ export function App() {
           disabled={Boolean(billingBusy) || usage.plan === "plus"}
           onClick={() => void startStripeCheckout("plus")}
         >
-          {billingBusy === "plus" ? t.loading : t.billingUpgradePlus}
+          {billingBusy === "plus" ? t.loading : plusLabel}
         </button>
         <button
           className="button secondary compact"
@@ -4021,7 +4057,7 @@ export function App() {
           disabled={Boolean(billingBusy) || usage.plan === "pro"}
           onClick={() => void startStripeCheckout("pro")}
         >
-          {billingBusy === "pro" ? t.loading : t.billingUpgradePro}
+          {billingBusy === "pro" ? t.loading : proLabel}
         </button>
         <button
           className="button secondary compact"
@@ -4029,7 +4065,7 @@ export function App() {
           disabled={Boolean(billingBusy) || usage.plan === "ultimate"}
           onClick={() => void startStripeCheckout("ultimate")}
         >
-          {billingBusy === "ultimate" ? t.loading : t.billingUpgradeUltimate}
+          {billingBusy === "ultimate" ? t.loading : ultimateLabel}
         </button>
       </>
     );
@@ -4067,6 +4103,7 @@ export function App() {
             {plans.map((plan) => {
               const isCurrent = usage.plan === plan.id;
               const canCheckout = plan.id !== "free" && !hasOpenStripeSubscription;
+              const actionLabel = getPlanActionLabel(usage.plan, plan.id, plan.name, t);
               return (
                 <article
                   className={`pricing-card ${plan.featured ? "featured" : ""}`}
@@ -4104,7 +4141,7 @@ export function App() {
                       disabled={Boolean(billingBusy) || isCurrent || !canCheckout}
                       onClick={() => void startStripeCheckout(plan.id as "plus" | "pro" | "ultimate")}
                     >
-                      {billingBusy === plan.id ? t.loading : isCurrent ? t.billingCurrentPlanNote : plan.cta}
+                      {billingBusy === plan.id ? t.loading : actionLabel}
                     </button>
                   ) : (
                     <a className="button primary" href="/#account">
