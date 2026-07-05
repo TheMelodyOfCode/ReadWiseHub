@@ -3931,3 +3931,172 @@ a:focus-visible {
     width: 100%;
   }
 }
+
+/* Final responsive polish for public, pricing, and legal surfaces. */
+.button {
+  max-width: 100%;
+  min-width: 0;
+  text-align: center;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.button.compact {
+  width: auto;
+  max-width: 100%;
+  line-height: 1.25;
+}
+
+.book-actions .button,
+.article-rewrite-actions .button,
+.modal-actions .button,
+.verification-actions .button,
+.privacy-actions .button,
+.section-actions .button {
+  flex: 1 1 180px;
+}
+
+.header-button {
+  line-height: 1.2;
+}
+
+.legal-header-actions {
+  grid-template-columns: minmax(76px, 112px) minmax(86px, 1fr) minmax(94px, auto);
+}
+
+.legal-header-actions .button,
+.pricing-page .public-header-actions .button,
+.pricing-page .public-header-actions .theme-toggle {
+  min-width: 0;
+  font-size: 0.95rem;
+}
+
+.policy-grid article {
+  min-width: 0;
+}
+
+.policy-grid article p,
+.impressum-card p {
+  white-space: pre-line;
+  overflow-wrap: anywhere;
+}
+
+.impressum-card:first-child {
+  border-color: color-mix(in srgb, var(--primary) 34%, var(--border));
+}
+
+.policy-links {
+  padding-top: 4px;
+}
+
+.policy-links a {
+  display: inline-flex;
+  min-height: 38px;
+  align-items: center;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 11px;
+  background: var(--surface);
+  text-decoration: none;
+}
+
+.policy-links a:hover,
+.policy-links a:focus-visible {
+  border-color: color-mix(in srgb, var(--primary) 42%, var(--border));
+  background: color-mix(in srgb, var(--primary) 8%, var(--surface));
+  color: var(--text);
+}
+
+.pricing-card .button {
+  width: 100%;
+}
+
+.pricing-price {
+  min-width: 0;
+  flex-wrap: wrap;
+}
+
+.pricing-price small {
+  overflow-wrap: anywhere;
+}
+
+.source-row,
+.preview-panel,
+.chat-card,
+.status-pill,
+.mode-badge,
+.vector-coverage-pill {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 719px) {
+  .site-header {
+    row-gap: 14px;
+  }
+
+  .legal-header-actions {
+    grid-template-columns: minmax(94px, 112px) minmax(82px, 1fr) minmax(94px, auto);
+    gap: 10px;
+  }
+
+  .legal-header-actions .language-toggle {
+    width: 112px;
+  }
+
+  .legal-header-actions .theme-toggle,
+  .legal-header-actions .button {
+    min-height: 38px;
+    padding: 8px 9px;
+  }
+
+  .pricing-page .public-header-actions {
+    grid-template-columns: minmax(94px, 112px) minmax(82px, 1fr) minmax(94px, auto);
+    gap: 10px;
+  }
+
+  .pricing-hero h1,
+  .policy-hero h1 {
+    max-width: 12ch;
+    font-size: clamp(2.05rem, 10vw, 3rem);
+  }
+
+  .policy-main,
+  .pricing-page main {
+    padding-inline: 20px;
+  }
+
+  .policy-grid,
+  .pricing-grid {
+    gap: 12px;
+  }
+
+  .policy-grid article,
+  .pricing-card,
+  .pricing-policy {
+    padding: 18px;
+  }
+
+  .auth-actions,
+  .modal-actions,
+  .verification-actions,
+  .book-actions,
+  .article-rewrite-actions {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .auth-actions .button,
+  .modal-actions .button,
+  .verification-actions .button,
+  .book-actions .button,
+  .article-rewrite-actions .button,
+  .section-actions .button {
+    width: 100%;
+  }
+
+  .reader-footer > span {
+    flex-basis: 100%;
+    text-align: center;
+  }
+}

@@ -429,6 +429,24 @@ export const dictionaries: Record<Locale, Dictionary> = {
     safetyAdminTitle: "Admin/support access",
     safetyAdminCopy:
       "Admin tooling is for operational support and debugging. Broader public launch still needs a clear support access policy and audit procedure.",
+    impressumTitle: "Impressum",
+    impressumCopy:
+      "Provider information and legal contact details for ReadWiseHub.",
+    impressumProviderTitle: "Provider information according to § 5 DDG",
+    impressumProviderCopy:
+      "Dennis Cameron\nReadWiseHub\nFriedrich-Fangmeier-Str. 6\n49356 Diepholz OT Heede\nGermany\n\nRegistered activity: software-as-a-service for reading, document preparation, source search, and source-based AI answers.",
+    impressumContactTitle: "Contact",
+    impressumContactCopy:
+      "Email: hierwirdgeholfen@gmail.com\nPhone: +49 160 91853878",
+    impressumEditorialTitle: "Responsible for editorial content",
+    impressumEditorialCopy:
+      "Responsible according to § 18 Abs. 2 Medienstaatsvertrag (MStV), where editorial content is published on this website: Dennis Cameron, address as above.",
+    impressumDisputeTitle: "Consumer dispute resolution",
+    impressumDisputeCopy:
+      "We are not obliged and not willing to participate in dispute resolution proceedings before a consumer arbitration board.",
+    impressumNoteTitle: "Note",
+    impressumNoteCopy:
+      "This Impressum reflects the available provider information and current German provider-labeling structure. It does not replace individual legal advice.",
     accountTitle: "Account",
     signedInAs: "Signed in as",
     profileTitle: "Profile",
@@ -1078,6 +1096,24 @@ export const dictionaries: Record<Locale, Dictionary> = {
     safetyAdminTitle: "Admin-/Support-Zugriff",
     safetyAdminCopy:
       "Admin-Werkzeuge dienen Betriebssupport und Debugging. Vor breiterem Launch braucht es noch eine klare Support-Zugriffsrichtlinie mit Audit-Verfahren.",
+    impressumTitle: "Impressum",
+    impressumCopy:
+      "Anbieterkennzeichnung und rechtliche Kontaktdaten für ReadWiseHub.",
+    impressumProviderTitle: "Angaben gemäß § 5 DDG",
+    impressumProviderCopy:
+      "Dennis Cameron\nReadWiseHub\nFriedrich-Fangmeier-Str. 6\n49356 Diepholz OT Heede\nDeutschland\n\nAngemeldete Tätigkeit: Software-as-a-Service für Lesen, Dokumentvorbereitung, Quellensuche und quellenbasierte KI-Antworten.",
+    impressumContactTitle: "Kontakt",
+    impressumContactCopy:
+      "E-Mail: hierwirdgeholfen@gmail.com\nTelefon: +49 160 91853878",
+    impressumEditorialTitle: "Verantwortlich für journalistisch-redaktionelle Inhalte",
+    impressumEditorialCopy:
+      "Verantwortlich im Sinne des § 18 Abs. 2 Medienstaatsvertrag (MStV), soweit entsprechende Inhalte auf dieser Website veröffentlicht werden: Dennis Cameron, Anschrift wie oben.",
+    impressumDisputeTitle: "Verbraucherstreitbeilegung",
+    impressumDisputeCopy:
+      "Wir sind zur Teilnahme an einem Streitbeilegungsverfahren vor einer Verbraucherschlichtungsstelle nicht verpflichtet und nicht bereit.",
+    impressumNoteTitle: "Hinweis",
+    impressumNoteCopy:
+      "Dieses Impressum orientiert sich an den vorliegenden Anbieterangaben und der aktuellen deutschen Anbieterkennzeichnungsstruktur. Es ersetzt keine individuelle Rechtsberatung.",
     accountTitle: "Konto",
     signedInAs: "Angemeldet als",
     profileTitle: "Profil",

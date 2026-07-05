@@ -8,7 +8,7 @@
     <xhtml:link rel="alternate" hreflang="en" href="https://readwisehub.com/?lang=en" />
     <xhtml:link rel="alternate" hreflang="de" href="https://readwisehub.com/?lang=de" />
     <xhtml:link rel="alternate" hreflang="x-default" href="https://readwisehub.com/" />
-    <lastmod>2026-06-17</lastmod>
+    <lastmod>2026-07-05</lastmod>
     <changefreq>weekly</changefreq>
     <priority>1.0</priority>
   </url>
@@ -17,7 +17,7 @@
     <xhtml:link rel="alternate" hreflang="en" href="https://readwisehub.com/?lang=en" />
     <xhtml:link rel="alternate" hreflang="de" href="https://readwisehub.com/?lang=de" />
     <xhtml:link rel="alternate" hreflang="x-default" href="https://readwisehub.com/" />
-    <lastmod>2026-06-17</lastmod>
+    <lastmod>2026-07-05</lastmod>
     <changefreq>weekly</changefreq>
     <priority>0.9</priority>
   </url>
@@ -26,7 +26,7 @@
     <xhtml:link rel="alternate" hreflang="en" href="https://readwisehub.com/?lang=en" />
     <xhtml:link rel="alternate" hreflang="de" href="https://readwisehub.com/?lang=de" />
     <xhtml:link rel="alternate" hreflang="x-default" href="https://readwisehub.com/" />
-    <lastmod>2026-06-17</lastmod>
+    <lastmod>2026-07-05</lastmod>
     <changefreq>weekly</changefreq>
     <priority>0.9</priority>
   </url>
@@ -35,7 +35,7 @@
     <xhtml:link rel="alternate" hreflang="en" href="https://readwisehub.com/pricing?lang=en" />
     <xhtml:link rel="alternate" hreflang="de" href="https://readwisehub.com/pricing?lang=de" />
     <xhtml:link rel="alternate" hreflang="x-default" href="https://readwisehub.com/pricing" />
-    <lastmod>2026-06-17</lastmod>
+    <lastmod>2026-07-05</lastmod>
     <changefreq>weekly</changefreq>
     <priority>0.8</priority>
   </url>
@@ -44,7 +44,7 @@
     <xhtml:link rel="alternate" hreflang="en" href="https://readwisehub.com/pricing?lang=en" />
     <xhtml:link rel="alternate" hreflang="de" href="https://readwisehub.com/pricing?lang=de" />
     <xhtml:link rel="alternate" hreflang="x-default" href="https://readwisehub.com/pricing" />
-    <lastmod>2026-06-17</lastmod>
+    <lastmod>2026-07-05</lastmod>
     <changefreq>weekly</changefreq>
     <priority>0.8</priority>
   </url>
@@ -53,7 +53,7 @@
     <xhtml:link rel="alternate" hreflang="en" href="https://readwisehub.com/pricing?lang=en" />
     <xhtml:link rel="alternate" hreflang="de" href="https://readwisehub.com/pricing?lang=de" />
     <xhtml:link rel="alternate" hreflang="x-default" href="https://readwisehub.com/pricing" />
-    <lastmod>2026-06-17</lastmod>
+    <lastmod>2026-07-05</lastmod>
     <changefreq>weekly</changefreq>
     <priority>0.8</priority>
   </url>
@@ -62,7 +62,7 @@
     <xhtml:link rel="alternate" hreflang="en" href="https://readwisehub.com/terms?lang=en" />
     <xhtml:link rel="alternate" hreflang="de" href="https://readwisehub.com/terms?lang=de" />
     <xhtml:link rel="alternate" hreflang="x-default" href="https://readwisehub.com/terms" />
-    <lastmod>2026-06-17</lastmod>
+    <lastmod>2026-07-05</lastmod>
     <changefreq>monthly</changefreq>
     <priority>0.6</priority>
   </url>
@@ -71,7 +71,34 @@
     <xhtml:link rel="alternate" hreflang="en" href="https://readwisehub.com/privacy?lang=en" />
     <xhtml:link rel="alternate" hreflang="de" href="https://readwisehub.com/privacy?lang=de" />
     <xhtml:link rel="alternate" hreflang="x-default" href="https://readwisehub.com/privacy" />
-    <lastmod>2026-06-17</lastmod>
+    <lastmod>2026-07-05</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.6</priority>
+  </url>
+  <url>
+    <loc>https://readwisehub.com/impressum</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="https://readwisehub.com/impressum?lang=en" />
+    <xhtml:link rel="alternate" hreflang="de" href="https://readwisehub.com/impressum?lang=de" />
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://readwisehub.com/impressum" />
+    <lastmod>2026-07-05</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.6</priority>
+  </url>
+  <url>
+    <loc>https://readwisehub.com/impressum?lang=en</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="https://readwisehub.com/impressum?lang=en" />
+    <xhtml:link rel="alternate" hreflang="de" href="https://readwisehub.com/impressum?lang=de" />
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://readwisehub.com/impressum" />
+    <lastmod>2026-07-05</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.6</priority>
+  </url>
+  <url>
+    <loc>https://readwisehub.com/impressum?lang=de</loc>
+    <xhtml:link rel="alternate" hreflang="en" href="https://readwisehub.com/impressum?lang=en" />
+    <xhtml:link rel="alternate" hreflang="de" href="https://readwisehub.com/impressum?lang=de" />
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://readwisehub.com/impressum" />
+    <lastmod>2026-07-05</lastmod>
     <changefreq>monthly</changefreq>
     <priority>0.6</priority>
   </url>
@@ -80,7 +107,7 @@
     <xhtml:link rel="alternate" hreflang="en" href="https://readwisehub.com/safety?lang=en" />
     <xhtml:link rel="alternate" hreflang="de" href="https://readwisehub.com/safety?lang=de" />
     <xhtml:link rel="alternate" hreflang="x-default" href="https://readwisehub.com/safety" />
-    <lastmod>2026-06-17</lastmod>
+    <lastmod>2026-07-05</lastmod>
     <changefreq>monthly</changefreq>
     <priority>0.6</priority>
   </url>

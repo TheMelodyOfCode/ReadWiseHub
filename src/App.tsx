@@ -836,6 +836,7 @@ export function App() {
   const isTermsPath = window.location.pathname.startsWith("/terms");
   const isPrivacyPath = window.location.pathname.startsWith("/privacy");
   const isSafetyPath = window.location.pathname.startsWith("/safety");
+  const isImpressumPath = window.location.pathname.startsWith("/impressum");
   const [locale, setLocale] = useState<Locale>(() => detectInitialLocale());
   const [theme, setTheme] = useState<Theme>(() => getInitialTheme());
   const [user, setUser] = useState<User | null>(null);
@@ -1371,9 +1372,25 @@ export function App() {
                 description: t.safetyCopy,
                 canonicalPath: `/safety?lang=${locale}`,
               }
-      : baseSeo;
+            : isImpressumPath
+              ? {
+                  title: `${t.impressumTitle} | ReadWiseHub`,
+                  description: t.impressumCopy,
+                  canonicalPath: `/impressum?lang=${locale}`,
+                }
+              : baseSeo;
     const canonicalUrl = `${CANONICAL_ORIGIN}${seo.canonicalPath}`;
-    const routePath = isPricingPath ? "/pricing" : isTermsPath ? "/terms" : isPrivacyPath ? "/privacy" : isSafetyPath ? "/safety" : "/";
+    const routePath = isPricingPath
+      ? "/pricing"
+      : isTermsPath
+        ? "/terms"
+        : isPrivacyPath
+          ? "/privacy"
+          : isSafetyPath
+            ? "/safety"
+            : isImpressumPath
+              ? "/impressum"
+              : "/";
     document.title = seo.title;
     upsertMeta('meta[name="description"]', { name: "description", content: seo.description });
     upsertMeta('meta[property="og:title"]', { property: "og:title", content: seo.title });
@@ -1400,8 +1417,11 @@ export function App() {
     isPrivacyPath,
     isSafetyPath,
     isTermsPath,
+    isImpressumPath,
     locale,
     t.billingTitle,
+    t.impressumCopy,
+    t.impressumTitle,
     t.pricingPageCopy,
     t.privacyCopy,
     t.privacyTitle,
@@ -4307,6 +4327,7 @@ export function App() {
             </p>
           ) : null}
           <nav className="policy-links" aria-label={t.legalLinks}>
+            <a href="/impressum">{t.impressumTitle}</a>
             <a href="/terms">{t.termsTitle}</a>
             <a href="/privacy">{t.privacyTitle}</a>
             <a href="/safety">{t.safetyTitle}</a>
@@ -4316,11 +4337,23 @@ export function App() {
     );
   }
 
-  function renderPolicyPage(kind: "terms" | "privacy" | "safety") {
+  function renderPolicyPage(kind: "terms" | "privacy" | "safety" | "impressum") {
     const title =
-      kind === "terms" ? t.termsTitle : kind === "privacy" ? t.privacyTitle : t.safetyTitle;
+      kind === "terms"
+        ? t.termsTitle
+        : kind === "privacy"
+          ? t.privacyTitle
+          : kind === "safety"
+            ? t.safetyTitle
+            : t.impressumTitle;
     const copy =
-      kind === "terms" ? t.termsCopy : kind === "privacy" ? t.privacyCopy : t.safetyCopy;
+      kind === "terms"
+        ? t.termsCopy
+        : kind === "privacy"
+          ? t.privacyCopy
+          : kind === "safety"
+            ? t.safetyCopy
+            : t.impressumCopy;
     const sections =
       kind === "terms"
         ? [
@@ -4334,11 +4367,19 @@ export function App() {
               [t.privacyAiTitle, t.privacyAiCopy],
               [t.privacyDeletionTitle, t.privacyDeletionCopy],
             ]
-          : [
-              [t.safetyUploadsTitle, t.safetyUploadsCopy],
-              [t.safetyAbuseTitle, t.safetyAbuseCopy],
-              [t.safetyAdminTitle, t.safetyAdminCopy],
-            ];
+          : kind === "safety"
+            ? [
+                [t.safetyUploadsTitle, t.safetyUploadsCopy],
+                [t.safetyAbuseTitle, t.safetyAbuseCopy],
+                [t.safetyAdminTitle, t.safetyAdminCopy],
+              ]
+            : [
+                [t.impressumProviderTitle, t.impressumProviderCopy],
+                [t.impressumContactTitle, t.impressumContactCopy],
+                [t.impressumEditorialTitle, t.impressumEditorialCopy],
+                [t.impressumDisputeTitle, t.impressumDisputeCopy],
+                [t.impressumNoteTitle, t.impressumNoteCopy],
+              ];
 
     return (
       <div className="app-shell policy-page">
@@ -4350,7 +4391,7 @@ export function App() {
               <small>{t.brandTagline}</small>
             </span>
           </a>
-          <div className="public-header-actions">
+          <div className="public-header-actions legal-header-actions">
             {languageToggle}
             {themeToggle}
             <a className="button header-button" href={user ? "/#account" : "/#account"}>
@@ -4366,13 +4407,14 @@ export function App() {
           </section>
           <section className="policy-grid">
             {sections.map(([sectionTitle, sectionCopy]) => (
-              <article key={sectionTitle}>
+              <article className={kind === "impressum" ? "impressum-card" : ""} key={sectionTitle}>
                 <h2>{sectionTitle}</h2>
                 <p>{sectionCopy}</p>
               </article>
             ))}
           </section>
           <nav className="policy-links" aria-label={t.legalLinks}>
+            <a href="/impressum">{t.impressumTitle}</a>
             <a href="/terms">{t.termsTitle}</a>
             <a href="/privacy">{t.privacyTitle}</a>
             <a href="/safety">{t.safetyTitle}</a>
@@ -5790,6 +5832,10 @@ export function App() {
 
   if (isSafetyPath) {
     return renderPolicyPage("safety");
+  }
+
+  if (isImpressumPath) {
+    return renderPolicyPage("impressum");
   }
 
   if (user) {
@@ -8385,6 +8431,7 @@ export function App() {
           <p>{t.publicHelpCopy}</p>
         </section>
         <nav className="policy-links public-policy-links" aria-label={t.legalLinks}>
+          <a href="/impressum">{t.impressumTitle}</a>
           <a href="/terms">{t.termsTitle}</a>
           <a href="/privacy">{t.privacyTitle}</a>
           <a href="/safety">{t.safetyTitle}</a>
