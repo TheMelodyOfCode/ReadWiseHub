@@ -8264,73 +8264,6 @@ export function App() {
               </a>
             </div>
           </div>
-          <section id="account" className="account-section compact-account">
-            <div>
-              <h2>{t.signIn}</h2>
-              <p>{t.authRequired}</p>
-            </div>
-
-            {!authReady ? (
-              <p>{t.loading}</p>
-            ) : (
-              <div className="auth-panel">
-                <form onSubmit={(event) => handlePasswordAuth(event, "signIn")}>
-                  <label>
-                    {t.email}
-                    <input
-                      type="email"
-                      autoComplete="email"
-                      value={email}
-                      onChange={(event) => setEmail(event.target.value)}
-                      required
-                    />
-                  </label>
-                  <label>
-                    {t.password}
-                    <input
-                      type="password"
-                      autoComplete="current-password"
-                      value={password}
-                      onChange={(event) => setPassword(event.target.value)}
-                      required
-                      minLength={6}
-                    />
-                  </label>
-                  <button
-                    className="auth-text-button"
-                    type="button"
-                    onClick={sendPasswordReset}
-                  >
-                    {t.forgotPassword}
-                  </button>
-                  <div className="auth-actions">
-                    <button className="button primary" type="submit">
-                      {t.signIn}
-                    </button>
-                    <button
-                      className="button secondary"
-                      type="button"
-                      onClick={() => submitPasswordAuth("signUp")}
-                    >
-                      {t.createAccount}
-                    </button>
-                  </div>
-                </form>
-                <button className="button google" type="button" onClick={handleGoogleAuth}>
-                  {t.continueWithGoogle}
-                </button>
-                {authError ? <p className="error-text">{authError}</p> : null}
-                {status === t.passwordResetSent ? (
-                  <div className="auth-status-card success-text">
-                    <h3>{t.passwordResetSentTitle}</h3>
-                    <p>{status}</p>
-                  </div>
-                ) : status ? (
-                  <p className="success-text">{status}</p>
-                ) : null}
-              </div>
-            )}
-          </section>
           <div className="preview-panel" aria-label="Product preview">
             <div className="chat-card user-card">{t.previewQuestion}</div>
             <div className="chat-card answer-card">{t.previewAnswer}</div>
@@ -8429,6 +8362,74 @@ export function App() {
         <section id="help" className="content-section help-section">
           <h2>{t.navHelp}</h2>
           <p>{t.publicHelpCopy}</p>
+        </section>
+
+        <section id="account" className="account-section compact-account public-account-section">
+          <div>
+            <h2>{t.signIn}</h2>
+            <p>{t.authRequired}</p>
+          </div>
+
+          {!authReady ? (
+            <p>{t.loading}</p>
+          ) : (
+            <div className="auth-panel">
+              <form onSubmit={(event) => handlePasswordAuth(event, "signIn")}>
+                <label>
+                  {t.email}
+                  <input
+                    type="email"
+                    autoComplete="email"
+                    value={email}
+                    onChange={(event) => setEmail(event.target.value)}
+                    required
+                  />
+                </label>
+                <label>
+                  {t.password}
+                  <input
+                    type="password"
+                    autoComplete="current-password"
+                    value={password}
+                    onChange={(event) => setPassword(event.target.value)}
+                    required
+                    minLength={6}
+                  />
+                </label>
+                <button
+                  className="auth-text-button"
+                  type="button"
+                  onClick={sendPasswordReset}
+                >
+                  {t.forgotPassword}
+                </button>
+                <div className="auth-actions">
+                  <button className="button primary" type="submit">
+                    {t.signIn}
+                  </button>
+                  <button
+                    className="button secondary"
+                    type="button"
+                    onClick={() => submitPasswordAuth("signUp")}
+                  >
+                    {t.createAccount}
+                  </button>
+                </div>
+              </form>
+              <button className="button google" type="button" onClick={handleGoogleAuth}>
+                {t.continueWithGoogle}
+              </button>
+              {authError ? <p className="error-text">{authError}</p> : null}
+              {status === t.passwordResetSent ? (
+                <div className="auth-status-card success-text">
+                  <h3>{t.passwordResetSentTitle}</h3>
+                  <p>{status}</p>
+                </div>
+              ) : status ? (
+                <p className="success-text">{status}</p>
+              ) : null}
+            </div>
+          )}
         </section>
         <nav className="policy-links public-policy-links" aria-label={t.legalLinks}>
           <a href="/impressum">{t.impressumTitle}</a>

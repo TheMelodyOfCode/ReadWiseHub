@@ -3322,6 +3322,14 @@ select {
   box-shadow: var(--shadow);
 }
 
+.public-account-section {
+  margin: 0 clamp(16px, 5vw, 72px) 42px;
+}
+
+.public-account-section .auth-panel {
+  max-width: 640px;
+}
+
 input:focus,
 textarea:focus,
 select:focus,
@@ -3845,13 +3853,10 @@ a:focus-visible {
     padding-top: 56px;
   }
 
-  .compact-account {
-    grid-column: 2;
-    grid-row: 1 / span 2;
-  }
-
   .preview-panel {
-    grid-column: 1;
+    grid-column: 2;
+    grid-row: 1;
+    align-self: end;
   }
 
   .hero-actions,
