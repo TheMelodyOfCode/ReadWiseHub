@@ -2809,6 +2809,10 @@ select {
   padding: 18px;
 }
 
+.workspace-tab-panel .workspace-account {
+  margin: 0;
+}
+
 .profile-panel {
   display: grid;
   gap: 12px;

@@ -41,7 +41,7 @@ import readWiseHubIcon from "./assets/readwisehub-icon.png";
 import { UAParser } from "ua-parser-js";
 
 type Theme = "light" | "dark";
-type WorkspaceTab = "ask" | "library" | "read" | "articles" | "history" | "help";
+type WorkspaceTab = "ask" | "library" | "read" | "articles" | "history" | "help" | "account";
 type LibraryFilter = "all" | "active" | "inactive";
 type BillingPlanId = "free" | "plus" | "pro" | "ultimate";
 const DELETE_CONFIRMATION_PHRASE = "ReadWiseHub 2026";
@@ -5893,7 +5893,7 @@ export function App() {
                 <a href="/pricing" onClick={closeMenu}>
                   {t.billingShortcut}
                 </a>
-                <a href="#account" onClick={closeMenu}>
+                <a href="#library" onClick={() => openMenuTab("account")}>
                   {t.navAccount}
                 </a>
               </nav>
@@ -5995,7 +5995,7 @@ export function App() {
 
             <div className="workspace-tabs" aria-label={t.workspaceToolsTitle}>
               {(
-                ["ask", "library", "read", "articles", "history", "help"] as WorkspaceTab[]
+                ["ask", "library", "read", "articles", "history", "help", "account"] as WorkspaceTab[]
               ).map((tab) => (
                 <button
                   key={tab}
@@ -6014,7 +6014,9 @@ export function App() {
                           ? t.tabArticles
                           : tab === "history"
                             ? t.tabHistory
-                            : t.tabHelp}
+                            : tab === "help"
+                              ? t.tabHelp
+                              : t.navAccount}
                 </button>
               ))}
             </div>
@@ -7854,8 +7856,8 @@ export function App() {
                 </form>
               </div>
             ) : null}
-          </section>
-
+            {workspaceTab === "account" ? (
+              <div className="workspace-tab-panel">
           <section id="account" className="account-section workspace-account">
             <div>
               <p className="eyebrow">{t.navAccount}</p>
@@ -8174,6 +8176,9 @@ export function App() {
               )}
             </div>
             {authError ? <p className="error-text">{authError}</p> : null}
+          </section>
+              </div>
+            ) : null}
           </section>
           {uploadPrepNoticeBook ? (
             <div className="modal-backdrop" role="presentation">

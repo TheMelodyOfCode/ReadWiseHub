@@ -434,10 +434,10 @@ export const dictionaries: Record<Locale, Dictionary> = {
       "Provider information and legal contact details for ReadWiseHub.",
     impressumProviderTitle: "Provider information according to § 5 DDG",
     impressumProviderCopy:
-      "Dennis Cameron\nReadWiseHub\nFriedrich-Fangmeier-Str. 6\n49356 Diepholz OT Heede\nGermany\n\nRegistered activity: software-as-a-service for reading, document preparation, source search, and source-based AI answers.",
+      "Dennis Cameron\nReadWiseHub\n49356 Diepholz\nGermany\n\nRegistered activity: software-as-a-service for reading, document preparation, source search, and source-based AI answers.",
     impressumContactTitle: "Contact",
     impressumContactCopy:
-      "Email: hierwirdgeholfen@gmail.com\nPhone: +49 160 91853878",
+      "Email: mail.biblerewritten@gmail.com\nPhone: +49 160 91853878",
     impressumEditorialTitle: "Responsible for editorial content",
     impressumEditorialCopy:
       "Responsible according to § 18 Abs. 2 Medienstaatsvertrag (MStV), where editorial content is published on this website: Dennis Cameron, address as above.",
@@ -1101,10 +1101,10 @@ export const dictionaries: Record<Locale, Dictionary> = {
       "Anbieterkennzeichnung und rechtliche Kontaktdaten für ReadWiseHub.",
     impressumProviderTitle: "Angaben gemäß § 5 DDG",
     impressumProviderCopy:
-      "Dennis Cameron\nReadWiseHub\nFriedrich-Fangmeier-Str. 6\n49356 Diepholz OT Heede\nDeutschland\n\nAngemeldete Tätigkeit: Software-as-a-Service für Lesen, Dokumentvorbereitung, Quellensuche und quellenbasierte KI-Antworten.",
+      "Dennis Cameron\nReadWiseHub\n49356 Diepholz\nDeutschland\n\nAngemeldete Tätigkeit: Software-as-a-Service für Lesen, Dokumentvorbereitung, Quellensuche und quellenbasierte KI-Antworten.",
     impressumContactTitle: "Kontakt",
     impressumContactCopy:
-      "E-Mail: hierwirdgeholfen@gmail.com\nTelefon: +49 160 91853878",
+      "E-Mail: mail.biblerewritten@gmail.com\nTelefon: +49 160 91853878",
     impressumEditorialTitle: "Verantwortlich für journalistisch-redaktionelle Inhalte",
     impressumEditorialCopy:
       "Verantwortlich im Sinne des § 18 Abs. 2 Medienstaatsvertrag (MStV), soweit entsprechende Inhalte auf dieser Website veröffentlicht werden: Dennis Cameron, Anschrift wie oben.",
