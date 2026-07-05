@@ -1338,6 +1338,14 @@ export function App() {
       {theme === "dark" ? t.light : t.dark}
     </button>
   );
+  const legalLinks = (
+    <nav className="policy-links" aria-label={t.legalLinks}>
+      <a href="/impressum">{t.impressumTitle}</a>
+      <a href="/terms">{t.termsTitle}</a>
+      <a href="/privacy">{t.privacyTitle}</a>
+      <a href="/safety">{t.safetyTitle}</a>
+    </nav>
+  );
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
@@ -4326,12 +4334,7 @@ export function App() {
               {billingMessage}
             </p>
           ) : null}
-          <nav className="policy-links" aria-label={t.legalLinks}>
-            <a href="/impressum">{t.impressumTitle}</a>
-            <a href="/terms">{t.termsTitle}</a>
-            <a href="/privacy">{t.privacyTitle}</a>
-            <a href="/safety">{t.safetyTitle}</a>
-          </nav>
+          {legalLinks}
         </main>
       </div>
     );
@@ -4413,12 +4416,7 @@ export function App() {
               </article>
             ))}
           </section>
-          <nav className="policy-links" aria-label={t.legalLinks}>
-            <a href="/impressum">{t.impressumTitle}</a>
-            <a href="/terms">{t.termsTitle}</a>
-            <a href="/privacy">{t.privacyTitle}</a>
-            <a href="/safety">{t.safetyTitle}</a>
-          </nav>
+          {legalLinks}
         </main>
       </div>
     );
@@ -8180,6 +8178,9 @@ export function App() {
               </div>
             ) : null}
           </section>
+          <footer className="workspace-footer">
+            {legalLinks}
+          </footer>
           {uploadPrepNoticeBook ? (
             <div className="modal-backdrop" role="presentation">
               <section
@@ -8251,6 +8252,9 @@ export function App() {
         <div className="public-header-actions">
           {languageToggle}
           {themeToggle}
+          <a className="button header-button" href="#account">
+            {t.signIn}
+          </a>
         </div>
       </header>
 
@@ -8436,12 +8440,9 @@ export function App() {
             </div>
           )}
         </section>
-        <nav className="policy-links public-policy-links" aria-label={t.legalLinks}>
-          <a href="/impressum">{t.impressumTitle}</a>
-          <a href="/terms">{t.termsTitle}</a>
-          <a href="/privacy">{t.privacyTitle}</a>
-          <a href="/safety">{t.safetyTitle}</a>
-        </nav>
+        <footer className="public-policy-links">
+          {legalLinks}
+        </footer>
       </main>
     </div>
   );

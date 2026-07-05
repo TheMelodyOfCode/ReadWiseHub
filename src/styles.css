@@ -185,10 +185,10 @@ select {
 
 .public-header-actions {
   display: grid;
-  grid-template-columns: minmax(112px, 1fr) minmax(112px, 1fr);
+  grid-template-columns: minmax(94px, 112px) minmax(82px, 1fr) minmax(94px, auto);
   width: 100%;
   align-items: center;
-  gap: 12px;
+  gap: 10px;
 }
 
 .workspace-header-actions {
@@ -3011,6 +3011,13 @@ select {
   margin: 0;
 }
 
+.policy-grid h2 {
+  font-size: clamp(1.35rem, 5vw, 1.85rem);
+  line-height: 1.12;
+  overflow-wrap: anywhere;
+  hyphens: auto;
+}
+
 .policy-grid {
   display: grid;
   gap: 14px;
@@ -3037,6 +3044,10 @@ select {
 }
 
 .public-policy-links {
+  padding: 0 clamp(16px, 5vw, 72px) 42px;
+}
+
+.workspace-footer {
   padding: 0 clamp(16px, 5vw, 72px) 42px;
 }
 
@@ -3907,7 +3918,8 @@ a:focus-visible {
   }
 
   .public-header-actions {
-    grid-template-columns: minmax(112px, 1fr) minmax(112px, 1fr);
+    grid-template-columns: minmax(94px, 112px) minmax(78px, 1fr) minmax(86px, auto);
+    gap: 8px;
     width: 100%;
     margin-left: 0;
   }
@@ -3988,6 +4000,7 @@ a:focus-visible {
 .impressum-card p {
   white-space: pre-line;
   overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .impressum-card:first-child {
@@ -4047,6 +4060,18 @@ a:focus-visible {
   .legal-header-actions {
     grid-template-columns: minmax(94px, 112px) minmax(82px, 1fr) minmax(94px, auto);
     gap: 10px;
+  }
+
+  .public-header-actions {
+    grid-template-columns: minmax(94px, 112px) minmax(78px, 1fr) minmax(86px, auto);
+    gap: 8px;
+  }
+
+  .public-header-actions .button,
+  .public-header-actions .theme-toggle {
+    min-height: 38px;
+    padding: 8px 9px;
+    font-size: 0.92rem;
   }
 
   .legal-header-actions .language-toggle {
